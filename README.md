@@ -29,13 +29,20 @@
 ### 1. 安装依赖
 
 ```bash
-pip install -r requirements.txt
+uv sync
 ```
+
+> 没有 uv？`curl -LsSf https://astral.sh/uv/install.sh | sh` 或 `pip install uv`
+>
+> GPU 环境需额外指定 CUDA 版 PyTorch：
+> ```bash
+> uv sync --index-url https://download.pytorch.org/whl/cu124
+> ```
 
 ### 2. 生成训练数据
 
 ```bash
-python scripts/generate_data.py --n_samples 10000
+uv run python scripts/generate_data.py --n_samples 10000
 ```
 
 参数说明：
@@ -55,7 +62,7 @@ python scripts/generate_data.py --n_samples 10000
 ### 3. 训练模型
 
 ```bash
-python scripts/train.py --epochs 50 --device cuda
+uv run python scripts/train.py --epochs 50 --device cuda
 ```
 
 参数说明：
