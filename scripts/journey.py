@@ -30,15 +30,15 @@ STAGES = {
         "script": "scripts/train_s1.py",
     },
     "S2": {
-        "desc": "PPO RL 8×8/20雷 — 高密度策略（继承S1）",
+        "desc": "监督学习 8×8/20雷 — 高密度模式（继承S1）",
         "script": "scripts/train_s2.py",
     },
     "S3": {
-        "desc": "PPO RL 12×12/40雷 — 大棋盘适应（继承S2）",
+        "desc": "监督学习 12×12/40雷 — 大棋盘适应（继承S2）",
         "script": "scripts/train_s3.py",
     },
     "S4": {
-        "desc": "PPO RL 16×16/99雷 — 终极规格（继承S3）",
+        "desc": "监督学习 16×16/80雷 — 终极规格（继承S3）",
         "script": "scripts/train_s4.py",
     },
 }
