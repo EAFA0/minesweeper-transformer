@@ -35,6 +35,6 @@ Thumbs.db
 # wandb
 wandb/
 
-data/
+/data/
 nanobot/
 uv.lock
