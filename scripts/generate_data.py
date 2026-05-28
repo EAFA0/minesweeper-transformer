@@ -47,6 +47,10 @@ def main():
         "--require_win", action="store_true",
         help="Only keep fully solvable boards (default: off for curriculum, on for Phase1)"
     )
+    parser.add_argument(
+        "--no_ms_toolib", action="store_true",
+        help="Disable ms-toollib no-guess generation (fall back to random + solver filter)"
+    )
 
     args = parser.parse_args()
 
@@ -59,6 +63,7 @@ def main():
         seed=args.seed,
         show_progress=not args.no_progress,
         require_win=args.require_win,
+        use_no_guess=not args.no_ms_toolib,
     )
 
     print(f"\n📊 Generation complete!")

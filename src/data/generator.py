@@ -87,24 +87,37 @@ def record_game_trajectory(
     rng: Optional[np.random.Generator] = None,
     require_win: bool = False,
     min_steps: int = 1,
+    use_no_guess: bool = True,
 ) -> Optional[dict]:
     """Play through a board, recording (state, labels) at each step with solver guidance.
 
-    If require_win=True: only returns fully solvable trajectories (Phase 1).
-    If require_win=False: returns partial trajectories — stops when solver
-    gets stuck but keeps all previously recorded steps (Phase 2+ curriculum).
+    If use_no_guess=True: generates boards guaranteed to be solvable without guessing
+    (via ms-toollib). This ensures every training step has a logically deducible answer,
+    producing cleaner training data.
 
-    Returns None if no steps recorded or board unsolvable (when require_win=True).
-    Returns dict with mine_mask, trajectory (list of step dicts).
+    If require_win=True: only returns fully solvable trajectories (Phase 1).
+    If require_win=False: returns partial trajectories — stops recording when solver
+    gets stuck but keeps all previously recorded steps (Phase 2+ warmup).
+
+    Returns None if no steps recorded or generation fails.
     """
     if rng is None:
         rng = np.random.default_rng()
 
-    game = MinesweeperGame(width, height, total_mines)
-
-    r = rng.integers(0, height)
-    c = rng.integers(0, width)
-    game.make_move(r, c, MoveType.REVEAL)
+    # Generate the board
+    if use_no_guess:
+        from data.no_guess import generate_no_guess_board
+        game = generate_no_guess_board(
+            width=width, height=height, total_mines=total_mines,
+            rng=rng, max_attempts=100,
+        )
+        if game is None:
+            return None
+    else:
+        game = MinesweeperGame(width, height, total_mines)
+        r = rng.integers(0, height)
+        c = rng.integers(0, width)
+        game.make_move(r, c, MoveType.REVEAL)
 
     if game.status != GameStatus.PLAYING:
         return None
@@ -174,6 +187,7 @@ def generate_training_data(
     samples_per_file: int = 100,
     show_progress: bool = True,
     require_win: bool = False,
+    use_no_guess: bool = True,
 ) -> dict:
     """Generate training data and save to disk.
 
@@ -213,7 +227,7 @@ def generate_training_data(
         stats["attempts"] += 1
         trajectory = record_game_trajectory(
             width=width, height=height, total_mines=total_mines,
-            rng=rng, require_win=require_win,
+            rng=rng, require_win=require_win, use_no_guess=use_no_guess,
         )
 
         if trajectory is None:
