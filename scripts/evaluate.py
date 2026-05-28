@@ -32,16 +32,8 @@ def pick_action(
     model: MinesweeperTransformer,
     game: MinesweeperGame,
     device: str,
-    threshold: float = 0.5,
 ) -> Optional[Tuple[MoveType, int, int]]:
-    """Choose the next move based on model predictions.
-
-    Strategy: reveal the covered cell with lowest P(mine).
-    If all covered cells have P(mine) >= threshold (model thinks they're all mines),
-    flag the highest-confidence one instead.
-
-    Returns None if no covered cells remain.
-    """
+    """Choose the next move: always reveal the covered cell with lowest P(mine)."""
     # Get model predictions
     channels = game.board_to_channels()
     with torch.no_grad():
@@ -53,22 +45,13 @@ def pick_action(
     if not covered.any():
         return None
 
-    # Mask out non-covered cells with high probability
+    # Always reveal the cell with lowest P(mine).
+    # Flagging is unnecessary for evaluation — winning only requires
+    # revealing all safe cells, not marking mines.
     masked_probs = np.where(covered, probs, 2.0)
-
     best_idx = np.argmin(masked_probs)
     best_r, best_c = divmod(int(best_idx), game.width)
-
-    if probs[best_r, best_c] < threshold:
-        # Safe enough to reveal
-        return MoveType.REVEAL, best_r, best_c
-    else:
-        # Everything looks like a mine — flag the most confident one
-        # Pick the covered cell with highest P(mine)
-        covered_probs = np.where(covered, probs, -1.0)
-        flag_idx = np.argmax(covered_probs)
-        flag_r, flag_c = divmod(int(flag_idx), game.width)
-        return MoveType.FLAG, flag_r, flag_c
+    return MoveType.REVEAL, best_r, best_c
 
 
 def play_one_game(
