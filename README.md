@@ -119,11 +119,24 @@ Input (B, 10, 8, 8)
 - D4 数据增强：随机旋转/翻转，等效 8 倍数据量
 - 正则化：dropout=0.2, weight_decay=3e-4, gradient clipping=1.0
 
-### Phase 2：RL 微调（计划中）
+### Phase 2：RL 微调（当前阶段）
 
-- Phase 1 模型作为预训练初始化
-- REINFORCE / PPO + dense reward（solver 辅助）
-- 目标：学会处理需要猜测的局面
+REINFORCE 策略梯度算法，在 Phase 1 模型基础上微调：
+
+- **策略**：π(reveal cell i) = softmax(-P(mine)_i / τ)，温度 τ 控制探索程度
+- **Reward 设计**：安全翻开 +1，触发 flood fill +3，正确插旗 +2，踩雷 -10，胜利 +20
+- **Solver 辅助**：solver 判定安全/雷时给额外 bonus，加速收敛
+- **Baseline**：指数移动平均减少梯度方差
+
+```bash
+uv run python scripts/train_rl.py --total_games 5000 --device auto
+```
+
+训练完成后评估：
+
+```bash
+uv run python scripts/evaluate.py checkpoints/rl/rl_final.pt --n_games 1000
+```
 
 ## 技术决策
 
