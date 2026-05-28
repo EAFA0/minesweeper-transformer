@@ -18,7 +18,7 @@ from pathlib import Path
 STAGE = "S2"
 DEFAULTS = {
     "width": 8, "height": 8, "mines": 20,
-    "n_samples": 20000, "epochs": 15,
+    "n_samples": 40000, "epochs": 30,
     "data_dir": "data/S2", "save_dir": "checkpoints/S2",
     "pretrained": "checkpoints/S1/best_model.pt",
 }
