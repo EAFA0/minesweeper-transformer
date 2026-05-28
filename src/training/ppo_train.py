@@ -49,19 +49,19 @@ class PPOConfig:
     total_mines: int = 10
 
     # PPO hyperparams
-    lr: float = 3e-4
-    gamma: float = 0.99          # discount
-    gae_lambda: float = 0.95     # GAE smoothing
-    clip_epsilon: float = 0.2    # PPO clip range
-    value_coef: float = 0.5      # value loss weight
-    entropy_coef: float = 0.01   # entropy bonus (encourage exploration)
+    lr: float = 1e-4                # lower LR for fine-tuning (was 3e-4)
+    gamma: float = 0.99
+    gae_lambda: float = 0.95
+    clip_epsilon: float = 0.1       # tighter clip for fine-tuning (was 0.2)
+    value_coef: float = 1.0         # more weight on value learning (was 0.5)
+    entropy_coef: float = 0.02      # more exploration (was 0.01)
     max_grad_norm: float = 0.5
 
     # Training schedule
-    temperature_start: float = 1.0
+    temperature_start: float = 2.0   # more exploration early (was 1.0)
     temperature_end: float = 0.3
-    games_per_update: int = 16    # collect N games per PPO step
-    ppo_epochs: int = 4           # PPO update epochs per batch
+    games_per_update: int = 32      # more games per batch (was 16)
+    ppo_epochs: int = 2             # fewer PPO epochs (was 4)
     total_games: int = 20000
     eval_every: int = 500
     eval_games: int = 100
@@ -75,21 +75,29 @@ class PPOConfig:
 # ─── Value Network (Critic) ────────────────────────────────────────────────
 
 class ValueHead(nn.Module):
-    """Critic head: predicts state value from transformer features."""
+    """Critic head: bounded value prediction to prevent NaN during early training.
 
-    def __init__(self, d_model: int = 64):
+    Output clamped to [-reward_scale, +reward_scale] via tanh.
+    Initialized to output zero (no value estimate initially).
+    """
+
+    def __init__(self, d_model: int = 64, reward_scale: float = 100.0):
         super().__init__()
+        self.reward_scale = reward_scale
         self.net = nn.Sequential(
             nn.Linear(d_model, d_model),
             nn.ReLU(),
             nn.Linear(d_model, 1),
         )
+        # Zero-initialize last layer for stable start (critic outputs 0)
+        nn.init.constant_(self.net[-1].weight, 0.0)
+        nn.init.constant_(self.net[-1].bias, 0.0)
 
     def forward(self, features: torch.Tensor) -> torch.Tensor:
-        """features: (B, d_model, H, W) → values: (B,)"""
-        # Global average pool over spatial dims
+        """features: (B, d_model, H, W) → values: (B,) in [-reward_scale, +reward_scale]"""
         pooled = features.mean(dim=[2, 3])  # (B, d_model)
-        return self.net(pooled).squeeze(-1)  # (B,)
+        raw = self.net(pooled).squeeze(-1)  # (B,)
+        return torch.tanh(raw) * self.reward_scale
 
 
 class ActorCritic(nn.Module):
@@ -236,9 +244,15 @@ def ppo_update(
     value_loss = F.mse_loss(values, returns)
 
     # Entropy bonus (encourage exploration)
-    # H = -sum(p * log(p)) — compute from log_probs for numerical stability
     probs = F.softmax(scores, dim=1)
     entropy = -(probs * log_probs_all).sum(dim=1).mean()
+
+    # Safety: skip update if any component is NaN
+    if torch.isnan(policy_loss) or torch.isnan(value_loss) or torch.isnan(entropy):
+        return {
+            "policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0,
+            "ratio_mean": 1.0, "ratio_clipped": 0.0,
+        }
 
     loss = policy_loss + config.value_coef * value_loss - config.entropy_coef * entropy
 
@@ -396,8 +410,13 @@ def train_ppo(config: PPOConfig) -> dict:
         adv_tensor = torch.tensor(advantages, device=device)
         ret_tensor = torch.tensor(returns, device=device)
 
-        # Normalize advantages
-        adv_tensor = (adv_tensor - adv_tensor.mean()) / (adv_tensor.std() + 1e-8)
+        # Normalize advantages (with NaN guard)
+        adv_mean = adv_tensor.mean()
+        adv_std = adv_tensor.std()
+        if adv_std > 1e-8 and not torch.isnan(adv_std):
+            adv_tensor = (adv_tensor - adv_mean) / adv_std
+        else:
+            adv_tensor = adv_tensor - adv_mean  # at least center
 
         # PPO update (multiple epochs on same data)
         epoch_metrics = []
