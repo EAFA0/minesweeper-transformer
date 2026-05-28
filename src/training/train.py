@@ -42,7 +42,12 @@ class TrainingConfig:
 
     def __post_init__(self):
         if self.device == "auto":
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            if torch.cuda.is_available():
+                self.device = "cuda"
+            elif torch.backends.mps.is_available():
+                self.device = "mps"
+            else:
+                self.device = "cpu"
 
 
 @dataclass

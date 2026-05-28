@@ -27,7 +27,7 @@ def main():
     parser.add_argument("--save_dir", default="checkpoints",
                         help="Directory to save model checkpoints")
     parser.add_argument("--device", default="auto",
-                        help="Device: cpu, cuda, or auto")
+                        help="Device: cpu, cuda, mps, or auto")
     parser.add_argument("--lr_scheduler", default="cosine",
                         choices=["cosine", "plateau", "none"],
                         help="LR scheduler type")
