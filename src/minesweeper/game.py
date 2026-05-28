@@ -202,7 +202,7 @@ class MinesweeperGame:
           [1]: flagged mask (1=flagged)
           [2:10]: number one-hot (e.g., a cell showing '3' has 1 at channel 4)
         """
-        from .constants import CH_COVERED, CH_FLAGGED, CH_NUMBER_BASE, NUM_CHANNELS
+        from .constants import CH_COVERED, CH_FLAGGED, CH_NUMBER_BASE, CH_REMAINING_MINES, NUM_CHANNELS
 
         channels = np.zeros((NUM_CHANNELS, self.height, self.width), dtype=np.float32)
 
@@ -219,6 +219,13 @@ class MinesweeperGame:
             channels[CH_NUMBER_BASE + n - 1][revealed_mask] = (
                 numbers == n
             ).astype(np.float32)
+
+        # Remaining mines (normalized)
+        remaining = self.mine_count
+        channels[CH_REMAINING_MINES] = np.full(
+            (self.height, self.width), remaining / max(1, self.total_mines),
+            dtype=np.float32,
+        )
 
         return channels
 

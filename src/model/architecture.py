@@ -26,7 +26,7 @@ import torch.nn.functional as F
 class ModelConfig:
     """Configuration for MinesweeperTransformer."""
     # Input
-    in_channels: int = 10       # covered + flagged + 8 number channels
+    in_channels: int = 11       # covered + flagged + 8 number channels + remaining mines
 
     # CNN frontend
     cnn_channels: int = 64      # output channels of CNN

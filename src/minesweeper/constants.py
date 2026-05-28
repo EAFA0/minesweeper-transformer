@@ -35,5 +35,7 @@ CH_COVERED = 0
 CH_FLAGGED = 1
 # 数字 one-hot: 1-8 → channels 2-9
 CH_NUMBER_BASE = 2
-# Total channels: 2 (covered/flagged) + 8 (number one-hot) = 10
-NUM_CHANNELS = 10
+# 剩余雷数: normalized (remaining / total_mines), broadcast to all cells
+CH_REMAINING_MINES = 10
+# Total channels: 2 (covered/flagged) + 8 (numbers) + 1 (remaining mines) = 11
+NUM_CHANNELS = 11
