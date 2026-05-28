@@ -93,7 +93,7 @@ class MinesweeperGame:
                 if dr == 0 and dc == 0:
                     continue
                 nr, nc = r + dr, c + dc
-                if 0 <= nr < 8 and 0 <= nc < 8:  # FIXME: hardcoded 8 — see below
+                if 0 <= nr < self.height and 0 <= nc < self.width:
                     out.append((nr, nc))
         return out
 
