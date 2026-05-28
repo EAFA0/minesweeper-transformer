@@ -35,6 +35,8 @@ def main():
                         help="Disable D4 data augmentation")
     parser.add_argument("--grad_clip", type=float, default=1.0,
                         help="Gradient clipping norm")
+    parser.add_argument("--pretrained", default="",
+                        help="Path to pretrained checkpoint for curriculum transfer")
 
     args = parser.parse_args()
 
@@ -49,6 +51,7 @@ def main():
         lr_scheduler=args.lr_scheduler,
         augment=not args.no_augment,
         grad_clip_norm=args.grad_clip,
+        pretrained=args.pretrained,
     )
 
     train(config)

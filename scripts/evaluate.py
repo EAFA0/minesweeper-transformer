@@ -21,18 +21,9 @@ from model.architecture import MinesweeperTransformer, ModelConfig
 
 
 def load_model(checkpoint_path: str, device: str) -> MinesweeperTransformer:
-    """Load a trained model from checkpoint."""
-    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
-
-    if "model_config" in ckpt:
-        config = ckpt["model_config"]
-    else:
-        config = ModelConfig()
-
-    model = MinesweeperTransformer(config).to(device)
-
-    state_dict = ckpt.get("model_state_dict", ckpt)
-    model.load_state_dict(state_dict)
+    """Load a trained model from checkpoint, with format migration."""
+    model = MinesweeperTransformer(ModelConfig()).to(device)
+    model.load_pretrained(checkpoint_path, device)
     model.eval()
     return model
 

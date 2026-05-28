@@ -3,12 +3,15 @@
 Architecture:
     Input: (B, 10, H, W) — covered, flagged, numbers 1-8 one-hot
     → CNN frontend (3× Conv3×3, BN, ReLU) → (B, d_model, H, W)
-    → 2D learnable positional encoding
+    → 2D learnable positional encoding (interpolatable)
     → Flatten to sequence → (B, H*W, d_model)
     → Transformer encoder (N layers, multi-head self-attention)
     → Reshape to spatial → (B, d_model, H, W)
     → Output head (Conv1×1) → (B, 1, H, W)
     → Sigmoid → P(mine) per cell
+
+Supports variable board sizes via bilinear PE interpolation (ViT-style).
+CNN and transformer layers are size-agnostic — only PE adapts to input size.
 """
 
 from dataclasses import dataclass
@@ -24,7 +27,6 @@ class ModelConfig:
     """Configuration for MinesweeperTransformer."""
     # Input
     in_channels: int = 10       # covered + flagged + 8 number channels
-    board_size: int = 8         # assumes square board
 
     # CNN frontend
     cnn_channels: int = 64      # output channels of CNN
@@ -35,10 +37,13 @@ class ModelConfig:
     nhead: int = 4              # attention heads
     num_layers: int = 3         # transformer encoder layers
     dim_feedforward: int = 256  # FFN hidden dim
-    dropout: float = 0.2   # increased from 0.1 for regularization
+    dropout: float = 0.2
+
+    # Positional encoding — reference grid size for interpolation
+    pe_grid_size: int = 16      # PE is learned at 16×16, bilinear-interpolated to any H×W
 
     # Output
-    num_classes: int = 1        # binary classification → 1 channel + sigmoid
+    num_classes: int = 1
 
     def __post_init__(self):
         if self.cnn_channels != self.d_model:
@@ -47,6 +52,8 @@ class ModelConfig:
             )
 
 
+# ─── Building Blocks ───────────────────────────────────────────────────────
+
 class CNNEncoder(nn.Module):
     """Convolutional frontend that preserves spatial resolution."""
 
@@ -54,7 +61,7 @@ class CNNEncoder(nn.Module):
         super().__init__()
         layers = []
         current = in_channels
-        for i in range(num_layers):
+        for _ in range(num_layers):
             layers.append(
                 nn.Conv2d(current, out_channels, kernel_size=3, padding=1, bias=False)
             )
@@ -67,23 +74,37 @@ class CNNEncoder(nn.Module):
         return self.net(x)
 
 
-class Learnable2DPositionalEncoding(nn.Module):
-    """2D learnable positional encoding for grid-structured inputs."""
+class InterpolatablePositionalEncoding(nn.Module):
+    """2D learnable PE with bilinear interpolation for variable input sizes.
 
-    def __init__(self, d_model: int, height: int, width: int):
+    PE is stored at a reference grid size (default 16×16). At forward time,
+    it's bilinear-interpolated to match the input's H×W.
+    This allows a model trained on one board size to transfer to another.
+    """
+
+    def __init__(self, d_model: int, ref_grid: int = 16):
         super().__init__()
-        self.row_embed = nn.Parameter(torch.randn(1, d_model, height, 1) * 0.02)
-        self.col_embed = nn.Parameter(torch.randn(1, d_model, 1, width) * 0.02)
+        # Learned at reference size: (1, d_model, ref_grid, ref_grid)
+        self.pe = nn.Parameter(torch.randn(1, d_model, ref_grid, ref_grid) * 0.02)
+        self.ref_grid = ref_grid
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """x: (B, C, H, W) → (B, C, H, W) with positional encoding added."""
-        return x + self.row_embed + self.col_embed
+        """x: (B, C, H, W) → (B, C, H, W) with PE added."""
+        _, _, H, W = x.shape
+        if H == self.ref_grid and W == self.ref_grid:
+            pe = self.pe
+        else:
+            pe = F.interpolate(
+                self.pe, size=(H, W), mode='bilinear', align_corners=False
+            )
+        return x + pe
 
 
 class TransformerEncoder(nn.Module):
-    """Stack of TransformerEncoderLayers with optional LayerNorm at the end."""
+    """Stack of TransformerEncoderLayers."""
 
-    def __init__(self, d_model: int, nhead: int, num_layers: int, dim_feedforward: int, dropout: float):
+    def __init__(self, d_model: int, nhead: int, num_layers: int,
+                 dim_feedforward: int, dropout: float):
         super().__init__()
         layer = nn.TransformerEncoderLayer(
             d_model=d_model,
@@ -91,10 +112,12 @@ class TransformerEncoder(nn.Module):
             dim_feedforward=dim_feedforward,
             dropout=dropout,
             activation=F.gelu,
-            batch_first=True,  # input shape: (B, S, C)
-            norm_first=True,   # pre-LN (better training stability)
+            batch_first=True,
+            norm_first=True,
         )
-        self.encoder = nn.TransformerEncoder(layer, num_layers=num_layers, enable_nested_tensor=False)
+        self.encoder = nn.TransformerEncoder(
+            layer, num_layers=num_layers, enable_nested_tensor=False
+        )
         self.norm = nn.LayerNorm(d_model)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -103,11 +126,13 @@ class TransformerEncoder(nn.Module):
         return self.norm(x)
 
 
+# ─── Full Model ────────────────────────────────────────────────────────────
+
 class MinesweeperTransformer(nn.Module):
-    """Full CNN + Transformer model for minesweeper.
+    """CNN + Transformer model for minesweeper. Supports variable board sizes.
 
     Input:  (B, 10, H, W)
-    Output: (B, 1, H, W) — logits for P(mine), apply sigmoid for probabilities.
+    Output: (B, 1, H, W) — logits for P(mine). Apply sigmoid for probabilities.
     """
 
     def __init__(self, config: Optional[ModelConfig] = None):
@@ -116,21 +141,19 @@ class MinesweeperTransformer(nn.Module):
             config = ModelConfig()
         self.config = config
 
-        H = W = config.board_size
-
-        # CNN frontend
+        # CNN frontend (size-agnostic)
         self.cnn = CNNEncoder(
             in_channels=config.in_channels,
             out_channels=config.d_model,
             num_layers=config.cnn_layers,
         )
 
-        # Positional encoding
-        self.pos_encoding = Learnable2DPositionalEncoding(
-            d_model=config.d_model, height=H, width=W
+        # Positional encoding (interpolatable to any H,W)
+        self.pos_encoding = InterpolatablePositionalEncoding(
+            d_model=config.d_model, ref_grid=config.pe_grid_size,
         )
 
-        # Transformer
+        # Transformer (sequence-length agnostic)
         self.transformer = TransformerEncoder(
             d_model=config.d_model,
             nhead=config.nhead,
@@ -139,31 +162,31 @@ class MinesweeperTransformer(nn.Module):
             dropout=config.dropout,
         )
 
-        # Output head
+        # Output head (size-agnostic Conv1×1)
         self.output_head = nn.Conv2d(config.d_model, config.num_classes, kernel_size=1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass.
+        """Forward pass. H,W inferred from input tensor.
 
         Args:
             x: (B, C, H, W) input channels
 
         Returns:
-            (B, 1, H, W) logits — sigmoid for P(mine)
+            (B, 1, H, W) logits
         """
         B, C, H, W = x.shape
 
         # CNN: (B, C, H, W) → (B, d_model, H, W)
         features = self.cnn(x)
 
-        # Positional encoding
+        # PE (interpolated to H,W)
         features = self.pos_encoding(features)
 
         # Reshape to sequence: (B, d_model, H, W) → (B, H*W, d_model)
-        seq = features.flatten(2).transpose(1, 2)  # (B, H*W, d_model)
+        seq = features.flatten(2).transpose(1, 2)
 
         # Transformer
-        seq = self.transformer(seq)  # (B, H*W, d_model)
+        seq = self.transformer(seq)
 
         # Reshape back: (B, H*W, d_model) → (B, d_model, H, W)
         features = seq.transpose(1, 2).reshape(B, self.config.d_model, H, W)
@@ -178,8 +201,35 @@ class MinesweeperTransformer(nn.Module):
         """Total number of trainable parameters."""
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
+    @torch.no_grad()
     def predict(self, x: torch.Tensor) -> torch.Tensor:
         """Return P(mine) probabilities (sigmoid-applied)."""
-        with torch.no_grad():
-            logits = self.forward(x)
-            return torch.sigmoid(logits)
+        logits = self.forward(x)
+        return torch.sigmoid(logits)
+
+    def load_pretrained(self, checkpoint_path: str, device: str = "cpu") -> None:
+        """Load weights from a checkpoint, with automatic format migration.
+
+        Handles:
+        - Old format (row_embed + col_embed) → new format (interpolatable pe)
+        - Missing/additional keys are ignored
+        """
+        ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
+        state_dict = ckpt.get("model_state_dict", ckpt)
+
+        # Migrate old positional encoding format
+        migrated = {}
+        for key, value in state_dict.items():
+            if key.startswith("pos_encoding.row_embed") or key.startswith("pos_encoding.col_embed"):
+                # Old format: separate row/col embeddings
+                # New format: single pe grid (1, d_model, ref, ref)
+                # We can't perfectly migrate, so skip and keep new PE initialized
+                continue
+            migrated[key] = value
+
+        # Load with strict=False to allow PE mismatch
+        missing, unexpected = self.load_state_dict(migrated, strict=False)
+        if missing:
+            print(f"  (PE reinitialized for new grid size — {len(missing)} keys)")
+        if unexpected:
+            print(f"  (ignored {len(unexpected)} old-format keys)")

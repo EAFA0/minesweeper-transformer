@@ -43,6 +43,10 @@ def main():
         "--no_progress", action="store_true",
         help="Disable progress bar"
     )
+    parser.add_argument(
+        "--require_win", action="store_true",
+        help="Only keep fully solvable boards (default: off for curriculum, on for Phase1)"
+    )
 
     args = parser.parse_args()
 
@@ -54,11 +58,11 @@ def main():
         total_mines=args.mines,
         seed=args.seed,
         show_progress=not args.no_progress,
+        require_win=args.require_win,
     )
 
     print(f"\n📊 Generation complete!")
     print(f"   Generated: {stats['generated']} games from {stats['attempts']} attempts")
-    print(f"   Success rate: {stats['success_rate']:.1%}")
     print(f"   Avg steps per game: {stats['avg_steps_per_game']:.1f}")
     print(f"   Total training steps: {stats['total_steps']}")
     print(f"   Output files: {stats['output_files']}")

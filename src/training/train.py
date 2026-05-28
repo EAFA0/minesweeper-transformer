@@ -42,6 +42,9 @@ class TrainingConfig:
     save_dir: str = "checkpoints"
     device: str = "cpu"
 
+    # Curriculum
+    pretrained: str = ""          # path to pretrained checkpoint for curriculum transfer
+
     def __post_init__(self):
         if self.device == "auto":
             if torch.cuda.is_available():
@@ -206,6 +209,11 @@ def train(config: TrainingConfig) -> TrainingMetrics:
     # Model
     model_config = ModelConfig()
     model = MinesweeperTransformer(model_config).to(device)
+
+    if config.pretrained:
+        print(f"Loading pretrained weights from: {config.pretrained}")
+        model.load_pretrained(config.pretrained, device=str(device))
+
     print(f"Model: {model.num_parameters:,} parameters")
 
     # Loss weight

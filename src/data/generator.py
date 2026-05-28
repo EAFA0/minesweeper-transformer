@@ -85,10 +85,16 @@ def record_game_trajectory(
     height: int = 8,
     total_mines: int = 10,
     rng: Optional[np.random.Generator] = None,
+    require_win: bool = False,
+    min_steps: int = 1,
 ) -> Optional[dict]:
-    """Play through a solvable board, recording (state, labels) at each step.
+    """Play through a board, recording (state, labels) at each step with solver guidance.
 
-    Returns None if board unsolvable.
+    If require_win=True: only returns fully solvable trajectories (Phase 1).
+    If require_win=False: returns partial trajectories — stops when solver
+    gets stuck but keeps all previously recorded steps (Phase 2+ curriculum).
+
+    Returns None if no steps recorded or board unsolvable (when require_win=True).
     Returns dict with mine_mask, trajectory (list of step dicts).
     """
     if rng is None:
@@ -96,11 +102,8 @@ def record_game_trajectory(
 
     game = MinesweeperGame(width, height, total_mines)
 
-    # First click — record initial state BEFORE the click
-    initial_channels = game.board_to_channels().copy()
-
-    r = rng.integers(1, height - 1)
-    c = rng.integers(1, width - 1)
+    r = rng.integers(0, height)
+    c = rng.integers(0, width)
     game.make_move(r, c, MoveType.REVEAL)
 
     if game.status != GameStatus.PLAYING:
@@ -110,13 +113,14 @@ def record_game_trajectory(
     steps = []
 
     solver = ConstraintSolver(game)
-
     step_idx = 0
+
     while game.status == GameStatus.PLAYING:
         safe, mines = solver.find_safe_and_mines()
 
         if not safe and not mines:
-            return None  # stuck
+            # Stuck — stop recording but don't discard
+            break
 
         # Record state before making moves
         channels = game.board_to_channels().copy()
@@ -144,7 +148,10 @@ def record_game_trajectory(
 
         step_idx += 1
 
-    if game.status != GameStatus.WON:
+    if require_win and game.status != GameStatus.WON:
+        return None
+
+    if len(steps) < min_steps:
         return None
 
     return {
@@ -166,8 +173,13 @@ def generate_training_data(
     seed: int = 42,
     samples_per_file: int = 100,
     show_progress: bool = True,
+    require_win: bool = False,
 ) -> dict:
     """Generate training data and save to disk.
+
+    When require_win=True: only keeps fully solvable boards (Phase 1, low density).
+    When require_win=False: accepts partial trajectories — stops recording when
+    solver gets stuck but keeps all valid deduction steps (Phase 2+, high density).
 
     Returns summary dict with generation statistics.
     """
@@ -176,7 +188,10 @@ def generate_training_data(
 
     rng = np.random.default_rng(seed)
     stats = {
-        "params": {"width": width, "height": height, "total_mines": total_mines, "n_samples_target": n_samples},
+        "params": {
+            "width": width, "height": height, "total_mines": total_mines,
+            "n_samples_target": n_samples, "require_win": require_win,
+        },
         "attempts": 0,
         "generated": 0,
         "total_steps": 0,
@@ -197,7 +212,8 @@ def generate_training_data(
     while stats["generated"] < n_samples:
         stats["attempts"] += 1
         trajectory = record_game_trajectory(
-            width=width, height=height, total_mines=total_mines, rng=rng
+            width=width, height=height, total_mines=total_mines,
+            rng=rng, require_win=require_win,
         )
 
         if trajectory is None:
@@ -223,7 +239,6 @@ def generate_training_data(
 
     stats["end_time"] = time.time()
     stats["elapsed_seconds"] = stats["end_time"] - stats["start_time"]
-    stats["success_rate"] = stats["generated"] / max(1, stats["attempts"])
     stats["avg_steps_per_game"] = stats["total_steps"] / max(1, stats["generated"])
     stats["output_files"] = file_idx
 
