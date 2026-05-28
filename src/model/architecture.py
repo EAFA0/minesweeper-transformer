@@ -35,7 +35,7 @@ class ModelConfig:
     # Transformer
     d_model: int = 64           # must match cnn_channels
     nhead: int = 4              # attention heads
-    num_layers: int = 3         # transformer encoder layers
+    num_layers: int = 4         # transformer encoder layers (↑ from 3)
     dim_feedforward: int = 256  # FFN hidden dim
     dropout: float = 0.2
 
