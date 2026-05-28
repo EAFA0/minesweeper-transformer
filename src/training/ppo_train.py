@@ -143,8 +143,9 @@ class ActorCritic(nn.Module):
         # Clamp logits to avoid extreme values in softmax
         flat = torch.clamp(flat, min=-10.0, max=10.0)
 
-        # Use float('-inf') instead of large negative — softmax handles it properly
-        scores = torch.where(cov, -flat / temperature, torch.tensor(float('-inf'), device=x.device))
+        # Softmax-safe masking
+        scores = torch.where(cov, -flat / temperature,
+                           torch.tensor(-1e9, device=x.device))
         probs = F.softmax(scores, dim=0)
         # Safety: ensure no NaN and all positive
         probs = torch.nan_to_num(probs, nan=0.0, posinf=0.0, neginf=0.0)
@@ -227,7 +228,7 @@ def ppo_update(
     scores = torch.where(
         cov_flat,
         -torch.clamp(logits_flat, -10.0, 10.0) / temperature,
-        torch.tensor(float('-inf'), device=states.device),
+        torch.tensor(-1e9, device=states.device),  # large negative, not -inf (NaN-safe)
     )
     log_probs_all = F.log_softmax(scores, dim=1)
     action_log_probs = log_probs_all.gather(1, actions.unsqueeze(1)).squeeze(1)
@@ -243,16 +244,9 @@ def ppo_update(
     # Value loss (MSE)
     value_loss = F.mse_loss(values, returns)
 
-    # Entropy bonus (encourage exploration)
+    # Entropy bonus
     probs = F.softmax(scores, dim=1)
     entropy = -(probs * log_probs_all).sum(dim=1).mean()
-
-    # Safety: skip update if any component is NaN
-    if torch.isnan(policy_loss) or torch.isnan(value_loss) or torch.isnan(entropy):
-        return {
-            "policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0,
-            "ratio_mean": 1.0, "ratio_clipped": 0.0,
-        }
 
     loss = policy_loss + config.value_coef * value_loss - config.entropy_coef * entropy
 
@@ -410,13 +404,8 @@ def train_ppo(config: PPOConfig) -> dict:
         adv_tensor = torch.tensor(advantages, device=device)
         ret_tensor = torch.tensor(returns, device=device)
 
-        # Normalize advantages (with NaN guard)
-        adv_mean = adv_tensor.mean()
-        adv_std = adv_tensor.std()
-        if adv_std > 1e-8 and not torch.isnan(adv_std):
-            adv_tensor = (adv_tensor - adv_mean) / adv_std
-        else:
-            adv_tensor = adv_tensor - adv_mean  # at least center
+        # Normalize advantages
+        adv_tensor = (adv_tensor - adv_tensor.mean()) / (adv_tensor.std() + 1e-8)
 
         # PPO update (multiple epochs on same data)
         epoch_metrics = []
