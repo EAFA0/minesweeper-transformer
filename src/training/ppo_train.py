@@ -132,20 +132,24 @@ class ActorCritic(nn.Module):
         flat = logits.flatten()
         cov = covered.flatten().to(x.device)
 
-        policy_logits = torch.where(
-            cov,
-            -flat / temperature,
-            torch.tensor(-float('inf'), device=x.device),
-        )
-        log_probs_flat = policy_logits - torch.logsumexp(policy_logits, dim=0)
-        probs = torch.exp(log_probs_flat)
+        # Clamp logits to avoid extreme values in softmax
+        flat = torch.clamp(flat, min=-10.0, max=10.0)
+
+        # Use float('-inf') instead of large negative — softmax handles it properly
+        scores = torch.where(cov, -flat / temperature, torch.tensor(float('-inf'), device=x.device))
+        probs = F.softmax(scores, dim=0)
+        # Safety: ensure no NaN and all positive
+        probs = torch.nan_to_num(probs, nan=0.0, posinf=0.0, neginf=0.0)
+        if probs.sum() == 0:
+            # All covered cells — fallback to uniform
+            probs = cov.float() / cov.sum().clamp(min=1)
 
         if deterministic:
             idx = torch.argmax(probs).item()
         else:
             idx = torch.multinomial(probs, 1).item()
 
-        log_prob = log_probs_flat[idx].item()
+        log_prob = torch.log(probs[idx].clamp(min=1e-10)).item()
         return idx, log_prob, value.item()
 
 
@@ -212,12 +216,12 @@ def ppo_update(
     logits_flat = logits.squeeze(1).reshape(states.shape[0], -1)  # (N, H*W)
     cov_flat = covered_masks.reshape(states.shape[0], -1)         # (N, H*W)
 
-    policy_logits = torch.where(
+    scores = torch.where(
         cov_flat,
-        -logits_flat / temperature,
-        torch.tensor(-float('inf'), device=states.device),
+        -torch.clamp(logits_flat, -10.0, 10.0) / temperature,
+        torch.tensor(float('-inf'), device=states.device),
     )
-    log_probs_all = policy_logits - torch.logsumexp(policy_logits, dim=1, keepdim=True)
+    log_probs_all = F.log_softmax(scores, dim=1)
     action_log_probs = log_probs_all.gather(1, actions.unsqueeze(1)).squeeze(1)
 
     # PPO ratio: π_new / π_old
@@ -232,7 +236,8 @@ def ppo_update(
     value_loss = F.mse_loss(values, returns)
 
     # Entropy bonus (encourage exploration)
-    probs = torch.exp(log_probs_all)
+    # H = -sum(p * log(p)) — compute from log_probs for numerical stability
+    probs = F.softmax(scores, dim=1)
     entropy = -(probs * log_probs_all).sum(dim=1).mean()
 
     loss = policy_loss + config.value_coef * value_loss - config.entropy_coef * entropy
