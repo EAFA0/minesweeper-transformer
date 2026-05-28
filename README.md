@@ -66,7 +66,9 @@ uv run python scripts/generate_data.py --n_samples 10000
 uv run python scripts/train.py --epochs 50 --device auto
 ```
 
-> `auto` 会自动检测 CUDA → MPS → CPU。也可手动指定 `--device mps` / `--device cuda`。
+> `auto` 会自动检测 CUDA → MPS → CPU。也可手动指定 `--device mps`。
+>
+> 训练默认启用 D4 数据增强（旋转+翻转，等效 8 倍数据量）。关闭：`--no_augment`。
 
 参数说明：
 
@@ -114,6 +116,8 @@ Input (B, 10, 8, 8)
 - 真实雷图作为标签（非 solver 推理结果）
 - BCE loss，仅 covered 格参与计算
 - 自动 pos_weight 平衡 mine/safe 类别
+- D4 数据增强：随机旋转/翻转，等效 8 倍数据量
+- 正则化：dropout=0.2, weight_decay=3e-4, gradient clipping=1.0
 
 ### Phase 2：RL 微调（计划中）
 

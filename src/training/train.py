@@ -24,19 +24,21 @@ class TrainingConfig:
     # Data
     data_dir: str = "data/training"
     val_ratio: float = 0.1
+    augment: bool = True         # D4 data augmentation (rotation + flip)
 
     # Optimization
     batch_size: int = 64
     learning_rate: float = 1e-3
-    weight_decay: float = 1e-4
+    weight_decay: float = 3e-4   # L2 regularization (was 1e-4)
     epochs: int = 50
-    lr_scheduler: str = "cosine"  # cosine, plateau, none
+    lr_scheduler: str = "cosine"
+    grad_clip_norm: float = 1.0  # gradient clipping
 
     # Loss
-    pos_weight: Optional[float] = None  # weight for mine class (auto-computed if None)
+    pos_weight: Optional[float] = None
 
     # Logging
-    log_interval: int = 50   # log every N batches
+    log_interval: int = 50
     save_dir: str = "checkpoints"
     device: str = "cpu"
 
@@ -109,6 +111,7 @@ def train_epoch(
     device: str,
     pos_weight: Optional[torch.Tensor],
     log_interval: int,
+    grad_clip_norm: float = 1.0,
 ) -> float:
     """Train one epoch. Returns average loss."""
     model.train()
@@ -124,6 +127,7 @@ def train_epoch(
         logits = model(channels)
         loss = compute_masked_bce(logits, labels, mask, pos_weight)
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
         optimizer.step()
 
         total_loss += loss.item()
@@ -176,10 +180,12 @@ def train(config: TrainingConfig) -> TrainingMetrics:
 
     # Data
     train_dataset = MinesweeperDataset(
-        Path(config.data_dir), split="train", val_ratio=config.val_ratio
+        Path(config.data_dir), split="train", val_ratio=config.val_ratio,
+        augment=config.augment,
     )
     val_dataset = MinesweeperDataset(
-        Path(config.data_dir), split="val", val_ratio=config.val_ratio
+        Path(config.data_dir), split="val", val_ratio=config.val_ratio,
+        augment=False,  # no augmentation on validation
     )
 
     train_loader = DataLoader(
@@ -192,7 +198,7 @@ def train(config: TrainingConfig) -> TrainingMetrics:
     )
 
     print(
-        f"Train: {len(train_dataset)} samples | "
+        f"Train: {len(train_dataset)} samples (augment={config.augment}) | "
         f"Val: {len(val_dataset)} samples | "
         f"Mine ratio: {train_dataset.mine_ratio:.1%}"
     )
@@ -246,7 +252,8 @@ def train(config: TrainingConfig) -> TrainingMetrics:
 
         # Train
         train_loss = train_epoch(
-            model, train_loader, optimizer, device, pos_weight, config.log_interval
+            model, train_loader, optimizer, device, pos_weight,
+            config.log_interval, config.grad_clip_norm,
         )
         metrics.train_loss.append(train_loss)
 

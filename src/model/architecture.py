@@ -35,7 +35,7 @@ class ModelConfig:
     nhead: int = 4              # attention heads
     num_layers: int = 3         # transformer encoder layers
     dim_feedforward: int = 256  # FFN hidden dim
-    dropout: float = 0.1
+    dropout: float = 0.2   # increased from 0.1 for regularization
 
     # Output
     num_classes: int = 1        # binary classification → 1 channel + sigmoid

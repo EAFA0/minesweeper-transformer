@@ -31,6 +31,10 @@ def main():
     parser.add_argument("--lr_scheduler", default="cosine",
                         choices=["cosine", "plateau", "none"],
                         help="LR scheduler type")
+    parser.add_argument("--no_augment", action="store_true",
+                        help="Disable D4 data augmentation")
+    parser.add_argument("--grad_clip", type=float, default=1.0,
+                        help="Gradient clipping norm")
 
     args = parser.parse_args()
 
@@ -43,6 +47,8 @@ def main():
         save_dir=args.save_dir,
         device=args.device,
         lr_scheduler=args.lr_scheduler,
+        augment=not args.no_augment,
+        grad_clip_norm=args.grad_clip,
     )
 
     train(config)
