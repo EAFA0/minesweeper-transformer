@@ -1,8 +1,8 @@
 """RL environment — wraps MinesweeperGame for policy gradient training.
 
-Supports two board modes:
-  self_validated — boards solvable by ProbabilitySolver (fast, RL-safe)
-  random        — completely random boards (includes guessing)
+All boards are self-validated: generate → verify with ProbabilitySolver →
+retry if unsolvable. Every game CAN be won, so win rate measures
+model improvement cleanly.
 
 Supports "mine continue" mode: when model hits a mine, game continues
 with a penalty instead of ending. This provides denser training signal.
@@ -14,7 +14,7 @@ from typing import Optional, Tuple
 import numpy as np
 
 from minesweeper.game import MinesweeperGame
-from minesweeper.constants import CellState, MoveType, GameStatus
+from minesweeper.constants import MoveType, GameStatus
 from data.self_validated import generate_self_validated_board
 
 
@@ -25,20 +25,20 @@ class Rewards:
     reveal_safe: float = 1.0
     hit_mine: float = -10.0
     win: float = 20.0
-    step_penalty: float = 0.0     # optional per-step penalty
+    step_penalty: float = 0.0
 
 
 # ─── Environment ────────────────────────────────────────────────────────────
 
 class RLEnv:
-    """RL environment for minesweeper.
+    """RL environment for minesweeper — self-validated boards only.
 
     State: (10, H, W) board channels
     Action: (r, c) — reveal a covered cell
     Reward: immediate reward for the action
 
     Two modes:
-      mine_continue=False (default): game ends on mine hit
+      mine_continue=False: game ends on mine hit
       mine_continue=True: game continues after mine hit, only ends on win or max steps
     """
 
@@ -47,7 +47,6 @@ class RLEnv:
         width: int = 8,
         height: int = 8,
         total_mines: int = 10,
-        board_mode: str = "self_validated",  # "self_validated" | "random"
         mine_continue: bool = False,
         max_steps: int = 200,
         rewards: Optional[Rewards] = None,
@@ -56,7 +55,6 @@ class RLEnv:
         self.width = width
         self.height = height
         self.total_mines = total_mines
-        self.board_mode = board_mode
         self.mine_continue = mine_continue
         self.max_steps = max_steps
         self.rewards = rewards or Rewards()
@@ -71,16 +69,23 @@ class RLEnv:
         self._steps = 0
         self._hits = 0
 
-        if self.board_mode == "self_validated":
+        self.game = generate_self_validated_board(
+            width=self.width, height=self.height,
+            total_mines=self.total_mines, rng=self.rng,
+        )
+        if self.game is None:
+            # Should rarely happen with hint-based solver; if it does,
+            # try once more with a different seed
             self.game = generate_self_validated_board(
                 width=self.width, height=self.height,
-                total_mines=self.total_mines, rng=self.rng,
+                total_mines=self.total_mines,
+                rng=np.random.default_rng(),
             )
-            if self.game is None:
-                # Fallback to random
-                self.game = self._random_board()
-        else:
-            self.game = self._random_board()
+        if self.game is None:
+            raise RuntimeError(
+                f"Failed to generate self-validated board "
+                f"{self.width}×{self.height}/{self.total_mines}"
+            )
 
         return self.state
 
@@ -93,14 +98,12 @@ class RLEnv:
         self.game.make_move(r, c, MoveType.REVEAL)
         self._steps += 1
 
-        # Game status
         if self.game.status == GameStatus.WON:
             reward += self.rewards.win
             return self.state, reward, True
         elif self.game.status == GameStatus.LOST:
             self._hits += 1
             if self.mine_continue:
-                # Reset game status so we can continue
                 self.game.status = GameStatus.PLAYING
                 return self.state, reward, False
             return self.state, reward, True
@@ -130,14 +133,6 @@ class RLEnv:
     @property
     def mine_hits(self) -> int:
         return self._hits
-
-    def _random_board(self) -> MinesweeperGame:
-        game = MinesweeperGame(self.width, self.height, self.total_mines)
-        # Random first click on safe cell
-        r = self.rng.integers(0, self.height)
-        c = self.rng.integers(0, self.width)
-        game.make_move(r, c, MoveType.REVEAL)
-        return game
 
     def _compute_reward(self, r: int, c: int) -> float:
         """Compute reward before executing the move."""

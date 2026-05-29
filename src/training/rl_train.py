@@ -35,7 +35,6 @@ class RLConfig:
     width: int = 8
     height: int = 8
     total_mines: int = 10
-    board_mode: str = "self_validated"  # "self_validated" | "random"
     mine_continue: bool = False
 
     # RL hyperparameters
@@ -294,7 +293,7 @@ def train_rl(config: RLConfig) -> dict:
     device = torch.device(config.device)
     print(f"=== RL Fine-tuning (REINFORCE) ===")
     print(f"Board: {config.width}×{config.height}, {config.total_mines} mines")
-    print(f"Mode: {config.board_mode}, Mine-continue: {config.mine_continue}")
+    print(f"Mine-continue: {config.mine_continue} | Refine: {config.refine_steps}")
     print(f"Device: {device}")
 
     # Load pretrained model
@@ -310,14 +309,12 @@ def train_rl(config: RLConfig) -> dict:
     train_env = RLEnv(
         width=config.width, height=config.height,
         total_mines=config.total_mines,
-        board_mode=config.board_mode,
         mine_continue=config.mine_continue,
         rng=rng,
     )
     eval_env = RLEnv(
         width=config.width, height=config.height,
         total_mines=config.total_mines,
-        board_mode=config.board_mode,
         mine_continue=False,  # eval: game ends on mine
         rng=np.random.default_rng(99),
     )
@@ -397,50 +394,3 @@ def train_rl(config: RLConfig) -> dict:
     metrics["final_win_rate"] = final_wr
     metrics["final_avg_return"] = final_ret
     return metrics
-
-
-# ─── CLI ───────────────────────────────────────────────────────────────────
-
-if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(description="REINFORCE fine-tuning")
-    parser.add_argument("--width", type=int, default=8)
-    parser.add_argument("--height", type=int, default=8)
-    parser.add_argument("--mines", type=int, default=10)
-    parser.add_argument("--board_mode", default="self_validated",
-                        choices=["self_validated", "random"])
-    parser.add_argument("--mine_continue", action="store_true",
-                        help="Continue game after mine hit (denser signal)")
-    parser.add_argument("--pretrained", default="")
-    parser.add_argument("--total_games", type=int, default=5000)
-    parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--save_dir", default="checkpoints/rl")
-    parser.add_argument("--refine", type=int, default=1,
-                        dest="refine_steps")
-    parser.add_argument("--device", default="auto")
-
-    args = parser.parse_args()
-
-    if args.device == "auto":
-        if torch.cuda.is_available():
-            dev = "cuda"
-        elif torch.backends.mps.is_available():
-            dev = "mps"
-        else:
-            dev = "cpu"
-    else:
-        dev = args.device
-
-    config = RLConfig(
-        width=args.width, height=args.height,
-        total_mines=args.mines,
-        board_mode=args.board_mode,
-        mine_continue=args.mine_continue,
-        pretrained_path=args.pretrained,
-        total_games=args.total_games,
-        lr=args.lr,
-        save_dir=args.save_dir,
-        refine_steps=args.refine_steps,
-        device=dev,
-    )
-    train_rl(config)

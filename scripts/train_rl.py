@@ -27,9 +27,6 @@ def main() -> None:
     parser.add_argument("--width", type=int, default=8)
     parser.add_argument("--height", type=int, default=8)
     parser.add_argument("--mines", type=int, default=10)
-    parser.add_argument("--board_mode", default="self_validated",
-                        choices=["self_validated", "random"],
-                        help="Board generation: self_validated (fast) or random")
     parser.add_argument("--mine_continue", action="store_true",
                         help="Continue game after mine hit — denser training signal")
     parser.add_argument("--pretrained", default="",
@@ -58,7 +55,6 @@ def main() -> None:
     config = RLConfig(
         width=args.width, height=args.height,
         total_mines=args.mines,
-        board_mode=args.board_mode,
         mine_continue=args.mine_continue,
         pretrained_path=args.pretrained,
         total_games=args.total_games,
