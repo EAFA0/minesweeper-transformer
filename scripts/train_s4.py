@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""S4: 监督学习 — 16×16 / 80 雷
+"""S4: 监督学习 (概率蒸馏) — 16×16 / 80 雷 (继承 S3 权重)
 
-终极规格。继承 S3 权重。PE 原生 16×16（无需插值）。
-80 雷是 ms-toollib 无猜生成的上限。
-
-用法: python scripts/train_s4.py
+最大棋盘，最终泛化测试。
+用法:
+    python scripts/train_s4.py                    # 完整流程
+    python scripts/train_s4.py --force_data        # 强制重新生成数据
+    python scripts/train_s4.py --eval_only         # 仅评估
 """
 
 import argparse
@@ -15,7 +16,7 @@ from pathlib import Path
 STAGE = "S4"
 DEFAULTS = {
     "width": 16, "height": 16, "mines": 80,
-    "n_samples": 30000, "epochs": 10,
+    "n_samples": 10000, "epochs": 30,
     "data_dir": "data/S4", "save_dir": "checkpoints/S4",
     "pretrained": "checkpoints/S3/best_model.pt",
 }
@@ -32,33 +33,38 @@ def run(cmd, desc=""):
 
 
 def main():
-    p = argparse.ArgumentParser(description="S4: Supervised training 16×16 / 80 mines")
-    p.add_argument("--skip_data", action="store_true")
-    p.add_argument("--eval_only", action="store_true")
+    p = argparse.ArgumentParser(description="S4: Supervised training (prob distillation, 16×16)")
+    p.add_argument("--force_data", action="store_true", help="Force regenerate training data")
+    p.add_argument("--resume", action="store_true", help="Resume from existing checkpoint")
+    p.add_argument("--eval_only", action="store_true", help="Only evaluate existing checkpoint")
     p.add_argument("--device", default="auto")
-    p.add_argument("--n_games", type=int, default=500)
-
+    p.add_argument("--n_games", type=int, default=500, help="Eval games")
     args = p.parse_args()
+
     if args.device == "auto":
         import torch
         args.device = "mps" if torch.backends.mps.is_available() else \
                       "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Device: {args.device}")
 
-    pretrained = DEFAULTS["pretrained"]
-    if not Path(pretrained).exists():
-        print(f"⚠ Pretrained model not found: {pretrained}")
-        pretrained = ""
+    pretrained_path = Path(DEFAULTS["pretrained"])
+    if not pretrained_path.exists() and not args.eval_only:
+        print(f"❌ Pretrained checkpoint not found: {pretrained_path}")
+        print(f"   Run train_s3.py first")
+        sys.exit(1)
 
-    if not args.skip_data and not args.eval_only:
-        run([
+    if not args.eval_only:
+        cmd = [
             sys.executable, "scripts/generate_data.py",
             "--width", str(DEFAULTS["width"]),
             "--height", str(DEFAULTS["height"]),
             "--mines", str(DEFAULTS["mines"]),
             "--n_samples", str(DEFAULTS["n_samples"]),
             "--output", DEFAULTS["data_dir"],
-        ], "S4: Generate data")
+        ]
+        if args.force_data:
+            cmd.append("--force")
+        run(cmd, "S4: Generate data")
 
     if not args.eval_only:
         cmd = [
@@ -67,10 +73,17 @@ def main():
             "--epochs", str(DEFAULTS["epochs"]),
             "--save_dir", DEFAULTS["save_dir"],
             "--device", args.device,
+            "--pretrained", DEFAULTS["pretrained"],
+            "--lr", "3e-4",
+            "--weight_decay", "1e-4",
         ]
-        if pretrained:
-            cmd += ["--pretrained", pretrained]
-        run(cmd, f"S4: Train")
+        if args.resume:
+            resume_ckpt = Path(DEFAULTS["save_dir"]) / "final_model.pt"
+            if resume_ckpt.exists():
+                cmd.extend(["--resume", str(resume_ckpt)])
+            else:
+                print(f"⚠ No checkpoint to resume from: {resume_ckpt}")
+        run(cmd, f"S4: Train ({DEFAULTS['epochs']} epochs)")
 
     ckpt = Path(DEFAULTS["save_dir"]) / "best_model.pt"
     if ckpt.exists():
@@ -83,6 +96,8 @@ def main():
             "--n_games", str(args.n_games),
             "--device", args.device,
         ], "S4: Evaluate")
+    else:
+        print(f"⚠ No checkpoint at {ckpt}")
 
 
 if __name__ == "__main__":

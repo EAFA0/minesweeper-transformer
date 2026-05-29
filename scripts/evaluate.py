@@ -1,7 +1,9 @@
-"""Model evaluation — play full minesweeper games and measure win rate.
+"""Model evaluation — play full minesweeper games and measure win rate + action accuracy.
 
-This is the real metric. Accuracy during training is just a proxy.
-Win rate tells us whether the model can actually play minesweeper.
+Uses the model's probability estimates to pick moves (always lowest P(mine)).
+Tracks:
+- Win rate (games won / total)
+- Action accuracy (reveals that didn't hit a mine / total reveals)
 """
 
 import argparse
@@ -34,20 +36,15 @@ def pick_action(
     device: str,
 ) -> Optional[Tuple[MoveType, int, int]]:
     """Choose the next move: always reveal the covered cell with lowest P(mine)."""
-    # Get model predictions
     channels = game.board_to_channels()
     with torch.no_grad():
         x = torch.from_numpy(channels).unsqueeze(0).to(device)
         probs = torch.sigmoid(model(x)).squeeze(0).squeeze(0).cpu().numpy()
 
-    # Only consider covered cells
-    covered = game.covered_cells  # (H, W) boolean
+    covered = game.covered_cells
     if not covered.any():
         return None
 
-    # Always reveal the cell with lowest P(mine).
-    # Flagging is unnecessary for evaluation — winning only requires
-    # revealing all safe cells, not marking mines.
     masked_probs = np.where(covered, probs, 2.0)
     best_idx = np.argmin(masked_probs)
     best_r, best_c = divmod(int(best_idx), game.width)
@@ -62,8 +59,8 @@ def play_one_game(
     total_mines: int = 10,
     rng: Optional[np.random.Generator] = None,
     max_steps: int = 100,
-) -> Tuple[GameStatus, int]:
-    """Play one game with the model. Returns (final_status, steps_taken)."""
+) -> dict:
+    """Play one game with the model. Returns detailed stats dict."""
     if rng is None:
         rng = np.random.default_rng()
 
@@ -75,16 +72,33 @@ def play_one_game(
     game.make_move(r, c, MoveType.REVEAL)
 
     steps = 0
+    safe_reveals = 0
+    mine_hits = 0
+
     while game.status == GameStatus.PLAYING and steps < max_steps:
         action = pick_action(model, game, device)
         if action is None:
             break
 
         move_type, mr, mc = action
+        # Check if the chosen cell is actually safe (ground truth)
+        is_safe = not game.get_mine_mask()[mr, mc]
+
         game.make_move(mr, mc, move_type)
         steps += 1
 
-    return game.status, steps
+        if is_safe:
+            safe_reveals += 1
+        else:
+            mine_hits += 1
+
+    return {
+        "status": game.status,
+        "steps": steps,
+        "safe_reveals": safe_reveals,
+        "mine_hits": mine_hits,
+        "action_accuracy": safe_reveals / max(1, safe_reveals + mine_hits),
+    }
 
 
 def evaluate(
@@ -105,15 +119,23 @@ def evaluate(
     print()
 
     rng = np.random.default_rng(seed)
-    results = {"won": 0, "lost": 0, "stuck": 0, "steps": []}
+    results = {
+        "won": 0, "lost": 0, "stuck": 0,
+        "steps": [], "action_accuracies": [],
+        "total_safe_reveals": 0, "total_mine_hits": 0,
+    }
     t0 = time.time()
 
     for i in range(n_games):
-        status, steps = play_one_game(
+        game_stats = play_one_game(
             model, device, width, height, total_mines, rng=rng
         )
-        results["steps"].append(steps)
+        results["steps"].append(game_stats["steps"])
+        results["action_accuracies"].append(game_stats["action_accuracy"])
+        results["total_safe_reveals"] += game_stats["safe_reveals"]
+        results["total_mine_hits"] += game_stats["mine_hits"]
 
+        status = game_stats["status"]
         if status == GameStatus.WON:
             results["won"] += 1
         elif status == GameStatus.LOST:
@@ -124,30 +146,37 @@ def evaluate(
         if (i + 1) % 100 == 0:
             elapsed = time.time() - t0
             wr = results["won"] / (i + 1)
+            total_reveals = results["total_safe_reveals"] + results["total_mine_hits"]
+            act_acc = results["total_safe_reveals"] / max(1, total_reveals)
             print(
                 f"  [{i + 1:5d}/{n_games}] "
                 f"win={results['won']:4d} ({wr:.1%})  "
                 f"loss={results['lost']:4d}  "
                 f"stuck={results['stuck']:3d}  "
+                f"act_acc={act_acc:.3f}  "
                 f"({elapsed:.1f}s)"
             )
 
     elapsed = time.time() - t0
     win_rate = results["won"] / n_games
     avg_steps = np.mean(results["steps"]) if results["steps"] else 0
+    total_reveals = results["total_safe_reveals"] + results["total_mine_hits"]
+    overall_action_acc = results["total_safe_reveals"] / max(1, total_reveals)
 
     print()
     print("═" * 50)
-    print(f"Total games:  {n_games}")
-    print(f"Won:          {results['won']} ({win_rate:.1%})")
-    print(f"Lost:         {results['lost']} ({results['lost']/n_games:.1%})")
-    print(f"Stuck:        {results['stuck']} ({results['stuck']/n_games:.1%})")
-    print(f"Avg steps:    {avg_steps:.1f}")
-    print(f"Time:         {elapsed:.1f}s ({elapsed/n_games:.3f}s/game)")
+    print(f"Total games:       {n_games}")
+    print(f"Won:               {results['won']} ({win_rate:.1%})")
+    print(f"Lost:              {results['lost']} ({results['lost']/n_games:.1%})")
+    print(f"Stuck:             {results['stuck']} ({results['stuck']/n_games:.1%})")
+    print(f"Action accuracy:   {overall_action_acc:.3f} ({results['total_safe_reveals']}/{total_reveals})")
+    print(f"Avg steps:         {avg_steps:.1f}")
+    print(f"Time:              {elapsed:.1f}s ({elapsed/n_games:.3f}s/game)")
     print("═" * 50)
 
     results["win_rate"] = win_rate
     results["avg_steps"] = avg_steps
+    results["overall_action_accuracy"] = overall_action_acc
     results["elapsed"] = elapsed
     return results
 

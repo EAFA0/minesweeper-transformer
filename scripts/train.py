@@ -1,5 +1,7 @@
-# Minesweeper Transformer — Phase 1 Training Script
-# Usage: python scripts/train.py [--epochs 50] [--batch_size 64]
+# Minesweeper Transformer — Supervised Training Script (Probability Distillation)
+# Usage:
+#   python scripts/train.py --epochs 50 --device auto
+#   python scripts/train.py --resume checkpoints/final_model.pt --epochs 70 --lr 3e-4
 
 import argparse
 import sys
@@ -12,7 +14,7 @@ from training.train import train, TrainingConfig
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Train Minesweeper Transformer (Phase 1: supervised learning)"
+        description="Train Minesweeper Transformer (probability distillation, MSE loss)"
     )
     parser.add_argument("--data_dir", default="data/training",
                         help="Path to training data directory")
@@ -36,9 +38,15 @@ def main():
     parser.add_argument("--grad_clip", type=float, default=1.0,
                         help="Gradient clipping norm")
     parser.add_argument("--pretrained", default="",
-                        help="Path to pretrained checkpoint for curriculum transfer")
+                        help="Path to pretrained checkpoint (weights only, for curriculum transfer)")
+    parser.add_argument("--resume", default="", dest="resume_from",
+                        help="Path to checkpoint to resume training (loads weights + optimizer + metrics)")
 
     args = parser.parse_args()
+
+    if args.resume_from and args.pretrained:
+        print("Error: --resume and --pretrained are mutually exclusive")
+        sys.exit(1)
 
     config = TrainingConfig(
         data_dir=args.data_dir,
@@ -52,6 +60,7 @@ def main():
         augment=not args.no_augment,
         grad_clip_norm=args.grad_clip,
         pretrained=args.pretrained,
+        resume_from=args.resume_from,
     )
 
     train(config)

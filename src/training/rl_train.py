@@ -1,4 +1,9 @@
-"""Phase 2: REINFORCE policy gradient fine-tuning.
+"""Phase 2: REINFORCE policy gradient fine-tuning — DEPRECATED (2026-05-28)
+
+REINFORCE was abandoned. The project now uses pure supervised probability
+distillation: solver-computed P(mine) soft labels + MSE loss.
+
+This file is kept for reference only. Do not use.
 
 === What is REINFORCE? ===
 

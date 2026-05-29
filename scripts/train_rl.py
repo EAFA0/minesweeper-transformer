@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
-"""Phase 2 RL Training CLI.
+"""Phase 2 RL Training CLI — DEPRECATED (2026-05-28)
 
-Usage:
-    python scripts/train_rl.py --total_games 5000 --device mps
+REINFORCE policy gradient fine-tuning was abandoned in favor of
+pure supervised probability distillation (MSE loss + solver soft labels).
+
+Reason: credit assignment in RL was chaotic; no-guess data emerged,
+making supervised learning more efficient for the 90%+ action accuracy target.
+
+This file is kept for reference only. Do not use.
 """
 
 import argparse

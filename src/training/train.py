@@ -1,7 +1,12 @@
-"""Training loop for Phase 1 supervised learning.
+"""Training loop for probability distillation.
 
 Trains the MinesweeperTransformer to predict P(mine) for covered cells.
-Uses BCEWithLogitsLoss with mask to ignore already-revealed cells.
+Uses MSE loss against solver-computed probability labels.
+
+Supports:
+- Fresh training from scratch
+- Curriculum transfer (--pretrained: weights only)
+- Training resume (--resume: weights + optimizer state + metrics)
 """
 
 import json
@@ -29,21 +34,19 @@ class TrainingConfig:
     # Optimization
     batch_size: int = 64
     learning_rate: float = 1e-3
-    weight_decay: float = 3e-4   # L2 regularization (was 1e-4)
+    weight_decay: float = 3e-4
     epochs: int = 50
     lr_scheduler: str = "cosine"
-    grad_clip_norm: float = 1.0  # gradient clipping
-
-    # Loss
-    pos_weight: Optional[float] = None
+    grad_clip_norm: float = 1.0
 
     # Logging
     log_interval: int = 50
     save_dir: str = "checkpoints"
     device: str = "cpu"
 
-    # Curriculum
-    pretrained: str = ""          # path to pretrained checkpoint for curriculum transfer
+    # Checkpoint
+    pretrained: str = ""          # curriculum transfer: load weights only, fresh optimizer
+    resume_from: str = ""         # resume training: load weights + optimizer + epoch + metrics
 
     def __post_init__(self):
         if self.device == "auto":
@@ -61,49 +64,69 @@ class TrainingMetrics:
     train_loss: list = field(default_factory=list)
     val_loss: list = field(default_factory=list)
     val_accuracy: list = field(default_factory=list)
+    val_action_accuracy: list = field(default_factory=list)
     best_val_loss: float = float("inf")
     best_epoch: int = 0
 
 
-def compute_masked_bce(
-    logits: torch.Tensor,
-    labels: torch.Tensor,
+def compute_masked_mse(
+    pred_probs: torch.Tensor,
+    target_probs: torch.Tensor,
     mask: torch.Tensor,
-    pos_weight: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
-    """BCE loss computed only on masked cells.
+    """MSE loss computed only on masked (covered) cells."""
+    pred_masked = pred_probs.squeeze(1)[mask]
+    target_masked = target_probs[mask]
 
-    Args:
-        logits: (B, 1, H, W) raw logits
-        labels: (B, H, W) ground truth (0/1)
-        mask:   (B, H, W) boolean — True for cells to include
-        pos_weight: scalar tensor for mine class weight
-    """
-    # Squeeze channel dim and select masked cells
-    logits_masked = logits.squeeze(1)[mask]   # (N,)
-    labels_masked = labels[mask]               # (N,)
+    if pred_masked.numel() == 0:
+        return torch.tensor(0.0, device=pred_probs.device, requires_grad=True)
 
-    if logits_masked.numel() == 0:
-        return torch.tensor(0.0, device=logits.device, requires_grad=True)
-
-    loss = nn.functional.binary_cross_entropy_with_logits(
-        logits_masked, labels_masked, pos_weight=pos_weight
-    )
-    return loss
+    return nn.functional.mse_loss(pred_masked, target_masked)
 
 
 def compute_accuracy(
-    logits: torch.Tensor,
-    labels: torch.Tensor,
+    pred_probs: torch.Tensor,
+    target_probs: torch.Tensor,
+    mask: torch.Tensor,
+    threshold: float = 0.5,
+) -> float:
+    """Binary accuracy on masked cells (thresholded at 0.5)."""
+    preds = (pred_probs.squeeze(1) > threshold).float()
+    targets = (target_probs > threshold).float()
+    correct = (preds[mask] == targets[mask]).sum().item()
+    total = mask.sum().item()
+    return correct / max(1, total)
+
+
+def compute_action_accuracy(
+    pred_probs: torch.Tensor,
+    target_probs: torch.Tensor,
     mask: torch.Tensor,
 ) -> float:
-    """Accuracy on masked cells.
+    """Action accuracy: would clicking the lowest-P(mine) cell be safe?
 
-    Predictions: sigmoid(logits) > 0.5 → mine.
+    For each sample, finds the covered cell with lowest predicted P(mine),
+    then checks if the target P(mine) for that cell is 0.
     """
-    preds = (torch.sigmoid(logits.squeeze(1)) > 0.5).float()
-    correct = (preds[mask] == labels[mask]).sum().item()
-    total = mask.sum().item()
+    B = pred_probs.shape[0]
+    correct = 0
+    total = 0
+
+    pred_2d = pred_probs.squeeze(1)  # (B, H, W)
+
+    for b in range(B):
+        m = mask[b]
+        if not m.any():
+            continue
+        total += 1
+
+        pred_masked = pred_2d[b].clone()
+        pred_masked[~m] = float('inf')
+        best_idx = torch.argmin(pred_masked.view(-1))
+
+        if target_probs[b].view(-1)[best_idx] == 0.0:
+            correct += 1
+
     return correct / max(1, total)
 
 
@@ -112,7 +135,6 @@ def train_epoch(
     dataloader: DataLoader,
     optimizer: torch.optim.Optimizer,
     device: str,
-    pos_weight: Optional[torch.Tensor],
     log_interval: int,
     grad_clip_norm: float = 1.0,
 ) -> float:
@@ -121,14 +143,15 @@ def train_epoch(
     total_loss = 0.0
     n_batches = len(dataloader)
 
-    for batch_idx, (channels, labels, mask) in enumerate(dataloader):
+    for batch_idx, (channels, probs, mask) in enumerate(dataloader):
         channels = channels.to(device)
-        labels = labels.to(device)
+        probs = probs.to(device)
         mask = mask.to(device)
 
         optimizer.zero_grad()
         logits = model(channels)
-        loss = compute_masked_bce(logits, labels, mask, pos_weight)
+        pred_probs = torch.sigmoid(logits)
+        loss = compute_masked_mse(pred_probs, probs, mask)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
         optimizer.step()
@@ -136,10 +159,11 @@ def train_epoch(
         total_loss += loss.item()
 
         if (batch_idx + 1) % log_interval == 0:
-            acc = compute_accuracy(logits, labels, mask)
+            acc = compute_accuracy(pred_probs, probs, mask)
+            act_acc = compute_action_accuracy(pred_probs, probs, mask)
             print(
                 f"  Batch {batch_idx + 1:4d}/{n_batches} | "
-                f"loss: {loss.item():.4f} | acc: {acc:.3f}"
+                f"loss: {loss.item():.4f} | acc: {acc:.3f} | act_acc: {act_acc:.3f}"
             )
 
     return total_loss / n_batches
@@ -150,45 +174,59 @@ def validate(
     model: MinesweeperTransformer,
     dataloader: DataLoader,
     device: str,
-    pos_weight: Optional[torch.Tensor],
-) -> tuple[float, float]:
-    """Validate. Returns (avg_loss, accuracy)."""
+) -> tuple[float, float, float]:
+    """Validate. Returns (avg_loss, accuracy, action_accuracy)."""
     model.eval()
     total_loss = 0.0
     total_correct = 0
+    total_action_correct = 0
     total_cells = 0
+    total_action_samples = 0
 
-    for channels, labels, mask in dataloader:
+    for channels, probs, mask in dataloader:
         channels = channels.to(device)
-        labels = labels.to(device)
+        probs = probs.to(device)
         mask = mask.to(device)
 
         logits = model(channels)
-        loss = compute_masked_bce(logits, labels, mask, pos_weight)
+        pred_probs = torch.sigmoid(logits)
+        loss = compute_masked_mse(pred_probs, probs, mask)
         total_loss += loss.item()
 
-        preds = (torch.sigmoid(logits.squeeze(1)) > 0.5).float()
-        total_correct += (preds[mask] == labels[mask]).sum().item()
+        preds = (pred_probs.squeeze(1) > 0.5).float()
+        targets = (probs > 0.5).float()
+        total_correct += (preds[mask] == targets[mask]).sum().item()
         total_cells += mask.sum().item()
+
+        act_acc = compute_action_accuracy(pred_probs, probs, mask)
+        total_action_correct += act_acc * mask.shape[0]
+        total_action_samples += mask.shape[0]
 
     avg_loss = total_loss / len(dataloader)
     accuracy = total_correct / max(1, total_cells)
-    return avg_loss, accuracy
+    action_accuracy = total_action_correct / max(1, total_action_samples)
+    return avg_loss, accuracy, action_accuracy
 
 
 def train(config: TrainingConfig) -> TrainingMetrics:
-    """Full training loop. Returns metrics for analysis."""
+    """Full training loop. Returns metrics for analysis.
+
+    Supports:
+    - Fresh training
+    - --pretrained: curriculum transfer (weights only)
+    - --resume: continue from checkpoint (weights + optimizer + metrics)
+    """
     device = torch.device(config.device)
     print(f"Training on: {device}")
 
-    # Data
+    # ── Data ──────────────────────────────────────────────────────────
     train_dataset = MinesweeperDataset(
         Path(config.data_dir), split="train", val_ratio=config.val_ratio,
         augment=config.augment,
     )
     val_dataset = MinesweeperDataset(
         Path(config.data_dir), split="val", val_ratio=config.val_ratio,
-        augment=False,  # no augmentation on validation
+        augment=False,
     )
 
     train_loader = DataLoader(
@@ -200,45 +238,66 @@ def train(config: TrainingConfig) -> TrainingMetrics:
         num_workers=0, pin_memory=(device.type == "cuda"),
     )
 
+    dist = train_dataset.prob_distribution
     print(
         f"Train: {len(train_dataset)} samples (augment={config.augment}) | "
-        f"Val: {len(val_dataset)} samples | "
-        f"Mine ratio: {train_dataset.mine_ratio:.1%}"
+        f"Val: {len(val_dataset)} samples"
+    )
+    print(
+        f"Prob distribution: {dist['frac_deduced_safe']:.1%} safe | "
+        f"{dist['frac_deduced_mine']:.1%} mine | "
+        f"{dist['frac_ambiguous']:.1%} ambiguous"
     )
 
-    # Model
+    # ── Model ─────────────────────────────────────────────────────────
     model_config = ModelConfig()
     model = MinesweeperTransformer(model_config).to(device)
+    start_epoch = 0
+    metrics = TrainingMetrics()
 
-    if config.pretrained:
+    if config.resume_from:
+        print(f"Resuming from: {config.resume_from}")
+        ckpt = torch.load(config.resume_from, map_location=device, weights_only=False)
+        model.load_state_dict(ckpt["model_state_dict"])
+        start_epoch = ckpt.get("epoch", 0)
+        # Restore previous metrics to continue the curves
+        if "train_loss" in ckpt:
+            metrics.train_loss = ckpt["train_loss"]
+            metrics.val_loss = ckpt["val_loss"]
+            metrics.val_accuracy = ckpt.get("val_accuracy", [])
+            metrics.val_action_accuracy = ckpt.get("val_action_accuracy", [])
+            metrics.best_val_loss = ckpt.get("best_val_loss", float("inf"))
+            metrics.best_epoch = ckpt.get("best_epoch", 0)
+        print(
+            f"  Resumed from epoch {start_epoch}, "
+            f"best val_loss={metrics.best_val_loss:.4f} at epoch {metrics.best_epoch}"
+        )
+    elif config.pretrained:
         print(f"Loading pretrained weights from: {config.pretrained}")
         model.load_pretrained(config.pretrained, device=str(device))
 
     print(f"Model: {model.num_parameters:,} parameters")
 
-    # Loss weight
-    pos_weight = config.pos_weight
-    if pos_weight is None:
-        # Balance mine/safe classes: weight = n_safe / n_mines
-        mine_ratio = train_dataset.mine_ratio
-        if mine_ratio > 0:
-            pos_weight_val = (1 - mine_ratio) / mine_ratio
-            print(f"Auto pos_weight: {pos_weight_val:.2f} (safe {1-mine_ratio:.1%} : mine {mine_ratio:.1%})")
-        else:
-            pos_weight_val = 1.0
-        pos_weight = torch.tensor([pos_weight_val], device=device)
-
-    # Optimizer
+    # ── Optimizer ─────────────────────────────────────────────────────
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=config.learning_rate,
         weight_decay=config.weight_decay,
     )
+    if config.resume_from:
+        ckpt = torch.load(config.resume_from, map_location=device, weights_only=False)
+        if "optimizer_state_dict" in ckpt:
+            optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+            # Reset LR — old scheduler may have decayed it to near-zero
+            for pg in optimizer.param_groups:
+                pg["lr"] = config.learning_rate
+            print(f"  Optimizer state restored, LR reset to {config.learning_rate:.1e}")
 
-    # Scheduler
+    # ── Scheduler ─────────────────────────────────────────────────────
+    remaining_epochs = config.epochs - start_epoch
     if config.lr_scheduler == "cosine":
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=config.epochs
+            optimizer, T_max=max(1, remaining_epochs)
         )
     elif config.lr_scheduler == "plateau":
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -247,30 +306,31 @@ def train(config: TrainingConfig) -> TrainingMetrics:
     else:
         scheduler = None
 
-    # Checkpoint dir
+    # ── Save dir ──────────────────────────────────────────────────────
     save_dir = Path(config.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
 
-    metrics = TrainingMetrics()
     t0 = time.time()
 
-    for epoch in range(1, config.epochs + 1):
-        print(f"\n═══ Epoch {epoch}/{config.epochs} ═══")
+    # ── Training loop ─────────────────────────────────────────────────
+    for epoch in range(start_epoch + 1, config.epochs + 1):
+        print(f"\n═══ Epoch {epoch}/{config.epochs} (lr={optimizer.param_groups[0]['lr']:.2e}) ═══")
         epoch_start = time.time()
 
         # Train
         train_loss = train_epoch(
-            model, train_loader, optimizer, device, pos_weight,
+            model, train_loader, optimizer, device,
             config.log_interval, config.grad_clip_norm,
         )
         metrics.train_loss.append(train_loss)
 
         # Validate
-        val_loss, val_acc = validate(model, val_loader, device, pos_weight)
+        val_loss, val_acc, val_act_acc = validate(model, val_loader, device)
         metrics.val_loss.append(val_loss)
         metrics.val_accuracy.append(val_acc)
+        metrics.val_action_accuracy.append(val_act_acc)
 
-        # Scheduler
+        # Scheduler step
         if config.lr_scheduler == "plateau" and scheduler:
             scheduler.step(val_loss)
         elif config.lr_scheduler == "cosine" and scheduler:
@@ -284,7 +344,6 @@ def train(config: TrainingConfig) -> TrainingMetrics:
             metrics.best_val_loss = val_loss
             metrics.best_epoch = epoch
             status = " ★ BEST"
-            # Save checkpoint
             torch.save(
                 {
                     "epoch": epoch,
@@ -292,7 +351,16 @@ def train(config: TrainingConfig) -> TrainingMetrics:
                     "optimizer_state_dict": optimizer.state_dict(),
                     "val_loss": val_loss,
                     "val_accuracy": val_acc,
+                    "val_action_accuracy": val_act_acc,
                     "model_config": model_config,
+                    "loss_type": "mse",
+                    # Save full metric history for potential resume
+                    "train_loss": metrics.train_loss,
+                    "val_loss_curve": metrics.val_loss,
+                    "val_accuracy_curve": metrics.val_accuracy,
+                    "val_action_accuracy_curve": metrics.val_action_accuracy,
+                    "best_val_loss": metrics.best_val_loss,
+                    "best_epoch": metrics.best_epoch,
                 },
                 save_dir / "best_model.pt",
             )
@@ -301,6 +369,7 @@ def train(config: TrainingConfig) -> TrainingMetrics:
             f"Train Loss: {train_loss:.4f} | "
             f"Val Loss: {val_loss:.4f} | "
             f"Val Acc: {val_acc:.3f} | "
+            f"Act Acc: {val_act_acc:.3f} | "
             f"LR: {lr:.2e} | "
             f"Time: {epoch_time:.1f}s{status}"
         )
@@ -309,23 +378,32 @@ def train(config: TrainingConfig) -> TrainingMetrics:
     print(f"\n═══ Training complete in {total_time:.0f}s ═══")
     print(f"Best val loss: {metrics.best_val_loss:.4f} at epoch {metrics.best_epoch}")
 
-    # Save final model
+    # Save final checkpoint (full state for potential resume)
     torch.save(
         {
             "epoch": config.epochs,
             "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
             "model_config": model_config,
+            "loss_type": "mse",
+            "train_loss": metrics.train_loss,
+            "val_loss": metrics.val_loss,
+            "val_accuracy": metrics.val_accuracy,
+            "val_action_accuracy": metrics.val_action_accuracy,
+            "best_val_loss": metrics.best_val_loss,
+            "best_epoch": metrics.best_epoch,
         },
         save_dir / "final_model.pt",
     )
 
-    # Save metrics
+    # Standalone metrics.json for quick inspection
     with open(save_dir / "metrics.json", "w") as f:
         json.dump(
             {
                 "train_loss": metrics.train_loss,
                 "val_loss": metrics.val_loss,
                 "val_accuracy": metrics.val_accuracy,
+                "val_action_accuracy": metrics.val_action_accuracy,
                 "best_val_loss": metrics.best_val_loss,
                 "best_epoch": metrics.best_epoch,
             },
