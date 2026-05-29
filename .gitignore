@@ -38,3 +38,4 @@ wandb/
 /data/
 nanobot/
 uv.lock
+eval_boards_*.npz

@@ -245,6 +245,7 @@ def evaluate(
     }
     t0 = time.time()
     gen_failures = 0
+    progress_interval = max(1, min(50, n_games // 10))
 
     for i in range(n_games):
         prebuilt = pool.get(i, rng, use_no_guess) if pool else None
@@ -275,7 +276,7 @@ def evaluate(
         else:
             results["stuck"] += 1
 
-        if (i + 1) % 100 == 0:
+        if (i + 1) % progress_interval == 0:
             elapsed = time.time() - t0
             played = i + 1 - gen_failures
             wr = results["won"] / max(1, played) if played > 0 else 0
@@ -336,9 +337,15 @@ def main():
     parser.add_argument("--refine", type=int, default=1,
                         help="Iterative refinement steps during inference (default: 1 = single-pass)")
     parser.add_argument("--board_pool", type=Path, default=None,
-                        help="Save/load generated boards to .npz for reuse (speeds up repeated evals)")
+                        help="Save/load generated boards to .npz for reuse (default: auto)")
+    parser.add_argument("--no_board_pool", action="store_true",
+                        help="Disable board pooling (always regenerate boards)")
 
     args = parser.parse_args()
+
+    # Auto-generate board pool path if not disabled
+    if args.board_pool is None and not args.no_board_pool:
+        args.board_pool = Path(f"eval_boards_{args.width}x{args.height}_{args.mines}.npz")
 
     if args.device == "auto":
         if torch.cuda.is_available():
