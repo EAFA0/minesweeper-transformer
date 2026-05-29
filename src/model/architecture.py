@@ -290,14 +290,32 @@ class MinesweeperTransformer(nn.Module):
         # Migrate old 10-channel CNN to 11-channel
         cnn_key = "cnn.net.0.weight"
         if cnn_key in state_dict:
-            old_w = state_dict[cnn_key]  # (64, 10, 3, 3)
-            new_w = self.cnn.net[0].weight.data  # (64, 11, 3, 3)
+            old_w = state_dict[cnn_key]
+            new_w = self.cnn.net[0].weight.data
             if old_w.shape[1] == 10 and new_w.shape[1] == 11:
-                # Pad: copy first 10 channels, zero for 11th
                 padded = torch.zeros_like(new_w)
                 padded[:, :10] = old_w
                 state_dict[cnn_key] = padded
                 print("  (Migrated CNN: 10→11 channels, extra channel zero-padded)")
+
+        # Migrate old 1-channel output to 2-channel (prob + confidence)
+        out_w_key = "output_head.weight"
+        out_b_key = "output_head.bias"
+        if out_w_key in state_dict:
+            old_w = state_dict[out_w_key]
+            new_w = self.output_head.weight.data
+            if old_w.shape[0] == 1 and new_w.shape[0] == 2:
+                padded_w = torch.zeros_like(new_w)
+                padded_w[0:1] = old_w  # copy prob channel, confidence stays zero
+                state_dict[out_w_key] = padded_w
+            if out_b_key in state_dict:
+                old_b = state_dict[out_b_key]
+                new_b = self.output_head.bias.data
+                if old_b.shape[0] == 1 and new_b.shape[0] == 2:
+                    padded_b = torch.zeros_like(new_b)
+                    padded_b[0:1] = old_b
+                    state_dict[out_b_key] = padded_b
+            print("  (Migrated output head: 1→2 channels, confidence initialized to zero)")
 
         # Filter old positional encoding keys
         migrated = {}
