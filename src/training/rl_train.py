@@ -36,7 +36,12 @@ class RLConfig:
     height: int = 8
     total_mines: int = 10
     mine_continue: bool = False
-    warmup_clicks: int = 0  # random safe reveals before model takes over (disabled)
+    warmup_clicks: int = 0
+    mixed_env: bool = True           # random size + density each episode
+    mixed_min_size: int = 6
+    mixed_max_size: int = 10
+    mixed_min_density: float = 0.10
+    mixed_max_density: float = 0.40
 
     # RL hyperparameters
     temperature: float = 1.0
@@ -314,13 +319,23 @@ def train_rl(config: RLConfig) -> dict:
         total_mines=config.total_mines,
         mine_continue=config.mine_continue,
         warmup_clicks=config.warmup_clicks,
+        mixed=config.mixed_env,
+        mixed_min_size=config.mixed_min_size,
+        mixed_max_size=config.mixed_max_size,
+        mixed_min_density=config.mixed_min_density,
+        mixed_max_density=config.mixed_max_density,
         rng=rng,
     )
     eval_env = RLEnv(
         width=config.width, height=config.height,
         total_mines=config.total_mines,
-        mine_continue=False,  # eval: game ends on mine
+        mine_continue=False,
         warmup_clicks=config.warmup_clicks,
+        mixed=config.mixed_env,
+        mixed_min_size=config.mixed_min_size,
+        mixed_max_size=config.mixed_max_size,
+        mixed_min_density=config.mixed_min_density,
+        mixed_max_density=config.mixed_max_density,
         rng=np.random.default_rng(99),
     )
 

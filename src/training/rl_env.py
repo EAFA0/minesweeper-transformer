@@ -50,6 +50,11 @@ class RLEnv:
         mine_continue: bool = False,
         max_steps: int = 200,
         warmup_clicks: int = 0,
+        mixed: bool = False,                # random size + density each episode
+        mixed_min_size: int = 6,
+        mixed_max_size: int = 10,
+        mixed_min_density: float = 0.10,
+        mixed_max_density: float = 0.40,
         rewards: Optional[Rewards] = None,
         rng: Optional[np.random.Generator] = None,
     ):
@@ -59,6 +64,11 @@ class RLEnv:
         self.mine_continue = mine_continue
         self.max_steps = max_steps
         self.warmup_clicks = warmup_clicks
+        self.mixed = mixed
+        self.mixed_min_size = mixed_min_size
+        self.mixed_max_size = mixed_max_size
+        self.mixed_min_density = mixed_min_density
+        self.mixed_max_density = mixed_max_density
         self.rewards = rewards or Rewards()
         self.rng = rng or np.random.default_rng()
 
@@ -71,23 +81,28 @@ class RLEnv:
         self._steps = 0
         self._hits = 0
 
+        # Mixed mode: random size + density each episode
+        if self.mixed:
+            w = self.rng.integers(self.mixed_min_size, self.mixed_max_size + 1)
+            h = self.rng.integers(self.mixed_min_size, self.mixed_max_size + 1)
+            density = self.rng.uniform(self.mixed_min_density, self.mixed_max_density)
+            mines = max(1, int(w * h * density))
+        else:
+            w, h, mines = self.width, self.height, self.total_mines
+
         self.game = generate_self_validated_board(
-            width=self.width, height=self.height,
-            total_mines=self.total_mines, rng=self.rng,
-            warmup_clicks=self.warmup_clicks,
+            width=w, height=h, total_mines=mines,
+            rng=self.rng, warmup_clicks=self.warmup_clicks,
         )
         if self.game is None:
-            # Should rarely happen with hint-based solver; if it does,
-            # try once more with a different seed
             self.game = generate_self_validated_board(
-                width=self.width, height=self.height,
-                total_mines=self.total_mines,
+                width=w, height=h, total_mines=mines,
                 rng=np.random.default_rng(),
             )
         if self.game is None:
             raise RuntimeError(
                 f"Failed to generate self-validated board "
-                f"{self.width}×{self.height}/{self.total_mines}"
+                f"{w}×{h}/{mines}"
             )
 
         return self.state
