@@ -249,11 +249,15 @@ class MinesweeperTransformer(nn.Module):
         probs = torch.full((B, 1, H, W), 0.5, device=board.device)
         results = []
 
-        for _ in range(num_steps):
+        for step in range(num_steps):
             raw = self._single_pass(board, probs)  # (B, 2, H, W)
             probs = torch.sigmoid(raw[:, 0:1])      # P(mine)
             conf = torch.sigmoid(raw[:, 1:2])       # confidence
             results.append(torch.cat([probs, conf], dim=1))
+
+            # Detach between iterations to prevent BPTT graph explosion.
+            # Only the sampled step k is trained — no need for multi-step backprop.
+            probs = probs.detach()
 
             # Early stop if confident enough (only during inference)
             if not self.training and conf.mean() > confidence_threshold:

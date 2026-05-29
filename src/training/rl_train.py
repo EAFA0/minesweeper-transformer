@@ -264,17 +264,24 @@ def reinforce_step(
     adv_std = adv_tensor.std() + 1e-8
     advantages = ((adv_tensor - adv_mean) / adv_std).tolist()
 
-    # Policy gradient: compute logits through refinement
+    # Policy gradient: compute logits through refinement (with detach — no BPTT chain)
     optimizer.zero_grad()
     batch_states = torch.stack(states).to(device)
 
-    # Run refinement (gradient flows through all steps → model learns to refine better)
     if refine_steps > 1:
-        results = model.refine(batch_states, num_steps=refine_steps)
-        probs = results[-1][:, 0:1]  # (N, 1, H, W) — final step P(mine)
+        import random
+        B, _, H, W = batch_states.shape
+        k = random.randint(1, refine_steps)
+        prev = torch.full((B, 1, H, W), 0.5, device=device)
+        for _ in range(k):
+            raw = model._single_pass(batch_states, prev)
+            pred = torch.sigmoid(raw[:, 0:1])
+            conf = torch.sigmoid(raw[:, 1:2])
+            prev = pred.detach()  # cut BPTT chain — no 8-step graph explosion
+        probs = pred  # (N, 1, H, W) — step k P(mine)
         eps = 1e-7
         probs = probs.clamp(eps, 1 - eps)
-        logits = torch.log(probs / (1 - probs)).squeeze(1)  # (N, H, W) — inverse sigmoid
+        logits = torch.log(probs / (1 - probs)).squeeze(1)
     else:
         raw = model(batch_states)  # (N, 2, H, W)
         logits = raw[:, 0]  # (N, H, W) — channel 0 = P(mine) logits
