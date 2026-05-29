@@ -267,17 +267,21 @@ class MinesweeperTransformer(nn.Module):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
     @torch.no_grad()
-    def predict(self, x: torch.Tensor, refine_steps: int = 1) -> torch.Tensor:
-        """Return P(mine) probabilities.
+    def predict(self, x: torch.Tensor, max_refine_steps: int = 5) -> torch.Tensor:
+        """Return P(mine) probabilities with adaptive refinement.
 
-        Args:
-            x:            (B, 10, H, W) board channels
-            refine_steps: if > 1, runs iterative refinement with adaptive stopping
+        Always runs at least 1 pass. If the model was trained with
+        iterative refinement, it will automatically iterate more
+        when confidence is low and stop early when confident.
+
+        For models trained without refinement (confidence head zero):
+        skips iteration — single pass only.
         """
-        if refine_steps <= 1:
-            raw = self.forward(x)  # (B, 2, H, W)
-            return torch.sigmoid(raw[:, 0:1])
-        results = self.refine(x, num_steps=refine_steps)
+        # Quick check: if confidence head was never trained (all zeros),
+        # refinement won't help — skip the overhead
+        if self.output_head.bias[1].abs().max() < 1e-8:
+            return torch.sigmoid(self.forward(x)[:, 0:1])
+        results = self.refine(x, num_steps=max_refine_steps)
         return results[-1][:, 0:1]  # final prob only
 
     def load_pretrained(self, checkpoint_path: str, device: str = "cpu") -> None:
