@@ -38,7 +38,7 @@ class RLConfig:
     mine_continue: bool = False
 
     # RL hyperparameters
-    temperature: float = 0.3
+    temperature: float = 1.0
     gamma: float = 0.95
     baseline_ema: float = 0.1
 
@@ -261,6 +261,12 @@ def reinforce_step(
 
     if n_steps_total == 0:
         return 0.0, 0.0, baseline
+
+    # Advantage normalization (stabilizes REINFORCE)
+    adv_tensor = torch.tensor(advantages, dtype=torch.float32)
+    adv_mean = adv_tensor.mean()
+    adv_std = adv_tensor.std() + 1e-8
+    advantages = ((adv_tensor - adv_mean) / adv_std).tolist()
 
     # Policy gradient
     optimizer.zero_grad()
