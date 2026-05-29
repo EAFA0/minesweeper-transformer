@@ -51,7 +51,7 @@ class RLConfig:
     grad_clip_norm: float = 1.0
 
     # Iterative refinement (uses refine() during inference)
-    refine_steps: int = 4  # iterative refinement for action selection + gradient
+    refine_steps: int = 8  # iterative refinement for action selection + gradient
 
     # Checkpoint
     pretrained_path: str = ""

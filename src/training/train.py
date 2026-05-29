@@ -41,7 +41,7 @@ class TrainingConfig:
     grad_clip_norm: float = 1.0
 
     # Iterative refinement
-    refinement_steps: int = 1    # 1 = single-pass, 3 = unroll 3x with shared weights
+    refinement_steps: int = 8    # max refinement iterations (1 = single-pass)
 
     # Logging
     log_interval: int = 50
@@ -142,46 +142,54 @@ def train_epoch(
     log_interval: int,
     grad_clip_norm: float = 1.0,
     refinement_steps: int = 1,
+    tau_stop: float = 0.95,
 ) -> float:
     """Train one epoch. Returns average loss.
 
-    When refinement_steps > 1, uses iterative refinement with
-    progressive loss weighting: later steps get higher weight.
+    When refinement_steps > 1: adaptive training with random step sampling.
+    Each batch randomly chooses k ∈ [1, refinement_steps], runs k iterations,
+    then computes loss ONLY on step k. A ponder penalty punishes the model
+    for running many steps without reaching high confidence.
     """
     model.train()
     total_loss = 0.0
     n_batches = len(dataloader)
-
-    # Progressive weights for refinement steps
-    if refinement_steps > 1:
-        step_weights = [0.1, 0.3, 0.6, 0.8, 1.0][:refinement_steps]
-        step_weights = [w / sum(step_weights) for w in step_weights]
-    else:
-        step_weights = [1.0]
+    import random
 
     for batch_idx, (channels, probs, mask) in enumerate(dataloader):
         channels = channels.to(device)
         probs = probs.to(device)
         mask = mask.to(device)
+        B = channels.shape[0]
 
         optimizer.zero_grad()
 
         if refinement_steps > 1:
-            all_outputs = model.refine(channels, num_steps=refinement_steps)
-            # all_outputs[k] = (B, 2, H, W) = [prob, conf] concatenated
-            loss = 0.0
-            for w, out in zip(step_weights, all_outputs):
-                pred = out[:, 0:1]    # P(mine)
-                conf = out[:, 1:2]    # confidence
-                prob_loss = compute_masked_mse(pred, probs, mask)
+            # Random step count for this batch
+            k = random.randint(1, refinement_steps)
 
-                # Confidence target: high when target is extreme (0 or 1), low when ambiguous (0.5)
-                conf_target = 1.0 - 2.0 * torch.abs(probs.unsqueeze(1) - 0.5)  # (B, 1, H, W)
-                conf_loss = compute_masked_mse(conf, conf_target.squeeze(1), mask)
+            # Initial prior
+            prev = torch.full((B, 1, channels.shape[2], channels.shape[3]), 0.5, device=device)
 
-                loss += w * (prob_loss + 0.3 * conf_loss)
+            # Run k iterations with detach — no BPTT through refinement chain
+            for _ in range(k):
+                raw = model._single_pass(channels, prev)
+                pred = torch.sigmoid(raw[:, 0:1])
+                conf = torch.sigmoid(raw[:, 1:2])
+                prev = pred.detach()  # cut gradient, save memory
 
-            pred_probs = all_outputs[-1][:, 0:1]  # final step prob for logging
+            # Loss on step k only
+            prob_loss = compute_masked_mse(pred, probs, mask)
+            conf_target = 1.0 - 2.0 * torch.abs(probs.unsqueeze(1) - 0.5)
+            conf_loss = compute_masked_mse(conf, conf_target.squeeze(1), mask)
+
+            # Ponder penalty: punish running deep without confidence
+            confidence_gap = torch.clamp(tau_stop - conf, min=0.0)
+            ponder_penalty = (k - 1) * (confidence_gap * conf_target).mean()
+
+            loss = prob_loss + 0.3 * conf_loss + 0.1 * ponder_penalty
+            pred_probs = pred
+
         else:
             raw = model(channels)
             pred_probs = torch.sigmoid(raw[:, 0:1])

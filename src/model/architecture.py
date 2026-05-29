@@ -56,7 +56,7 @@ class ModelConfig:
     pe_grid_size: int = 16      # PE is learned at 16×16, bilinear-interpolated to any H×W
 
     # Iterative refinement
-    refinement_steps: int = 4   # 4 = iterative refinement, 1 = single-pass
+    refinement_steps: int = 8   # max refinement iterations
 
     # Output
     num_classes: int = 2        # [0]=P(mine) logit, [1]=confidence logit

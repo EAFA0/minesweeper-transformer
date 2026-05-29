@@ -12,7 +12,7 @@
     python scripts/train_stage.py --stage S2 --force_data  # 强制重新生成数据
     python scripts/train_stage.py --stage S1 --resume      # 从 checkpoint 续训
 
-密度课程 (3 阶段, 密度递增):
+密度课程 (3 阶段, 密度递增, --refine 8):
     S1 : 8×8 / 10雷   (15.6% 密度, 从头, 1 epoch)
     S2 : 8×8 / 20雷   (31.3% 密度, 继承 S1, 1 epoch)
     S3 : 10×10 / 40雷 (40.0% 密度, 继承 S2, 2 epoch)
@@ -127,8 +127,8 @@ def main():
                    help="强制重新生成训练数据")
     p.add_argument("--resume", action="store_true",
                    help="从已有 checkpoint 续训")
-    p.add_argument("--refine", type=int, default=4, dest="refinement_steps",
-                   help="迭代 refinement 步数 (default: 4)")
+    p.add_argument("--refine", type=int, default=8, dest="refinement_steps",
+                   help="迭代 refinement 最大步数 (default: 8)")
     p.add_argument("--eval_only", action="store_true",
                    help="仅评估已有 checkpoint，不训练")
     p.add_argument("--device", default="auto")
