@@ -317,6 +317,11 @@ def train(config: TrainingConfig) -> TrainingMetrics:
             f"  Resumed from epoch {start_epoch}, "
             f"best val_loss={metrics.best_val_loss:.4f} at epoch {metrics.best_epoch}"
         )
+        # Auto-extend: if target epochs <= current, add configured epochs on top
+        if config.epochs <= start_epoch:
+            add = config.epochs
+            config.epochs = start_epoch + add
+            print(f"  Auto-extending: +{add} epochs → total {config.epochs}")
     elif config.pretrained:
         print(f"Loading pretrained weights from: {config.pretrained}")
         model.load_pretrained(config.pretrained, device=str(device))
