@@ -31,6 +31,78 @@ def load_model(checkpoint_path: str, device: str) -> MinesweeperTransformer:
     return model
 
 
+class BoardPool:
+    """Save and reuse generated boards to avoid slow ms-toollib regeneration.
+
+    Usage:
+        pool = BoardPool("boards.npz", width=16, height=16, mines=80)
+        for i in range(n_games):
+            game = pool.get(i, rng=rng, use_no_guess=True)
+            # ... play game ...
+    """
+
+    def __init__(self, path: Path, width: int, height: int, mines: int):
+        self.path = Path(path)
+        self.width = width
+        self.height = height
+        self.mines = mines
+        self._cache_mines: Optional[List[np.ndarray]] = None
+        self._cache_visible: Optional[List[np.ndarray]] = None
+
+    def _load(self) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+        if self._cache_mines is not None:
+            return self._cache_mines, self._cache_visible or []
+        if self.path.exists():
+            data = np.load(self.path, allow_pickle=True)
+            n = len(data.files) // 2  # mines_i + visible_i per board
+            self._cache_mines = [data[f"mines_{i}"] for i in range(n)]
+            self._cache_visible = [data[f"visible_{i}"] for i in range(n)]
+            return self._cache_mines, self._cache_visible
+        return [], []
+
+    def _save(self, mines: List[np.ndarray], visibles: List[np.ndarray]) -> None:
+        save_dict = {}
+        for i, (m, v) in enumerate(zip(mines, visibles)):
+            save_dict[f"mines_{i}"] = m
+            save_dict[f"visible_{i}"] = v
+        np.savez_compressed(self.path, **save_dict)
+        self._cache_mines = mines
+        self._cache_visible = visibles
+
+    def get(self, idx: int, rng: np.random.Generator, use_no_guess: bool) -> Optional[MinesweeperGame]:
+        """Get board #idx. Generates and caches if not in pool."""
+        mines_list, visibles_list = self._load()
+        if idx < len(mines_list):
+            return MinesweeperGame.from_mine_mask(
+                self.width, self.height, mines_list[idx],
+                first_done=True, visible=visibles_list[idx],
+            )
+
+        # Generate new board
+        if use_no_guess:
+            from data.no_guess import generate_no_guess_board
+            ng_rng = np.random.default_rng(rng.integers(0, 2**31))
+            game = generate_no_guess_board(
+                width=self.width, height=self.height, total_mines=self.mines,
+                rng=ng_rng, max_attempts=200,
+            )
+        else:
+            game = MinesweeperGame(self.width, self.height, self.mines)
+            r = rng.integers(0, self.height)
+            c = rng.integers(0, self.width)
+            game.make_move(r, c, MoveType.REVEAL)
+
+        if game is None or game.status != GameStatus.PLAYING:
+            return None
+
+        # Save to pool
+        mine_mask = game.get_mine_mask()
+        mines_list.append(mine_mask)
+        visibles_list.append(game.visible.copy())
+        self._save(mines_list, visibles_list)
+        return game
+
+
 def pick_action(
     model: MinesweeperTransformer,
     game: MinesweeperGame,
@@ -71,17 +143,19 @@ def play_one_game(
     no_guess_rng: Optional[np.random.Generator] = None,
     max_steps: int = 200,
     refine_steps: int = 1,
+    prebuilt_game: Optional[MinesweeperGame] = None,
 ) -> dict:
-    """Play one game with the model. Returns detailed stats dict.
+    """Play one game with the model.
 
-    If use_no_guess=True, generates a no-guess board via ms-toollib
-    (first click already done by the generator). Otherwise uses a
-    random board with a random first click.
+    If prebuilt_game is provided (from BoardPool), uses it directly.
+    Otherwise generates a new board via ms-toollib or random placement.
     """
     if rng is None:
         rng = np.random.default_rng()
 
-    if use_no_guess:
+    if prebuilt_game is not None:
+        game = prebuilt_game
+    elif use_no_guess:
         from data.no_guess import generate_no_guess_board
         ng_rng = no_guess_rng or rng
         game = generate_no_guess_board(
@@ -96,7 +170,6 @@ def play_one_game(
             }
     else:
         game = MinesweeperGame(width, height, total_mines)
-        # Random first click
         r = rng.integers(0, height)
         c = rng.integers(0, width)
         game.make_move(r, c, MoveType.REVEAL)
@@ -141,6 +214,7 @@ def evaluate(
     device: str = "cpu",
     use_no_guess: bool = False,
     refine_steps: int = 1,
+    board_pool: Optional[Path] = None,
 ) -> dict:
     """Run evaluation. Returns statistics dict."""
     device = torch.device(device)
@@ -156,6 +230,14 @@ def evaluate(
     # Separate RNG for no-guess generation to keep game sequence deterministic
     ng_rng = np.random.default_rng(seed + 1) if use_no_guess else None
 
+    # Board pool (avoid regenerating slow ms-toollib boards)
+    pool = None
+    if board_pool:
+        pool = BoardPool(board_pool, width, height, total_mines)
+        mines, _ = pool._load()
+        print(f"Board pool: {len(mines)} boards cached in {board_pool}")
+        print()
+
     results = {
         "won": 0, "lost": 0, "stuck": 0, "gen_failed": 0,
         "steps": [], "action_accuracies": [],
@@ -165,10 +247,12 @@ def evaluate(
     gen_failures = 0
 
     for i in range(n_games):
+        prebuilt = pool.get(i, rng, use_no_guess) if pool else None
         game_stats = play_one_game(
             model, device, width, height, total_mines,
             rng=rng, use_no_guess=use_no_guess, no_guess_rng=ng_rng,
             refine_steps=refine_steps,
+            prebuilt_game=prebuilt,
         )
 
         if game_stats.get("generation_failed"):
@@ -251,6 +335,8 @@ def main():
                         help="Evaluate on no-guess boards (pure reasoning, no luck)")
     parser.add_argument("--refine", type=int, default=1,
                         help="Iterative refinement steps during inference (default: 1 = single-pass)")
+    parser.add_argument("--board_pool", type=Path, default=None,
+                        help="Save/load generated boards to .npz for reuse (speeds up repeated evals)")
 
     args = parser.parse_args()
 
@@ -274,6 +360,7 @@ def main():
         device=device,
         use_no_guess=args.no_guess,
         refine_steps=args.refine,
+        board_pool=args.board_pool,
     )
 
 

@@ -57,6 +57,46 @@ class MinesweeperGame:
         # Track remaining covered non-mine cells for win detection
         self._safe_covered: int = width * height - total_mines
 
+    @classmethod
+    def from_mine_mask(
+        cls, width: int, height: int, mine_mask: np.ndarray,
+        first_r: int = 0, first_c: int = 0, first_done: bool = False,
+        visible: Optional[np.ndarray] = None,
+    ) -> "MinesweeperGame":
+        """Create a game with pre-placed mines (for board pool reuse).
+
+        Args:
+            width, height: board dimensions
+            mine_mask: (height, width) bool array, True=mine
+            first_r, first_c: position for first click (ignored if first_done=True)
+            first_done: if True, first click already applied
+            visible: if provided, restore visible state from saved board
+        """
+        game = cls.__new__(cls)
+        game.width = width
+        game.height = height
+        mine_count = int(mine_mask.sum())
+        game.total_mines = mine_count
+        game.board = np.where(mine_mask, _MINE, 0).astype(np.int8)
+        game.first_move = False  # mines already placed, skip _generate_board
+        game._mine_positions = np.argwhere(mine_mask)
+        game._safe_covered = width * height - mine_count
+        game.status = GameStatus.PLAYING
+
+        if visible is not None:
+            game.visible = visible.copy()
+            # Adjust _safe_covered: subtract already-revealed cells
+            revealed = (visible >= 0).sum()
+            game._safe_covered = width * height - mine_count - revealed
+        elif first_done:
+            game.visible = np.full((height, width), CellState.COVERED, dtype=np.int8)
+        else:
+            game.visible = np.full((height, width), CellState.COVERED, dtype=np.int8)
+            # Apply first click (manually, since first_move=False skips _generate_board)
+            game._reveal(first_r, first_c)
+
+        return game
+
     # ─── Board Generation ────────────────────────────────────────────────
 
     def _generate_board(self, safe_r: int, safe_c: int) -> None:
