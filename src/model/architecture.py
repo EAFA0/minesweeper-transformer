@@ -10,12 +10,23 @@ Architecture:
     → Output head (Conv1×1) → (B, 1, H, W)
     → Sigmoid → P(mine) per cell
 
+Iterative Refinement mode:
+    The model can be called multiple times, feeding its own output back
+    as an additional input channel (prev_probs). This allows the model
+    to "rethink" its predictions — detecting contradictions and refining.
+    
+    Step 0: prev_probs = 0.5 (uniform)
+    Step 1: probs = model(board, prev_probs)
+    Step 2: probs = model(board, probs)     ← sees previous guess
+    Step 3: probs = model(board, probs)     ← further refinement
+    
+    Shared weights across all steps — the model learns a "refinement operator".
+
 Supports variable board sizes via bilinear PE interpolation (ViT-style).
-CNN and transformer layers are size-agnostic — only PE adapts to input size.
 """
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import List, Optional
 
 import torch
 import torch.nn as nn
@@ -27,6 +38,8 @@ class ModelConfig:
     """Configuration for MinesweeperTransformer."""
     # Input
     in_channels: int = 10       # covered + flagged + 8 number channels
+    # Internal: +1 channel for prev_probs during iterative refinement
+    # (the extra channel is handled automatically)
 
     # CNN frontend
     cnn_channels: int = 64      # output channels of CNN
@@ -35,15 +48,18 @@ class ModelConfig:
     # Transformer
     d_model: int = 64           # must match cnn_channels
     nhead: int = 4              # attention heads
-    num_layers: int = 4         # transformer encoder layers (↑ from 3)
+    num_layers: int = 4         # transformer encoder layers
     dim_feedforward: int = 256  # FFN hidden dim
     dropout: float = 0.2
 
     # Positional encoding — reference grid size for interpolation
     pe_grid_size: int = 16      # PE is learned at 16×16, bilinear-interpolated to any H×W
 
+    # Iterative refinement
+    refinement_steps: int = 1   # 1 = single-pass, 3 = unroll 3x during training
+
     # Output
-    num_classes: int = 1
+    num_classes: int = 2        # [0]=P(mine) logit, [1]=confidence logit
 
     def __post_init__(self):
         if self.cnn_channels != self.d_model:
@@ -75,16 +91,10 @@ class CNNEncoder(nn.Module):
 
 
 class InterpolatablePositionalEncoding(nn.Module):
-    """2D learnable PE with bilinear interpolation for variable input sizes.
-
-    PE is stored at a reference grid size (default 16×16). At forward time,
-    it's bilinear-interpolated to match the input's H×W.
-    This allows a model trained on one board size to transfer to another.
-    """
+    """2D learnable PE with bilinear interpolation for variable input sizes."""
 
     def __init__(self, d_model: int, ref_grid: int = 16):
         super().__init__()
-        # Learned at reference size: (1, d_model, ref_grid, ref_grid)
         self.pe = nn.Parameter(torch.randn(1, d_model, ref_grid, ref_grid) * 0.02)
         self.ref_grid = ref_grid
 
@@ -129,10 +139,16 @@ class TransformerEncoder(nn.Module):
 # ─── Full Model ────────────────────────────────────────────────────────────
 
 class MinesweeperTransformer(nn.Module):
-    """CNN + Transformer model for minesweeper. Supports variable board sizes.
+    """CNN + Transformer model for minesweeper.
 
-    Input:  (B, 10, H, W)
-    Output: (B, 1, H, W) — logits for P(mine). Apply sigmoid for probabilities.
+    Single-pass (refinement_steps=1):
+        Input:  (B, 10, H, W)
+        Output: (B, 1, H, W) — logits for P(mine)
+
+    Iterative refinement (refinement_steps=N):
+        Internally feeds own output back as an 11th channel,
+        running N passes with shared weights. Returns list of
+        N probability tensors for progressive-loss training.
     """
 
     def __init__(self, config: Optional[ModelConfig] = None):
@@ -141,19 +157,19 @@ class MinesweeperTransformer(nn.Module):
             config = ModelConfig()
         self.config = config
 
-        # CNN frontend (size-agnostic)
+        # CNN: 11 input channels = 10 board + 1 prev_probs
         self.cnn = CNNEncoder(
-            in_channels=config.in_channels,
+            in_channels=config.in_channels + 1,
             out_channels=config.d_model,
             num_layers=config.cnn_layers,
         )
 
-        # Positional encoding (interpolatable to any H,W)
+        # Positional encoding (interpolatable)
         self.pos_encoding = InterpolatablePositionalEncoding(
             d_model=config.d_model, ref_grid=config.pe_grid_size,
         )
 
-        # Transformer (sequence-length agnostic)
+        # Transformer
         self.transformer = TransformerEncoder(
             d_model=config.d_model,
             nhead=config.nhead,
@@ -162,39 +178,85 @@ class MinesweeperTransformer(nn.Module):
             dropout=config.dropout,
         )
 
-        # Output head (size-agnostic Conv1×1)
+        # Output head
         self.output_head = nn.Conv2d(config.d_model, config.num_classes, kernel_size=1)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass. H,W inferred from input tensor.
+    def _single_pass(self, board: torch.Tensor, prev_probs: torch.Tensor) -> torch.Tensor:
+        """Internal: one forward pass with board + prev_probs concatenated.
 
         Args:
-            x: (B, C, H, W) input channels
+            board:      (B, 10, H, W) board channels
+            prev_probs: (B, 1, H, W) previous probability estimate
 
         Returns:
-            (B, 1, H, W) logits
+            (B, 2, H, W) raw outputs — [0]=P(mine) logit, [1]=confidence logit
         """
-        B, C, H, W = x.shape
+        B, C, H, W = board.shape
+        x = torch.cat([board, prev_probs], dim=1)  # (B, 11, H, W)
 
-        # CNN: (B, C, H, W) → (B, d_model, H, W)
+        # CNN
         features = self.cnn(x)
 
-        # PE (interpolated to H,W)
+        # PE
         features = self.pos_encoding(features)
 
-        # Reshape to sequence: (B, d_model, H, W) → (B, H*W, d_model)
+        # Sequence → Transformer
         seq = features.flatten(2).transpose(1, 2)
-
-        # Transformer
         seq = self.transformer(seq)
 
-        # Reshape back: (B, H*W, d_model) → (B, d_model, H, W)
+        # Back to spatial
         features = seq.transpose(1, 2).reshape(B, self.config.d_model, H, W)
 
-        # Output head
-        logits = self.output_head(features)  # (B, 1, H, W)
+        # Output
+        return self.output_head(features)  # (B, 1, H, W)
 
-        return logits
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Single-pass forward (standard mode).
+
+        Args:
+            x: (B, 10, H, W) board channels
+
+        Returns:
+            (B, 2, H, W) raw outputs — [0]=P(mine) logit, [1]=confidence logit
+        """
+        B, _, H, W = x.shape
+        prev = torch.zeros(B, 1, H, W, device=x.device)
+        return self._single_pass(x, prev)
+
+    def refine(self, board: torch.Tensor, num_steps: int = 5,
+               confidence_threshold: float = 0.95) -> List[torch.Tensor]:
+        """Iterative refinement: run model N times with self-feedback.
+
+        Step 0: prev = uniform(0.5)
+        Step k: probs_k, conf_k = model(board, probs_{k-1})
+
+        Stops early if mean confidence exceeds threshold (inference mode).
+        During training, always runs num_steps for consistent loss.
+
+        Args:
+            board:                (B, 10, H, W) board channels
+            num_steps:            max refinement iterations
+            confidence_threshold: early-stop when mean(conf) > this
+
+        Returns:
+            List of (B, 2, H, W) tensors — [probs_sigmoid, conf_sigmoid] per step
+            Last element is the final output.
+        """
+        B, _, H, W = board.shape
+        probs = torch.full((B, 1, H, W), 0.5, device=board.device)
+        results = []
+
+        for _ in range(num_steps):
+            raw = self._single_pass(board, probs)  # (B, 2, H, W)
+            probs = torch.sigmoid(raw[:, 0:1])      # P(mine)
+            conf = torch.sigmoid(raw[:, 1:2])       # confidence
+            results.append(torch.cat([probs, conf], dim=1))
+
+            # Early stop if confident enough (only during inference)
+            if not self.training and conf.mean() > confidence_threshold:
+                break
+
+        return results
 
     @property
     def num_parameters(self) -> int:
@@ -202,34 +264,50 @@ class MinesweeperTransformer(nn.Module):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
     @torch.no_grad()
-    def predict(self, x: torch.Tensor) -> torch.Tensor:
-        """Return P(mine) probabilities (sigmoid-applied)."""
-        logits = self.forward(x)
-        return torch.sigmoid(logits)
+    def predict(self, x: torch.Tensor, refine_steps: int = 1) -> torch.Tensor:
+        """Return P(mine) probabilities.
+
+        Args:
+            x:            (B, 10, H, W) board channels
+            refine_steps: if > 1, runs iterative refinement with adaptive stopping
+        """
+        if refine_steps <= 1:
+            raw = self.forward(x)  # (B, 2, H, W)
+            return torch.sigmoid(raw[:, 0:1])
+        results = self.refine(x, num_steps=refine_steps)
+        return results[-1][:, 0:1]  # final prob only
 
     def load_pretrained(self, checkpoint_path: str, device: str = "cpu") -> None:
         """Load weights from a checkpoint, with automatic format migration.
 
         Handles:
-        - Old format (row_embed + col_embed) → new format (interpolatable pe)
-        - Missing/additional keys are ignored
+        - Old 10-channel CNN → new 11-channel: extra channel zero-padded
+        - Old positional encoding formats
         """
         ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
         state_dict = ckpt.get("model_state_dict", ckpt)
 
-        # Migrate old positional encoding format
+        # Migrate old 10-channel CNN to 11-channel
+        cnn_key = "cnn.net.0.weight"
+        if cnn_key in state_dict:
+            old_w = state_dict[cnn_key]  # (64, 10, 3, 3)
+            new_w = self.cnn.net[0].weight.data  # (64, 11, 3, 3)
+            if old_w.shape[1] == 10 and new_w.shape[1] == 11:
+                # Pad: copy first 10 channels, zero for 11th
+                padded = torch.zeros_like(new_w)
+                padded[:, :10] = old_w
+                state_dict[cnn_key] = padded
+                print("  (Migrated CNN: 10→11 channels, extra channel zero-padded)")
+
+        # Filter old positional encoding keys
         migrated = {}
         for key, value in state_dict.items():
             if key.startswith("pos_encoding.row_embed") or key.startswith("pos_encoding.col_embed"):
-                # Old format: separate row/col embeddings
-                # New format: single pe grid (1, d_model, ref, ref)
-                # We can't perfectly migrate, so skip and keep new PE initialized
                 continue
             migrated[key] = value
 
-        # Load with strict=False to allow PE mismatch
         missing, unexpected = self.load_state_dict(migrated, strict=False)
         if missing:
-            print(f"  (PE reinitialized for new grid size — {len(missing)} keys)")
+            print(f"  (PE reinitialized — {len(missing)} new keys)")
         if unexpected:
             print(f"  (ignored {len(unexpected)} old-format keys)")

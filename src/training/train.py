@@ -7,6 +7,7 @@ Supports:
 - Fresh training from scratch
 - Curriculum transfer (--pretrained: weights only)
 - Training resume (--resume: weights + optimizer state + metrics)
+- Iterative refinement training (refinement_steps > 1)
 """
 
 import json
@@ -38,6 +39,9 @@ class TrainingConfig:
     epochs: int = 50
     lr_scheduler: str = "cosine"
     grad_clip_norm: float = 1.0
+
+    # Iterative refinement
+    refinement_steps: int = 1    # 1 = single-pass, 3 = unroll 3x with shared weights
 
     # Logging
     log_interval: int = 50
@@ -137,11 +141,23 @@ def train_epoch(
     device: str,
     log_interval: int,
     grad_clip_norm: float = 1.0,
+    refinement_steps: int = 1,
 ) -> float:
-    """Train one epoch. Returns average loss."""
+    """Train one epoch. Returns average loss.
+
+    When refinement_steps > 1, uses iterative refinement with
+    progressive loss weighting: later steps get higher weight.
+    """
     model.train()
     total_loss = 0.0
     n_batches = len(dataloader)
+
+    # Progressive weights for refinement steps
+    if refinement_steps > 1:
+        step_weights = [0.1, 0.3, 0.6, 0.8, 1.0][:refinement_steps]
+        step_weights = [w / sum(step_weights) for w in step_weights]
+    else:
+        step_weights = [1.0]
 
     for batch_idx, (channels, probs, mask) in enumerate(dataloader):
         channels = channels.to(device)
@@ -149,9 +165,28 @@ def train_epoch(
         mask = mask.to(device)
 
         optimizer.zero_grad()
-        logits = model(channels)
-        pred_probs = torch.sigmoid(logits)
-        loss = compute_masked_mse(pred_probs, probs, mask)
+
+        if refinement_steps > 1:
+            all_outputs = model.refine(channels, num_steps=refinement_steps)
+            # all_outputs[k] = (B, 2, H, W) = [prob, conf] concatenated
+            loss = 0.0
+            for w, out in zip(step_weights, all_outputs):
+                pred = out[:, 0:1]    # P(mine)
+                conf = out[:, 1:2]    # confidence
+                prob_loss = compute_masked_mse(pred, probs, mask)
+
+                # Confidence target: high when target is extreme (0 or 1), low when ambiguous (0.5)
+                conf_target = 1.0 - 2.0 * torch.abs(probs.unsqueeze(1) - 0.5)
+                conf_loss = compute_masked_mse(conf, conf_target, mask)
+
+                loss += w * (prob_loss + 0.3 * conf_loss)
+
+            pred_probs = all_outputs[-1][:, 0:1]  # final step prob for logging
+        else:
+            raw = model(channels)
+            pred_probs = torch.sigmoid(raw[:, 0:1])
+            loss = compute_masked_mse(pred_probs, probs, mask)
+
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
         optimizer.step()
@@ -174,8 +209,12 @@ def validate(
     model: MinesweeperTransformer,
     dataloader: DataLoader,
     device: str,
+    refinement_steps: int = 1,
 ) -> tuple[float, float, float]:
-    """Validate. Returns (avg_loss, accuracy, action_accuracy)."""
+    """Validate. Returns (avg_loss, accuracy, action_accuracy).
+
+    When refinement_steps > 1, uses iterative refinement for evaluation.
+    """
     model.eval()
     total_loss = 0.0
     total_correct = 0
@@ -188,9 +227,15 @@ def validate(
         probs = probs.to(device)
         mask = mask.to(device)
 
-        logits = model(channels)
-        pred_probs = torch.sigmoid(logits)
-        loss = compute_masked_mse(pred_probs, probs, mask)
+        if refinement_steps > 1:
+            all_outputs = model.refine(channels, num_steps=refinement_steps)
+            pred_probs = all_outputs[-1][:, 0:1]
+            loss = compute_masked_mse(pred_probs, probs, mask)
+        else:
+            raw = model(channels)
+            pred_probs = torch.sigmoid(raw[:, 0:1])
+            loss = compute_masked_mse(pred_probs, probs, mask)
+
         total_loss += loss.item()
 
         preds = (pred_probs.squeeze(1) > 0.5).float()
@@ -321,11 +366,15 @@ def train(config: TrainingConfig) -> TrainingMetrics:
         train_loss = train_epoch(
             model, train_loader, optimizer, device,
             config.log_interval, config.grad_clip_norm,
+            refinement_steps=config.refinement_steps,
         )
         metrics.train_loss.append(train_loss)
 
         # Validate
-        val_loss, val_acc, val_act_acc = validate(model, val_loader, device)
+        val_loss, val_acc, val_act_acc = validate(
+            model, val_loader, device,
+            refinement_steps=config.refinement_steps,
+        )
         metrics.val_loss.append(val_loss)
         metrics.val_accuracy.append(val_acc)
         metrics.val_action_accuracy.append(val_act_acc)

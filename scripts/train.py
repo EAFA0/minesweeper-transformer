@@ -41,6 +41,8 @@ def main():
                         help="Path to pretrained checkpoint (weights only, for curriculum transfer)")
     parser.add_argument("--resume", default="", dest="resume_from",
                         help="Path to checkpoint to resume training (loads weights + optimizer + metrics)")
+    parser.add_argument("--refine", type=int, default=1, dest="refinement_steps",
+                        help="Iterative refinement steps during training (default: 1 = single-pass)")
 
     args = parser.parse_args()
 
@@ -61,6 +63,7 @@ def main():
         grad_clip_norm=args.grad_clip,
         pretrained=args.pretrained,
         resume_from=args.resume_from,
+        refinement_steps=args.refinement_steps,
     )
 
     train(config)

@@ -35,12 +35,20 @@ def pick_action(
     model: MinesweeperTransformer,
     game: MinesweeperGame,
     device: str,
+    refine_steps: int = 1,
 ) -> Optional[Tuple[MoveType, int, int]]:
-    """Choose the next move: reveal the covered cell with lowest P(mine)."""
+    """Choose the next move: reveal the covered cell with lowest P(mine).
+
+    When refine_steps > 1, uses iterative refinement with adaptive stopping
+    (stops when probability distribution stabilizes).
+    """
     channels = game.board_to_channels()
     with torch.no_grad():
         x = torch.from_numpy(channels).unsqueeze(0).to(device)
-        probs = torch.sigmoid(model(x)).squeeze(0).squeeze(0).cpu().numpy()
+        if refine_steps > 1:
+            probs = model.predict(x, refine_steps=refine_steps).squeeze(0).squeeze(0).cpu().numpy()
+        else:
+            probs = model.predict(x).squeeze(0).squeeze(0).cpu().numpy()
 
     covered = game.covered_cells
     if not covered.any():
@@ -62,6 +70,7 @@ def play_one_game(
     use_no_guess: bool = False,
     no_guess_rng: Optional[np.random.Generator] = None,
     max_steps: int = 200,
+    refine_steps: int = 1,
 ) -> dict:
     """Play one game with the model. Returns detailed stats dict.
 
@@ -97,7 +106,7 @@ def play_one_game(
     mine_hits = 0
 
     while game.status == GameStatus.PLAYING and steps < max_steps:
-        action = pick_action(model, game, device)
+        action = pick_action(model, game, device, refine_steps=refine_steps)
         if action is None:
             break
 
@@ -131,6 +140,7 @@ def evaluate(
     seed: int = 42,
     device: str = "cpu",
     use_no_guess: bool = False,
+    refine_steps: int = 1,
 ) -> dict:
     """Run evaluation. Returns statistics dict."""
     device = torch.device(device)
@@ -158,6 +168,7 @@ def evaluate(
         game_stats = play_one_game(
             model, device, width, height, total_mines,
             rng=rng, use_no_guess=use_no_guess, no_guess_rng=ng_rng,
+            refine_steps=refine_steps,
         )
 
         if game_stats.get("generation_failed"):
@@ -238,6 +249,8 @@ def main():
                         help="Device: cpu, cuda, mps, or auto")
     parser.add_argument("--no_guess", action="store_true",
                         help="Evaluate on no-guess boards (pure reasoning, no luck)")
+    parser.add_argument("--refine", type=int, default=1,
+                        help="Iterative refinement steps during inference (default: 1 = single-pass)")
 
     args = parser.parse_args()
 
@@ -260,6 +273,7 @@ def main():
         seed=args.seed,
         device=device,
         use_no_guess=args.no_guess,
+        refine_steps=args.refine,
     )
 
 
