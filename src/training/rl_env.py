@@ -135,17 +135,35 @@ class RLEnv:
 
     @property
     def state(self) -> np.ndarray:
-        """Current board as (10, H, W) channels."""
+        """Current board as (10, pad_H, pad_W) channels — padded for batching."""
         if self.game is None:
-            return np.zeros((10, self.height, self.width), dtype=np.float32)
-        return self.game.board_to_channels().astype(np.float32)
+            pad = self.mixed_max_size if self.mixed else max(self.width, self.height)
+            return np.zeros((10, pad, pad), dtype=np.float32)
+        channels = self.game.board_to_channels().astype(np.float32)
+        if self.mixed:
+            _, H, W = channels.shape
+            pad = self.mixed_max_size
+            if H != pad or W != pad:
+                padded = np.zeros((10, pad, pad), dtype=np.float32)
+                padded[:, :H, :W] = channels
+                padded[0, H:, :] = 1.0   # pad: covered
+                padded[0, :, W:] = 1.0
+                return padded
+        return channels
 
     @property
     def covered_mask(self) -> np.ndarray:
-        """Boolean array of covered cells: (H, W)."""
+        """Boolean array of covered cells: (pad_H, pad_W) — with padding masked out."""
         if self.game is None:
             return np.zeros((self.height, self.width), dtype=bool)
-        return self.game.covered_cells
+        actual = self.game.covered_cells
+        if self.mixed:
+            pad = self.mixed_max_size
+            H, W = actual.shape
+            padded = np.zeros((pad, pad), dtype=bool)
+            padded[:H, :W] = actual
+            return padded
+        return actual
 
     @property
     def steps(self) -> int:
