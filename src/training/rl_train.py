@@ -333,8 +333,9 @@ def train_rl(config: RLConfig) -> dict:
 
     Path(config.save_dir).mkdir(parents=True, exist_ok=True)
     t0 = time.time()
+    total_played = 0
 
-    for game_i in range(1, config.total_games + 1, config.games_per_batch):
+    for batch_start in range(1, config.total_games + 1, config.games_per_batch):
         loss, avg_ret, baseline = reinforce_step(
             model, optimizer, train_env,
             temperature=config.temperature,
@@ -342,11 +343,12 @@ def train_rl(config: RLConfig) -> dict:
             device=device, n_games=config.games_per_batch,
         )
 
-        metrics["game"].append(game_i)
+        total_played += config.games_per_batch
+        metrics["game"].append(total_played)
         metrics["loss"].append(loss)
         metrics["avg_return"].append(avg_ret)
 
-        if game_i % config.log_every == 0 or game_i <= config.games_per_batch:
+        if total_played % config.log_every == 0 or total_played <= config.games_per_batch:
             eval_wr, _, _ = collect_eval(
                 eval_env, model, device,
                 n_games=min(20, config.eval_games),
@@ -355,19 +357,19 @@ def train_rl(config: RLConfig) -> dict:
             metrics["eval_win_rate"].append(eval_wr)
             elapsed = time.time() - t0
             print(
-                f"  Game {game_i:5d}/{config.total_games} | "
+                f"  Game {total_played:5d}/{config.total_games} | "
                 f"loss={loss:.4f} | ret={avg_ret:.1f} | "
                 f"eval_wr={eval_wr:.1%} | "
                 f"baseline={baseline:.1f} | "
                 f"{elapsed:.0f}s"
             )
 
-        if game_i % config.save_every == 0:
-            ckpt_path = Path(config.save_dir) / f"rl_model_{game_i}.pt"
+        if total_played % config.save_every == 0:
+            ckpt_path = Path(config.save_dir) / f"rl_model_{total_played}.pt"
             torch.save({
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
-                "game": game_i,
+                "game": total_played,
                 "baseline": baseline,
             }, ckpt_path)
             print(f"  Saved: {ckpt_path}")
