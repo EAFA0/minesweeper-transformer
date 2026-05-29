@@ -134,6 +134,8 @@ def main():
                    help="强制重新生成训练数据")
     p.add_argument("--resume", action="store_true",
                    help="从已有 checkpoint 续训")
+    p.add_argument("--refine", type=int, default=1, dest="refinement_steps",
+                   help="迭代 refinement 步数 (default: 1 = 单次推理)")
     p.add_argument("--eval_only", action="store_true",
                    help="仅评估已有 checkpoint，不训练")
     p.add_argument("--random_eval", action="store_true",
@@ -206,7 +208,9 @@ def main():
             else:
                 print(f"⚠ No checkpoint to resume from: {resume_ckpt}")
                 print(f"   Starting fresh training")
-        run(cmd, f"{args.stage}: Train ({epochs} epochs)")
+        if args.refinement_steps > 1:
+            cmd.extend(["--refine", str(args.refinement_steps)])
+        run(cmd, f"{args.stage}: Train ({epochs} epochs{' +refine' if args.refinement_steps > 1 else ''})")
 
     # ── 3) Evaluate ───────────────────────────────────────────────────
     ckpt = Path(cfg["save_dir"]) / "best_model.pt"
