@@ -176,8 +176,8 @@ def train_epoch(
                 prob_loss = compute_masked_mse(pred, probs, mask)
 
                 # Confidence target: high when target is extreme (0 or 1), low when ambiguous (0.5)
-                conf_target = 1.0 - 2.0 * torch.abs(probs.unsqueeze(1) - 0.5)
-                conf_loss = compute_masked_mse(conf, conf_target, mask)
+                conf_target = 1.0 - 2.0 * torch.abs(probs.unsqueeze(1) - 0.5)  # (B, 1, H, W)
+                conf_loss = compute_masked_mse(conf, conf_target.squeeze(1), mask)
 
                 loss += w * (prob_loss + 0.3 * conf_loss)
 
