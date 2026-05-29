@@ -199,7 +199,7 @@ def main():
             "--lr", str(lr),
             "--weight_decay", str(cfg["weight_decay"]),
         ]
-        if pretrained:
+        if pretrained and not args.resume:
             cmd.extend(["--pretrained", pretrained])
         if args.resume:
             resume_ckpt = Path(cfg["save_dir"]) / "final_model.pt"
