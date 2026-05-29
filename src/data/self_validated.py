@@ -97,35 +97,31 @@ def generate_self_validated_board(
 
 
 def _try_solve(game: MinesweeperGame, max_steps: int = 300,
-               warmup_clicks: int = 3) -> bool:
+               warmup_clicks: int = 3, max_hints: int = 5) -> bool:
     """Try to solve the board using ProbabilitySolver.
 
-    First does up to warmup_clicks random safe reveals to open the board,
-    then switches to solver-driven selection.
+    Algorithm:
+      1. Warmup: reveal warmup_clicks random safe cells to open the board
+      2. Solver phase: reveal cells with P(mine) == 0
+      3. If stuck (no P=0 cell): reveal a random safe cell as a "hint"
+         and retry. Give up after max_hints hints.
+
+    The hint mechanism handles dense boards where the solver occasionally
+    needs a nudge — after the hint reveals new numbers, P=0 cells often emerge.
 
     Returns True if the solver completes the board.
     """
     width, height = game.width, game.height
+    hints_used = 0
 
     # Warmup: reveal random safe cells to give the solver information
     for _ in range(warmup_clicks):
         if game.status != GameStatus.PLAYING:
             return game.status == GameStatus.WON
-        covered = game.covered_cells
-        if not covered.any():
-            return True
-        # Pick a random safe cell
-        safe_indices = []
-        for rr in range(height):
-            for cc in range(width):
-                if covered[rr, cc] and game.board[rr, cc] != -1:
-                    safe_indices.append((rr, cc))
-        if not safe_indices:
+        if not _reveal_random_safe(game):
             return False
-        r, c = safe_indices[np.random.default_rng().integers(0, len(safe_indices))]
-        game.make_move(r, c, MoveType.REVEAL)
 
-    # Solver-driven phase
+    # Solver-driven phase with hints for stuck moments
     for _ in range(max_steps):
         if game.status != GameStatus.PLAYING:
             return game.status == GameStatus.WON
@@ -139,17 +135,37 @@ def _try_solve(game: MinesweeperGame, max_steps: int = 300,
         covered = game.covered_cells
         safe_mask = covered & (probs == 0.0)
 
-        if not safe_mask.any():
-            return False
-
-        safe_indices = np.argwhere(safe_mask)
-        r, c = safe_indices[0]
-        game.make_move(r, c, MoveType.REVEAL)
-
-        if game.status == GameStatus.LOST:
-            return False
+        if safe_mask.any():
+            # Found a definitely-safe cell — reveal it
+            safe_indices = np.argwhere(safe_mask)
+            r, c = safe_indices[0]
+            game.make_move(r, c, MoveType.REVEAL)
+            if game.status == GameStatus.LOST:
+                return False
+        else:
+            # Stuck: use a hint
+            if hints_used >= max_hints:
+                return False
+            hints_used += 1
+            if not _reveal_random_safe(game):
+                return False
 
     return game.status == GameStatus.WON
+
+
+def _reveal_random_safe(game: MinesweeperGame) -> bool:
+    """Reveal a random covered safe cell. Returns False if none exists."""
+    covered = game.covered_cells
+    safe_indices = []
+    for rr in range(game.height):
+        for cc in range(game.width):
+            if covered[rr, cc] and game.board[rr, cc] != -1:
+                safe_indices.append((rr, cc))
+    if not safe_indices:
+        return False
+    r, c = safe_indices[np.random.default_rng().integers(0, len(safe_indices))]
+    game.make_move(r, c, MoveType.REVEAL)
+    return True
 
 
 def _recreate_game(
