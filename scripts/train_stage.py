@@ -12,16 +12,17 @@
     python scripts/train_stage.py --stage S2 --force_data  # 强制重新生成数据
     python scripts/train_stage.py --stage S1 --resume      # 从 checkpoint 续训
 
-密度课程 (8×8 → 10×10, 通过提升雷密度增加约束复杂度):
-    S1    : 8×8 / 10雷   (15.6% 密度, 从头训练)
-    S1.5  : 8×8 / 15雷   (23.4% 密度, 继承 S1)
-    S2    : 8×8 / 20雷   (31.3% 密度, 继承 S1.5)
-    S2.5  : 8×8 / 25雷   (39.1% 密度, 继承 S2)    ← NEW
-    S2.75 : 8×8 / 30雷   (46.9% 密度, 继承 S2.5)  ← NEW
-    S3    : 12×12 / 40雷 (27.8% 密度, 继承 S2)
-    S3d   : 10×10 / 30雷 (30.0% 密度, 继承 S2.75)  ← NEW 密度路线
-    S3.5d : 10×10 / 40雷 (40.0% 密度, 继承 S3d)   ← NEW
-    S4    : 16×16 / 80雷 (31.3% 密度, 继承 S3)
+密度课程 (3 阶段, 密度递增):
+    S1 : 8×8 / 10雷   (15.6% 密度, 从头, --refine 4)
+    S2 : 8×8 / 20雷   (31.3% 密度, 继承 S1, --refine 4)
+    S3 : 10×10 / 40雷 (40.0% 密度, 继承 S2, --refine 4)
+
+   → RL: python scripts/train_rl.py --pretrained checkpoints/S3/best_model.pt
+
+可选阶段 (保留备用):
+    S1.5  : 8×8 / 15雷    S2.5  : 8×8 / 25雷
+    S2.75 : 8×8 / 30雷    S3L   : 12×12 / 40雷
+    S4L   : 16×16 / 80雷
 
 核心理念: 固定小棋盘，通过提升雷密度来增加约束复杂度。
 ms-toollib 在 8×8/10×10 上表现良好，避免大棋盘的生成瓶颈。
@@ -35,7 +36,7 @@ from pathlib import Path
 # ── 阶段预设 ───────────────────────────────────────────────────────────────
 
 STAGES = {
-    # ===== 基础课程 =====
+    # ===== 核心路线: 密度递增 (3 阶段) =====
     "S1": {
         "width": 8, "height": 8, "mines": 10,
         "n_samples": 10000, "epochs": 5,
@@ -43,64 +44,56 @@ STAGES = {
         "lr": 1e-3, "weight_decay": 1e-4,
         "pretrained": None,
     },
+    "S2": {
+        "width": 8, "height": 8, "mines": 20,
+        "n_samples": 10000, "epochs": 5,
+        "data_dir": "data/S2", "save_dir": "checkpoints/S2",
+        "lr": 3e-4, "weight_decay": 1e-4,
+        "pretrained": "checkpoints/S1/best_model.pt",
+    },
+    "S3": {
+        "width": 10, "height": 10, "mines": 40,
+        "n_samples": 10000, "epochs": 8,
+        "data_dir": "data/S3", "save_dir": "checkpoints/S3",
+        "lr": 3e-4, "weight_decay": 1e-4,
+        "pretrained": "checkpoints/S2/best_model.pt",
+    },
+    # ===== 可选: 更细粒度的密度阶梯 =====
     "S1.5": {
         "width": 8, "height": 8, "mines": 15,
-        "n_samples": 10000, "epochs": 10,
+        "n_samples": 10000, "epochs": 5,
         "data_dir": "data/S1_5", "save_dir": "checkpoints/S1_5",
         "lr": 3e-4, "weight_decay": 1e-4,
         "pretrained": "checkpoints/S1/best_model.pt",
     },
-    "S2": {
-        "width": 8, "height": 8, "mines": 20,
-        "n_samples": 10000, "epochs": 10,
-        "data_dir": "data/S2", "save_dir": "checkpoints/S2",
-        "lr": 3e-4, "weight_decay": 1e-4,
-        "pretrained": "checkpoints/S1_5/best_model.pt",
-    },
-    # ===== 密度课程 (8×8 高密度, 约束链极密) =====
     "S2.5": {
         "width": 8, "height": 8, "mines": 25,
-        "n_samples": 10000, "epochs": 10,
+        "n_samples": 10000, "epochs": 5,
         "data_dir": "data/S2_5", "save_dir": "checkpoints/S2_5",
         "lr": 3e-4, "weight_decay": 1e-4,
         "pretrained": "checkpoints/S2/best_model.pt",
     },
     "S2.75": {
         "width": 8, "height": 8, "mines": 30,
-        "n_samples": 10000, "epochs": 10,
+        "n_samples": 10000, "epochs": 5,
         "data_dir": "data/S2_75", "save_dir": "checkpoints/S2_75",
         "lr": 3e-4, "weight_decay": 1e-4,
         "pretrained": "checkpoints/S2_5/best_model.pt",
     },
-    # ===== 中等棋盘 + 密度 (10×10) =====
-    "S3": {
+    # ===== 可选: 大棋盘 =====
+    "S3L": {
         "width": 12, "height": 12, "mines": 40,
-        "n_samples": 10000, "epochs": 10,
-        "data_dir": "data/S3", "save_dir": "checkpoints/S3",
+        "n_samples": 10000, "epochs": 8,
+        "data_dir": "data/S3L", "save_dir": "checkpoints/S3L",
         "lr": 3e-4, "weight_decay": 1e-4,
         "pretrained": "checkpoints/S2/best_model.pt",
     },
-    "S3d": {
-        "width": 10, "height": 10, "mines": 30,
-        "n_samples": 10000, "epochs": 10,
-        "data_dir": "data/S3d", "save_dir": "checkpoints/S3d",
-        "lr": 3e-4, "weight_decay": 1e-4,
-        "pretrained": "checkpoints/S2_75/best_model.pt",
-    },
-    "S3.5d": {
-        "width": 10, "height": 10, "mines": 40,
-        "n_samples": 10000, "epochs": 10,
-        "data_dir": "data/S3_5d", "save_dir": "checkpoints/S3_5d",
-        "lr": 3e-4, "weight_decay": 1e-4,
-        "pretrained": "checkpoints/S3d/best_model.pt",
-    },
-    # ===== 大棋盘 (ms-toollib 生成较慢) =====
-    "S4": {
+    "S4L": {
         "width": 16, "height": 16, "mines": 80,
-        "n_samples": 2000, "epochs": 10,
-        "data_dir": "data/S4", "save_dir": "checkpoints/S4",
+        "n_samples": 2000, "epochs": 8,
+        "data_dir": "data/S4L", "save_dir": "checkpoints/S4L",
         "lr": 3e-4, "weight_decay": 1e-4,
-        "pretrained": "checkpoints/S3/best_model.pt",
+        "pretrained": "checkpoints/S3L/best_model.pt",
     },
 }
 
@@ -134,8 +127,8 @@ def main():
                    help="强制重新生成训练数据")
     p.add_argument("--resume", action="store_true",
                    help="从已有 checkpoint 续训")
-    p.add_argument("--refine", type=int, default=1, dest="refinement_steps",
-                   help="迭代 refinement 步数 (default: 1 = 单次推理)")
+    p.add_argument("--refine", type=int, default=4, dest="refinement_steps",
+                   help="迭代 refinement 步数 (default: 4)")
     p.add_argument("--eval_only", action="store_true",
                    help="仅评估已有 checkpoint，不训练")
     p.add_argument("--device", default="auto")
@@ -164,9 +157,9 @@ def main():
     if pretrained and not Path(pretrained).exists() and not args.eval_only:
         print(f"❌ Pretrained checkpoint not found: {pretrained}")
         prev_stage = {
-            "S1.5": "S1", "S2": "S1.5", "S2.5": "S2", "S2.75": "S2.5",
-            "S3": "S2", "S3d": "S2.75", "S3.5d": "S3d",
-            "S4": "S3",
+            "S2": "S1", "S3": "S2",
+            "S1.5": "S1", "S2.5": "S2", "S2.75": "S2.5",
+            "S3L": "S2", "S4L": "S3L",
         }.get(args.stage)
         if prev_stage:
             print(f"   Run with --stage {prev_stage} first")

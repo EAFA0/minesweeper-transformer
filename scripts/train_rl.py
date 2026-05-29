@@ -29,16 +29,16 @@ def main() -> None:
     parser.add_argument("--mines", type=int, default=10)
     parser.add_argument("--mine_continue", action="store_true",
                         help="Continue game after mine hit — denser training signal")
-    parser.add_argument("--warmup", type=int, default=3, dest="warmup_clicks",
-                        help="Random safe reveals before model takes over (default: 3)")
+    parser.add_argument("--warmup", type=int, default=0, dest="warmup_clicks",
+                        help="Random safe reveals before model takes over (default: 0)")
     parser.add_argument("--pretrained", default="",
                         help="Path to supervised checkpoint for warm-start")
     parser.add_argument("--total_games", type=int, default=5000,
                         help="Total games for RL training")
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--save_dir", default="checkpoints/rl")
-    parser.add_argument("--refine", type=int, default=5, dest="refine_steps",
-                        help="Iterative refinement steps (default: 5)")
+    parser.add_argument("--refine", type=int, default=4, dest="refine_steps",
+                        help="Iterative refinement steps (default: 4)")
     parser.add_argument("--device", default="auto")
 
     args = parser.parse_args()

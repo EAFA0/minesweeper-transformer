@@ -36,7 +36,7 @@ class RLConfig:
     height: int = 8
     total_mines: int = 10
     mine_continue: bool = False
-    warmup_clicks: int = 0  # random safe reveals before model takes over
+    warmup_clicks: int = 0  # random safe reveals before model takes over (disabled)
 
     # RL hyperparameters
     temperature: float = 1.0
@@ -51,7 +51,7 @@ class RLConfig:
     grad_clip_norm: float = 1.0
 
     # Iterative refinement (uses refine() during inference)
-    refine_steps: int = 5  # 5 = use iterative refinement for action selection + gradient
+    refine_steps: int = 4  # iterative refinement for action selection + gradient
 
     # Checkpoint
     pretrained_path: str = ""
