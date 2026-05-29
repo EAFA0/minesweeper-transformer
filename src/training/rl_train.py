@@ -51,7 +51,7 @@ class RLConfig:
     grad_clip_norm: float = 1.0
 
     # Iterative refinement (uses refine() during inference)
-    refine_steps: int = 1
+    refine_steps: int = 5  # 5 = use iterative refinement for action selection + gradient
 
     # Checkpoint
     pretrained_path: str = ""
@@ -99,30 +99,18 @@ def get_logits(
     device: str,
     refine_steps: int = 1,
 ) -> torch.Tensor:
-    """Get per-cell mine logits from model.
+    """Get per-cell mine logits for action selection.
 
-    For 2-channel output: returns channel 0 (P(mine) logits).
-    For refinement: runs refine() and returns final step's logits.
+    Uses model.predict() which automatically handles refinement
+    when the model was trained for it.
 
-    Returns (H, W) float tensor.
+    Returns (H, W) float tensor of logits.
     """
-    x = torch.from_numpy(state).unsqueeze(0).to(device)  # (1, 10, H, W)
-
-    if refine_steps > 1 and not model.training:
-        results = model.refine(x, num_steps=refine_steps)
-        # results[-1] is (1, 2, H, W) = [prob, conf] concatenated
-        # We need raw logits — use _single_pass with the final prev_probs
-        # (Actually, for simplicity, just use the sigmoid output)
-        probs = results[-1][:, 0:1]  # (1, 1, H, W)
-        # Invert sigmoid to get approximate logits
-        eps = 1e-7
-        probs = probs.clamp(eps, 1 - eps)
-        logits = torch.log(probs / (1 - probs))  # inverse sigmoid
-        return logits.squeeze(0).squeeze(0)
-
-    with torch.no_grad():
-        raw = model(x)  # (1, 2, H, W)
-    return raw.squeeze(0)[0]  # (H, W) — channel 0 raw logits
+    x = torch.from_numpy(state).unsqueeze(0).to(device)
+    probs = model.predict(x)  # (1, 1, H, W) — auto-refined if model supports it
+    eps = 1e-7
+    probs = probs.clamp(eps, 1 - eps)
+    return torch.log(probs / (1 - probs)).squeeze(0).squeeze(0)  # (H, W)
 
 
 # ─── Game Simulation ────────────────────────────────────────────────────────
@@ -210,6 +198,7 @@ def reinforce_step(
     baseline: float,
     device: str,
     n_games: int = 8,
+    refine_steps: int = 5,
 ) -> Tuple[float, float, float]:
     """One REINFORCE update. Returns (loss, avg_return, new_baseline).
 
@@ -233,7 +222,7 @@ def reinforce_step(
             if not covered.any():
                 break
 
-            logits = get_logits(model, state, device, refine_steps=1)
+            logits = get_logits(model, state, device)
             covered_t = torch.from_numpy(covered).to(device)
 
             log_probs = action_log_probs(logits, covered_t, temperature)
@@ -269,13 +258,20 @@ def reinforce_step(
     adv_std = adv_tensor.std() + 1e-8
     advantages = ((adv_tensor - adv_mean) / adv_std).tolist()
 
-    # Policy gradient
+    # Policy gradient: compute logits through refinement
     optimizer.zero_grad()
     batch_states = torch.stack(states).to(device)
 
-    # Get logits for all states (single pass, no refinement during training)
-    raw = model(batch_states)  # (N, 2, H, W)
-    logits = raw[:, 0]  # (N, H, W) — channel 0 = P(mine) logits
+    # Run refinement (gradient flows through all steps → model learns to refine better)
+    if refine_steps > 1:
+        results = model.refine(batch_states, num_steps=refine_steps)
+        probs = results[-1][:, 0:1]  # (N, 1, H, W) — final step P(mine)
+        eps = 1e-7
+        probs = probs.clamp(eps, 1 - eps)
+        logits = torch.log(probs / (1 - probs)).squeeze(1)  # (N, H, W) — inverse sigmoid
+    else:
+        raw = model(batch_states)  # (N, 2, H, W)
+        logits = raw[:, 0]  # (N, H, W) — channel 0 = P(mine) logits
 
     log_probs_sum = 0.0
     for i, (r, c) in enumerate(action_coords):
@@ -300,7 +296,7 @@ def train_rl(config: RLConfig) -> dict:
     device = torch.device(config.device)
     print(f"=== RL Fine-tuning (REINFORCE) ===")
     print(f"Board: {config.width}×{config.height}, {config.total_mines} mines")
-    print(f"Mine-continue: {config.mine_continue} | Refine: {config.refine_steps}")
+    print(f"Mine-continue: {config.mine_continue} | Refine: {config.refine_steps} steps")
     print(f"Device: {device}")
 
     # Load pretrained model
@@ -350,6 +346,7 @@ def train_rl(config: RLConfig) -> dict:
             temperature=config.temperature,
             gamma=config.gamma, baseline=baseline,
             device=device, n_games=config.games_per_batch,
+            refine_steps=config.refine_steps,
         )
 
         total_played += config.games_per_batch
