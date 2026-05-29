@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""训练旅程概述 — 各阶段和数据流。
+"""训练旅程 — 简化 3 阶段 + RL。
 
-完整 Pipeline（4 阶段）:
-  Phase 1 — 概率蒸馏 (Supervised)    S1 → S1.5 → S2
-  Phase 2 — 密度课程 (Curriculum)    S2.5 → S2.75 → S3d → S3.5d
-  Phase 3 — 迭代 Refinement          训练时 unroll 5 步，推理时自适应停止
-  Phase 4 — RL 微调 (REINFORCE)      从 S2/S2.5 权重起步，自验证棋盘
+Pipeline:
+  Phase 1 — 概率蒸馏     S1 → S2 → S3 (混合数据可选)
+  Phase 2 — 迭代 Refinement  自适应随机步数训练 + ponder penalty
+  Phase 3 — RL 微调         REINFORCE warm-start 从 S3
 
 用法:
-    python scripts/journey.py --all              # 全跑
-    python scripts/journey.py --stage S2.5       # 单阶段
+    python scripts/journey.py --stage S1 S2 S3
+    python scripts/journey.py --all
 """
 
 import argparse
@@ -32,22 +31,20 @@ STAGE_LIST = list(STAGES.keys())
 
 def main():
     parser = argparse.ArgumentParser(description="Minesweeper Transformer 训练旅程")
-    parser.add_argument("--stage", nargs="+", choices=STAGE_LIST,
-                        help="指定阶段（可多个，如 --stage S1 S2）")
-    parser.add_argument("--all", action="store_true",
-                        help="运行全部阶段")
+    parser.add_argument("--stage", nargs="+", choices=STAGE_LIST)
+    parser.add_argument("--all", action="store_true", help="运行全部阶段")
+    parser.add_argument("--rl", action="store_true",
+                        help="运行 RL 微调 (需先完成 S3)")
     args = parser.parse_args()
 
     if args.all:
-        to_run = STAGE_LIST
+        to_run = list(STAGES.keys())
     elif args.stage:
         to_run = args.stage
     else:
-        print("Specify stages with --stage or use --all")
-        print(f"\nAvailable stages: {', '.join(STAGE_LIST)}")
-        print("\nStage descriptions:")
-        for s, desc in STAGES.items():
-            print(f"  {s:6s}  {desc}")
+        print("核心路线: S1 → S2 → S3")
+        print(f"\n{', '.join(STAGE_LIST)}")
+        print("\n--all  运行全部  |  --stage S1 S2 S3  指定阶段  |  --rl  RL微调")
         sys.exit(1)
 
     for stage in to_run:
@@ -55,6 +52,15 @@ def main():
             [sys.executable, "scripts/train_stage.py", "--stage", stage],
             check=False,
         )
+
+    if args.rl:
+        print("\n── RL 微调 ──")
+        subprocess.run([
+            sys.executable, "scripts/train_rl.py",
+            "--pretrained", "checkpoints/S3/best_model.pt",
+            "--width", "10", "--height", "10", "--mines", "40",
+            "--mine_continue", "--total_games", "5000",
+        ], check=False)
 
 
 if __name__ == "__main__":
