@@ -1,69 +1,72 @@
 #!/usr/bin/env python3
-"""Phase 2 RL Training CLI — DEPRECATED (2026-05-28)
+"""RL fine-tuning entry point — thin wrapper around training.rl_train.
 
-REINFORCE policy gradient fine-tuning was abandoned in favor of
-pure supervised probability distillation (MSE loss + solver soft labels).
+用法:
+    python scripts/train_rl.py --pretrained checkpoints/S2_5/best_model.pt
 
-Reason: credit assignment in RL was chaotic; no-guess data emerged,
-making supervised learning more efficient for the 90%+ action accuracy target.
-
-This file is kept for reference only. Do not use.
+    python scripts/train_rl.py \
+        --pretrained checkpoints/S2_5/best_model.pt \
+        --width 10 --height 10 --mines 30 \
+        --board_mode self_validated --mine_continue \
+        --total_games 5000 --refine 3
 """
 
-import argparse
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-import torch
 from training.rl_train import RLConfig, train_rl
 
 
-def main():
+def main() -> None:
+    import argparse
     parser = argparse.ArgumentParser(
-        description="Phase 2: REINFORCE policy gradient fine-tuning"
+        description="REINFORCE policy gradient fine-tuning for Minesweeper"
     )
-    parser.add_argument("--pretrained", default="checkpoints/best_model.pt",
-                        help="Path to Phase 1 pretrained model")
+    parser.add_argument("--width", type=int, default=8)
+    parser.add_argument("--height", type=int, default=8)
+    parser.add_argument("--mines", type=int, default=10)
+    parser.add_argument("--board_mode", default="self_validated",
+                        choices=["self_validated", "random"],
+                        help="Board generation: self_validated (fast) or random")
+    parser.add_argument("--mine_continue", action="store_true",
+                        help="Continue game after mine hit — denser training signal")
+    parser.add_argument("--pretrained", default="",
+                        help="Path to supervised checkpoint for warm-start")
     parser.add_argument("--total_games", type=int, default=5000,
-                        help="Total games to play (default: 5000)")
-    parser.add_argument("--games_per_batch", type=int, default=16,
-                        help="Games per REINFORCE gradient step")
-    parser.add_argument("--lr", type=float, default=1e-4,
-                        help="Learning rate (should be low for fine-tuning)")
-    parser.add_argument("--temperature", type=float, default=0.3,
-                        help="Exploration temperature (0.1=greedy, 1.0=random)")
-    parser.add_argument("--gamma", type=float, default=0.95,
-                        help="Discount factor")
-    parser.add_argument("--save_dir", default="checkpoints/rl",
-                        help="Output directory")
-    parser.add_argument("--device", default="auto",
-                        help="Device: cpu, cuda, mps, or auto")
+                        help="Total games for RL training")
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--save_dir", default="checkpoints/rl")
+    parser.add_argument("--refine", type=int, default=1, dest="refine_steps",
+                        help="Iterative refinement steps during eval (training always 1)")
+    parser.add_argument("--device", default="auto")
 
     args = parser.parse_args()
 
     if args.device == "auto":
+        import torch
         if torch.cuda.is_available():
-            device = "cuda"
+            dev = "cuda"
         elif torch.backends.mps.is_available():
-            device = "mps"
+            dev = "mps"
         else:
-            device = "cpu"
+            dev = "cpu"
     else:
-        device = args.device
+        dev = args.device
 
     config = RLConfig(
+        width=args.width, height=args.height,
+        total_mines=args.mines,
+        board_mode=args.board_mode,
+        mine_continue=args.mine_continue,
         pretrained_path=args.pretrained,
         total_games=args.total_games,
-        games_per_batch=args.games_per_batch,
         lr=args.lr,
-        temperature=args.temperature,
-        gamma=args.gamma,
         save_dir=args.save_dir,
-        device=device,
+        refine_steps=args.refine_steps,
+        device=dev,
     )
-
     train_rl(config)
 
 

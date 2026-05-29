@@ -1,35 +1,16 @@
-"""Phase 2: REINFORCE policy gradient fine-tuning — DEPRECATED (2026-05-28)
+"""REINFORCE policy gradient fine-tuning for Minesweeper Transformer.
 
-REINFORCE was abandoned. The project now uses pure supervised probability
-distillation: solver-computed P(mine) soft labels + MSE loss.
+Trains the model to improve win rate through self-play experience.
+Warm-starts from supervised probability distillation checkpoint.
 
-This file is kept for reference only. Do not use.
+Key differences from Phase 1 (supervised):
+  - No solver labels — model learns from rewards
+  - Stochastic policy (temperature-scaled softmax over P(mine))
+  - Can use self-validated boards (solvable) or random boards
 
-=== What is REINFORCE? ===
-
-REINFORCE is the simplest policy gradient algorithm. Instead of learning from
-labeled data (Phase 1), the model learns from its own experience:
-
-  1. Play a game using current policy π(a|s)
-  2. If the game went well (won / high score), increase probability of the
-     actions that led there. If it went badly, decrease them.
-  3. Repeat. The model naturally discovers better strategies.
-
-Key formula:
-  loss = -mean( log π(a|s) × (G - baseline) )
-
-Where:
-  - π(a|s): probability of taking action a in state s
-  - G: actual return (sum of rewards) from that step onward
-  - baseline: average return (reduces variance, speeds up learning)
-
-=== Our Policy ===
-
-The model outputs P(mine) for each cell. Our policy:
-  π(reveal cell i) ∝ exp(-P(mine)_i / τ)
-  
-We prefer cells the model thinks are safe (low P(mine)).
-τ (temperature) controls exploration: hotter → more random, colder → greedier.
+Policy:
+  π(reveal cell i) ∝ softmax(-P(mine)_i / τ)
+  Lower P(mine) → higher probability of being chosen.
 """
 
 import json
@@ -40,15 +21,13 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 
-from minesweeper.constants import MoveType, GameStatus
 from model.architecture import MinesweeperTransformer, ModelConfig
-from training.rl_env import MinesweeperEnv, Rewards
+from training.rl_env import RLEnv, Rewards
 
 
-# ─── Config ────────────────────────────────────────────────────────────────
+# ─── Config ─────────────────────────────────────────────────────────────────
 
 @dataclass
 class RLConfig:
@@ -56,125 +35,168 @@ class RLConfig:
     width: int = 8
     height: int = 8
     total_mines: int = 10
+    board_mode: str = "self_validated"  # "self_validated" | "random"
+    mine_continue: bool = False
 
     # RL hyperparameters
-    temperature: float = 0.3       # exploration (0.3 = mostly greedy)
-    gamma: float = 0.95            # discount future rewards slightly
-    baseline_ema: float = 0.1      # how fast baseline adapts (0.1 = smooth)
+    temperature: float = 0.3
+    gamma: float = 0.95
+    baseline_ema: float = 0.1
 
     # Training
-    lr: float = 1e-4               # fine-tuning: low LR to preserve Phase 1 knowledge
+    lr: float = 1e-4
     weight_decay: float = 1e-4
-    games_per_batch: int = 16      # collect N games → one gradient step
+    games_per_batch: int = 16
     total_games: int = 5000
+    grad_clip_norm: float = 1.0
+
+    # Iterative refinement (uses refine() during inference)
+    refine_steps: int = 1
 
     # Checkpoint
-    pretrained_path: str = "checkpoints/best_model.pt"
+    pretrained_path: str = ""
     save_dir: str = "checkpoints/rl"
     save_every: int = 500
     log_every: int = 100
+    eval_every: int = 500
+    eval_games: int = 50
 
     # Device
     device: str = "cpu"
 
 
-# ─── Policy: P(mine) → action probabilities ────────────────────────────────
+# ─── Policy ─────────────────────────────────────────────────────────────────
 
 def action_log_probs(
-    logits: torch.Tensor,          # (H, W) raw logits from model
-    covered: torch.Tensor,         # (H, W) bool
+    logits_2d: torch.Tensor,      # (H, W) raw logits from model
+    covered: torch.Tensor,        # (H, W) bool
     temperature: float,
 ) -> torch.Tensor:
-    """Compute log π(reveal cell i) for all covered cells.
+    """Compute log π(i) for all covered cells.
 
-    π(i) = softmax(-logits / τ) over covered cells only.
-    Returns (H, W) tensor with log probabilities (0 for non-covered).
+    π(i) ∝ exp(-logit_i / τ), masked to covered cells only.
+    Returns (H, W) log-probabilities.
     """
-    H, W = logits.shape
-    flat_logits = logits.flatten()  # (H*W,)
+    H, W = logits_2d.shape
+    flat_logits = logits_2d.flatten()
     flat_covered = covered.flatten()
 
-    # Policy: prefer cells with LOW logit (model thinks safe)
-    # log π ∝ -logit / τ
+    # Prefer low logits (safe cells)
     policy_logits = torch.where(
         flat_covered,
         -flat_logits / temperature,
-        torch.tensor(-float('inf'), device=logits.device),
+        torch.tensor(-float('inf'), device=logits_2d.device),
     )
     log_probs_flat = policy_logits - torch.logsumexp(policy_logits, dim=0)
     return log_probs_flat.reshape(H, W)
+
+
+# ─── Model output helper ────────────────────────────────────────────────────
+
+def get_logits(
+    model: MinesweeperTransformer,
+    state: np.ndarray,
+    device: str,
+    refine_steps: int = 1,
+) -> torch.Tensor:
+    """Get per-cell mine logits from model.
+
+    For 2-channel output: returns channel 0 (P(mine) logits).
+    For refinement: runs refine() and returns final step's logits.
+
+    Returns (H, W) float tensor.
+    """
+    x = torch.from_numpy(state).unsqueeze(0).to(device)  # (1, 10, H, W)
+
+    if refine_steps > 1 and not model.training:
+        results = model.refine(x, num_steps=refine_steps)
+        # results[-1] is (1, 2, H, W) = [prob, conf] concatenated
+        # We need raw logits — use _single_pass with the final prev_probs
+        # (Actually, for simplicity, just use the sigmoid output)
+        probs = results[-1][:, 0:1]  # (1, 1, H, W)
+        # Invert sigmoid to get approximate logits
+        eps = 1e-7
+        probs = probs.clamp(eps, 1 - eps)
+        logits = torch.log(probs / (1 - probs))  # inverse sigmoid
+        return logits.squeeze(0).squeeze(0)
+
+    with torch.no_grad():
+        raw = model(x)  # (1, 2, H, W)
+    return raw.squeeze(0)[0]  # (H, W) — channel 0 raw logits
 
 
 # ─── Game Simulation ────────────────────────────────────────────────────────
 
 @torch.no_grad()
 def play_game(
-    env: MinesweeperEnv,
+    env: RLEnv,
     model: MinesweeperTransformer,
     temperature: float,
     device: str,
     deterministic: bool = False,
-    max_steps: int = 80,
-) -> Tuple[float, int, int]:
-    """Play one game. Returns (total_return, n_steps, win_flag).
-
-    If deterministic=True, always pick the cell with lowest P(mine).
-    Otherwise, sample from the policy (for exploration during training).
-    """
+    refine_steps: int = 1,
+    max_steps: int = 200,
+) -> Tuple[float, int, int, int]:
+    """Play one game. Returns (total_return, n_steps, win_flag, mine_hits)."""
     state = env.reset()
     total_return = 0.0
     steps = 0
 
     for _ in range(max_steps):
-        covered = env.covered_cells
+        covered = env.covered_mask
         if not covered.any():
             break
 
-        # Get model predictions
-        x = torch.from_numpy(state).unsqueeze(0).to(device)
-        logits = model(x).squeeze(0).squeeze(0)  # (H, W)
-
+        logits = get_logits(model, state, device, refine_steps)
         covered_t = torch.from_numpy(covered).to(device)
 
         if deterministic:
-            # Greedy: pick lowest P(mine)
             masked = torch.where(covered_t, logits, torch.tensor(float('inf'), device=device))
             idx = torch.argmin(masked).item()
         else:
-            # Sample from policy
             log_probs = action_log_probs(logits, covered_t, temperature)
             probs = torch.exp(log_probs.flatten())
-            # Renormalize (some numerical error from float32)
             probs = probs / probs.sum()
             idx = torch.multinomial(probs, 1).item()
 
         r, c = divmod(idx, env.width)
-        state, reward, done = env.step(MoveType.REVEAL, r, c)
+        state, reward, done = env.step(r, c)
         total_return += reward
         steps += 1
 
         if done:
             break
 
+    won = 1 if env.game is not None and env.game.status.value >= 3 else 0
+    # GameStatus.WON likely has value 3 (after playing)
+    # Actually check GameStatus directly
+    from minesweeper.constants import GameStatus
     won = 1 if env.game is not None and env.game.status == GameStatus.WON else 0
-    return total_return, steps, won
+    return total_return, steps, won, env.mine_hits
 
 
-def collect_batch(
-    env: MinesweeperEnv,
+def collect_eval(
+    env: RLEnv,
     model: MinesweeperTransformer,
-    temperature: float,
     device: str,
     n_games: int,
-) -> Tuple[List[float], List[int]]:
-    """Play n_games with exploration. Returns (returns, win_flags)."""
-    returns = []
-    wins = []
+    refine_steps: int = 1,
+) -> Tuple[float, float, float]:
+    """Evaluation: deterministic play. Returns (win_rate, avg_return, avg_steps)."""
+    wins = 0
+    total_return = 0.0
+    total_steps = 0
+
     for _ in range(n_games):
-        r, _, w = play_game(env, model, temperature, device, deterministic=False)
-        returns.append(r)
-        wins.append(w)
-    return returns, wins
+        r, steps, won, _ = play_game(
+            env, model, 0.3, device,
+            deterministic=True, refine_steps=refine_steps,
+        )
+        wins += won
+        total_return += r
+        total_steps += steps
+
+    return wins / n_games, total_return / n_games, total_steps / n_games
 
 
 # ─── REINFORCE Update ──────────────────────────────────────────────────────
@@ -182,92 +204,87 @@ def collect_batch(
 def reinforce_step(
     model: MinesweeperTransformer,
     optimizer: torch.optim.Optimizer,
-    env: MinesweeperEnv,
+    env: RLEnv,
     temperature: float,
     gamma: float,
     baseline: float,
     device: str,
     n_games: int = 8,
-) -> Tuple[float, float]:
-    """One REINFORCE update: collect trajectories, compute policy gradient.
+) -> Tuple[float, float, float]:
+    """One REINFORCE update. Returns (loss, avg_return, new_baseline).
 
-    Returns (avg_loss, avg_return).
+    Collects n_games of trajectories, computes policy gradient,
+    updates model parameters.
     """
     model.train()
 
-    all_states: List[torch.Tensor] = []      # (C, H, W) tensors
-    all_action_coords: List[Tuple[int, int]] = []
-    all_advantages: List[float] = []
-
+    states: List[torch.Tensor] = []
+    action_coords: List[Tuple[int, int]] = []
+    advantages: List[float] = []
     total_return = 0.0
-    n_steps = 0
+    n_steps_total = 0
 
     for _ in range(n_games):
         state = env.reset()
-        trajectory_returns: List[float] = []
+        traj_rew: List[float] = []
 
-        # Play one game, recording (state, action, reward)
-        for step_i in range(80):
-            covered = env.covered_cells
+        for _ in range(env.max_steps):
+            covered = env.covered_mask
             if not covered.any():
                 break
 
-            x = torch.from_numpy(state).unsqueeze(0).to(device)
-            logits = model(x).squeeze(0).squeeze(0)  # (H, W)
+            logits = get_logits(model, state, device, refine_steps=1)
             covered_t = torch.from_numpy(covered).to(device)
 
-            # Sample action
             log_probs = action_log_probs(logits, covered_t, temperature)
             probs = torch.exp(log_probs.flatten())
             probs = probs / probs.sum()
             idx = torch.multinomial(probs, 1).item()
             r, c = divmod(idx, env.width)
 
-            state_next, reward, done = env.step(MoveType.REVEAL, r, c)
+            next_state, reward, done = env.step(r, c)
 
-            trajectory_returns.append(reward)
-            all_states.append(torch.from_numpy(state))
-            all_action_coords.append((r, c))
-            n_steps += 1
+            traj_rew.append(reward)
+            states.append(torch.from_numpy(state))
+            action_coords.append((r, c))
+            n_steps_total += 1
 
-            state = state_next
+            state = next_state
             if done:
                 break
 
-        # Compute returns for this trajectory (G_t = r_t + γ·r_{t+1} + ...)
+        # Compute returns (G_t = r_t + γ·r_{t+1} + ...)
         G = 0.0
-        advantages = []
-        for reward in reversed(trajectory_returns):
+        for reward in reversed(traj_rew):
             G = reward + gamma * G
             advantages.append(G - baseline)
-        advantages.reverse()
+        total_return += sum(traj_rew)
 
-        all_advantages.extend(advantages)
-        total_return += sum(trajectory_returns)
+    if n_steps_total == 0:
+        return 0.0, 0.0, baseline
 
-    if n_steps == 0:
-        return 0.0, 0.0
-
-    # Policy gradient: loss = -mean(log_prob * advantage)
-    # We need to compute log π for each (state, action) with gradients
+    # Policy gradient
     optimizer.zero_grad()
+    batch_states = torch.stack(states).to(device)
 
-    batch_states = torch.stack(all_states).to(device)  # (N, C, H, W)
-    logits = model(batch_states).squeeze(1)  # (N, H, W)
+    # Get logits for all states (single pass, no refinement during training)
+    raw = model(batch_states)  # (N, 2, H, W)
+    logits = raw[:, 0]  # (N, H, W) — channel 0 = P(mine) logits
 
     log_probs_sum = 0.0
-    for i, (r, c) in enumerate(all_action_coords):
-        covered_mask = (batch_states[i, 0] == 1).to(device)  # channel 0 = covered
+    for i, (r, c) in enumerate(action_coords):
+        covered_mask = (batch_states[i, 0] == 1).to(device)
         lp = action_log_probs(logits[i], covered_mask, temperature)
-        log_probs_sum += lp[r, c] * all_advantages[i]
+        log_probs_sum += lp[r, c] * advantages[i]
 
-    loss = -log_probs_sum / n_steps
+    loss = -log_probs_sum / n_steps_total
     loss.backward()
     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     optimizer.step()
 
     avg_return = total_return / n_games
-    return loss.item(), avg_return
+    new_baseline = baseline * (1 - 0.1) + avg_return * 0.1
+    return loss.item(), avg_return, new_baseline
 
 
 # ─── Full Training Loop ────────────────────────────────────────────────────
@@ -275,114 +292,155 @@ def reinforce_step(
 def train_rl(config: RLConfig) -> dict:
     """Run REINFORCE training. Returns metrics dict."""
     device = torch.device(config.device)
-    print(f"=== Phase 2: REINFORCE Fine-tuning ===")
+    print(f"=== RL Fine-tuning (REINFORCE) ===")
+    print(f"Board: {config.width}×{config.height}, {config.total_mines} mines")
+    print(f"Mode: {config.board_mode}, Mine-continue: {config.mine_continue}")
     print(f"Device: {device}")
 
     # Load pretrained model
-    ckpt = torch.load(config.pretrained_path, map_location=device, weights_only=False)
-    model_config = ckpt.get("model_config", ModelConfig())
-    model = MinesweeperTransformer(model_config).to(device)
-    model.load_state_dict(ckpt["model_state_dict"])
-    print(f"Loaded pretrained model: {model.num_parameters:,} params")
+    model = MinesweeperTransformer(ModelConfig()).to(device)
+    if config.pretrained_path:
+        model.load_pretrained(config.pretrained_path, device=str(device))
+        print(f"Loaded pretrained: {model.num_parameters:,} params")
+    else:
+        print(f"Fresh model: {model.num_parameters:,} params")
 
-    # Environment
-    rewards = Rewards()
-    env = MinesweeperEnv(
+    # Environments (separate for train/eval to avoid state leaks)
+    rng = np.random.default_rng(42)
+    train_env = RLEnv(
         width=config.width, height=config.height,
-        total_mines=config.total_mines, rewards=rewards,
-        rng=np.random.default_rng(42),
+        total_mines=config.total_mines,
+        board_mode=config.board_mode,
+        mine_continue=config.mine_continue,
+        rng=rng,
+    )
+    eval_env = RLEnv(
+        width=config.width, height=config.height,
+        total_mines=config.total_mines,
+        board_mode=config.board_mode,
+        mine_continue=False,  # eval: game ends on mine
+        rng=np.random.default_rng(99),
     )
 
     # Optimizer
     optimizer = torch.optim.AdamW(
-        model.parameters(), lr=config.lr, weight_decay=config.weight_decay
+        model.parameters(), lr=config.lr, weight_decay=config.weight_decay,
     )
 
     # Metrics
+    baseline = 0.0
     metrics = {
-        "loss": [], "avg_return": [], "win_rate": [],
-        "baseline": [],
+        "game": [], "loss": [], "avg_return": [],
+        "win_rate": [], "eval_win_rate": [],
     }
 
-    # Running baseline (EMA of returns)
-    baseline = 0.0
-
-    save_dir = Path(config.save_dir)
-    save_dir.mkdir(parents=True, exist_ok=True)
-
+    Path(config.save_dir).mkdir(parents=True, exist_ok=True)
     t0 = time.time()
-    games_played = 0
 
-    while games_played < config.total_games:
-        # REINFORCE update
-        loss, avg_return = reinforce_step(
-            model, optimizer, env,
+    for game_i in range(1, config.total_games + 1, config.games_per_batch):
+        loss, avg_ret, baseline = reinforce_step(
+            model, optimizer, train_env,
             temperature=config.temperature,
-            gamma=config.gamma,
-            baseline=baseline,
-            device=device,
-            n_games=config.games_per_batch,
+            gamma=config.gamma, baseline=baseline,
+            device=device, n_games=config.games_per_batch,
         )
 
-        # Update baseline
-        baseline = (1 - config.baseline_ema) * baseline + config.baseline_ema * avg_return
-
-        games_played += config.games_per_batch
+        metrics["game"].append(game_i)
         metrics["loss"].append(loss)
-        metrics["avg_return"].append(avg_return)
-        metrics["baseline"].append(baseline)
+        metrics["avg_return"].append(avg_ret)
 
-        # Log
-        if games_played % config.log_every == 0:
-            # Evaluate win rate (deterministic play)
-            eval_returns = []
-            eval_wins = 0
-            env_eval = MinesweeperEnv(
-                width=config.width, height=config.height,
-                total_mines=config.total_mines, rewards=rewards,
-                rng=np.random.default_rng(999),
+        if game_i % config.log_every == 0 or game_i <= config.games_per_batch:
+            eval_wr, _, _ = collect_eval(
+                eval_env, model, device,
+                n_games=min(20, config.eval_games),
+                refine_steps=config.refine_steps,
             )
-            for _ in range(50):
-                _, _, won = play_game(
-                    env_eval, model, config.temperature,
-                    device, deterministic=True,
-                )
-                eval_wins += won
-            wr = eval_wins / 50
-
-            metrics["win_rate"].append((games_played, wr))
-
+            metrics["eval_win_rate"].append(eval_wr)
             elapsed = time.time() - t0
             print(
-                f"[{games_played:5d}/{config.total_games}] "
-                f"loss: {loss:.4f} | "
-                f"avg_return: {avg_return:.1f} | "
-                f"baseline: {baseline:.1f} | "
-                f"win_rate: {wr:.1%} | "
+                f"  Game {game_i:5d}/{config.total_games} | "
+                f"loss={loss:.4f} | ret={avg_ret:.1f} | "
+                f"eval_wr={eval_wr:.1%} | "
+                f"baseline={baseline:.1f} | "
                 f"{elapsed:.0f}s"
             )
 
-        # Save checkpoint
-        if games_played % config.save_every == 0:
+        if game_i % config.save_every == 0:
+            ckpt_path = Path(config.save_dir) / f"rl_model_{game_i}.pt"
             torch.save({
-                "games_played": games_played,
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
-                "metrics": metrics,
-                "model_config": model_config,
-            }, save_dir / f"rl_checkpoint_{games_played}.pt")
+                "game": game_i,
+                "baseline": baseline,
+            }, ckpt_path)
+            print(f"  Saved: {ckpt_path}")
 
     # Final save
+    final_path = Path(config.save_dir) / "rl_final.pt"
     torch.save({
-        "games_played": games_played,
         "model_state_dict": model.state_dict(),
-        "metrics": metrics,
-        "model_config": model_config,
-    }, save_dir / "rl_final.pt")
+        "optimizer_state_dict": optimizer.state_dict(),
+        "game": config.total_games,
+        "baseline": baseline,
+    }, final_path)
 
-    # Save metrics
-    with open(save_dir / "rl_metrics.json", "w") as f:
-        json.dump(metrics, f, indent=2)
+    # Final eval
+    final_wr, final_ret, final_steps = collect_eval(
+        eval_env, model, device,
+        n_games=config.eval_games,
+        refine_steps=config.refine_steps,
+    )
+    print(f"\n╔{'═'*58}╗")
+    print(f"║  Final: wr={final_wr:.1%}  ret={final_ret:.1f}  steps={final_steps:.0f}")
+    print(f"╚{'═'*58}╝")
 
-    print(f"\nTraining complete in {time.time() - t0:.0f}s")
+    metrics["final_win_rate"] = final_wr
+    metrics["final_avg_return"] = final_ret
     return metrics
+
+
+# ─── CLI ───────────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="REINFORCE fine-tuning")
+    parser.add_argument("--width", type=int, default=8)
+    parser.add_argument("--height", type=int, default=8)
+    parser.add_argument("--mines", type=int, default=10)
+    parser.add_argument("--board_mode", default="self_validated",
+                        choices=["self_validated", "random"])
+    parser.add_argument("--mine_continue", action="store_true",
+                        help="Continue game after mine hit (denser signal)")
+    parser.add_argument("--pretrained", default="")
+    parser.add_argument("--total_games", type=int, default=5000)
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--save_dir", default="checkpoints/rl")
+    parser.add_argument("--refine", type=int, default=1,
+                        dest="refine_steps")
+    parser.add_argument("--device", default="auto")
+
+    args = parser.parse_args()
+
+    if args.device == "auto":
+        if torch.cuda.is_available():
+            dev = "cuda"
+        elif torch.backends.mps.is_available():
+            dev = "mps"
+        else:
+            dev = "cpu"
+    else:
+        dev = args.device
+
+    config = RLConfig(
+        width=args.width, height=args.height,
+        total_mines=args.mines,
+        board_mode=args.board_mode,
+        mine_continue=args.mine_continue,
+        pretrained_path=args.pretrained,
+        total_games=args.total_games,
+        lr=args.lr,
+        save_dir=args.save_dir,
+        refine_steps=args.refine_steps,
+        device=dev,
+    )
+    train_rl(config)

@@ -1,7 +1,11 @@
-"""RL environment for Phase 2: wraps MinesweeperGame with solver-guided rewards.
+"""RL environment — wraps MinesweeperGame for policy gradient training.
 
-Provides step-by-step interaction for policy gradient training.
-Each step returns (next_state, reward, done) — standard RL interface.
+Supports two board modes:
+  self_validated — boards solvable by ProbabilitySolver (fast, RL-safe)
+  random        — completely random boards (includes guessing)
+
+Supports "mine continue" mode: when model hits a mine, game continues
+with a penalty instead of ending. This provides denser training signal.
 """
 
 from dataclasses import dataclass
@@ -11,32 +15,31 @@ import numpy as np
 
 from minesweeper.game import MinesweeperGame
 from minesweeper.constants import CellState, MoveType, GameStatus
-from minesweeper.solver import ConstraintSolver
+from data.self_validated import generate_self_validated_board
 
 
-# ─── Reward Constants ──────────────────────────────────────────────────────
+# ─── Reward Config ──────────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
 class Rewards:
-    """Immutable reward configuration."""
-    reveal_safe: float = 1.0        # 翻开安全格
-    reveal_zero: float = 3.0        # 翻开数字 0（触发 flood fill）
-    flag_correct: float = 2.0       # 正确插旗
-    flag_wrong: float = -5.0        # 错误插旗（把安全格当雷）
-    hit_mine: float = -10.0         # 踩雷
-    win: float = 20.0               # 胜利
-    solver_approve_reveal: float = 0.5   # solver 判定安全，模型翻开
-    solver_approve_flag: float = 1.0     # solver 判定是雷，模型插旗
+    reveal_safe: float = 1.0
+    hit_mine: float = -10.0
+    win: float = 20.0
+    step_penalty: float = 0.0     # optional per-step penalty
 
 
 # ─── Environment ────────────────────────────────────────────────────────────
 
-class MinesweeperEnv:
-    """RL environment wrapping MinesweeperGame.
+class RLEnv:
+    """RL environment for minesweeper.
 
-    State: (10, H, W) channels (same as Phase 1 input)
-    Action: (move_type, row, col) — reveal or flag a specific cell
-    Reward: solver-guided dense reward (see Rewards)
+    State: (10, H, W) board channels
+    Action: (r, c) — reveal a covered cell
+    Reward: immediate reward for the action
+
+    Two modes:
+      mine_continue=False (default): game ends on mine hit
+      mine_continue=True: game continues after mine hit, only ends on win or max steps
     """
 
     def __init__(
@@ -44,108 +47,78 @@ class MinesweeperEnv:
         width: int = 8,
         height: int = 8,
         total_mines: int = 10,
+        board_mode: str = "self_validated",  # "self_validated" | "random"
+        mine_continue: bool = False,
+        max_steps: int = 200,
         rewards: Optional[Rewards] = None,
         rng: Optional[np.random.Generator] = None,
     ):
         self.width = width
         self.height = height
         self.total_mines = total_mines
+        self.board_mode = board_mode
+        self.mine_continue = mine_continue
+        self.max_steps = max_steps
         self.rewards = rewards or Rewards()
         self.rng = rng or np.random.default_rng()
 
         self.game: Optional[MinesweeperGame] = None
-        self.solver: Optional[ConstraintSolver] = None
-        self._prev_covered: int = 0
         self._steps: int = 0
+        self._hits: int = 0
 
     def reset(self) -> np.ndarray:
-        """Start a new game. Returns initial state channels."""
-        self.game = MinesweeperGame(self.width, self.height, self.total_mines)
-
-        # Random first click
-        r = self.rng.integers(0, self.height)
-        c = self.rng.integers(0, self.width)
-        self.game.make_move(r, c, MoveType.REVEAL)
-
-        self.solver = ConstraintSolver(self.game)
-        self._prev_covered = int(self.game.covered_cells.sum())
+        """Start a new game. Returns initial state channels (10, H, W)."""
         self._steps = 0
+        self._hits = 0
 
-        return self._get_state()
+        if self.board_mode == "self_validated":
+            self.game = generate_self_validated_board(
+                width=self.width, height=self.height,
+                total_mines=self.total_mines, rng=self.rng,
+            )
+            if self.game is None:
+                # Fallback to random
+                self.game = self._random_board()
+        else:
+            self.game = self._random_board()
 
-    def step(self, move_type: MoveType, r: int, c: int) -> Tuple[np.ndarray, float, bool]:
-        """Execute an action. Returns (next_state, reward, done)."""
+        return self.state
+
+    def step(self, r: int, c: int) -> Tuple[np.ndarray, float, bool]:
+        """Execute a reveal action. Returns (next_state, reward, done)."""
         if self.game is None:
-            raise RuntimeError("Environment not reset. Call reset() first.")
+            raise RuntimeError("Call reset() first.")
 
-        reward = self._compute_reward(move_type, r, c)
-
-        self.game.make_move(r, c, move_type)
+        reward = self._compute_reward(r, c)
+        self.game.make_move(r, c, MoveType.REVEAL)
         self._steps += 1
 
-        done = self.game.status != GameStatus.PLAYING
-        if done:
-            if self.game.status == GameStatus.WON:
-                reward += self.rewards.win
-            # hit_mine is already added in _compute_reward
+        # Game status
+        if self.game.status == GameStatus.WON:
+            reward += self.rewards.win
+            return self.state, reward, True
+        elif self.game.status == GameStatus.LOST:
+            self._hits += 1
+            if self.mine_continue:
+                # Reset game status so we can continue
+                self.game.status = GameStatus.PLAYING
+                return self.state, reward, False
+            return self.state, reward, True
+        elif self._steps >= self.max_steps:
+            return self.state, reward, True
 
-        self._prev_covered = int(self.game.covered_cells.sum())
-        return self._get_state(), reward, done
-
-    def _get_state(self) -> np.ndarray:
-        """Return current board state as (10, H, W) channels."""
-        if self.game is None:
-            raise RuntimeError("Game not initialized.")
-        return self.game.board_to_channels()
-
-    def _compute_reward(self, move_type: MoveType, r: int, c: int) -> float:
-        """Compute reward for the intended action BEFORE executing it."""
-        game = self.game
-        if game is None:
-            return 0.0
-
-        # Get solver advice (what does logic say?)
-        solver_safe, solver_mines = set(), set()
-        if self.solver:
-            safe, mines = self.solver.find_safe_and_mines()
-            solver_safe = set(safe)
-            solver_mines = set(mines)
-
-        rwd = 0.0
-        cell = (r, c)
-
-        if move_type == MoveType.REVEAL:
-            if game.board[r, c] == -1:  # it's a mine
-                rwd += self.rewards.hit_mine
-            else:
-                rwd += self.rewards.reveal_safe
-                # Count adjacent mines — if 0, it'll trigger flood fill
-                adj_mines = game._count_adjacent_mines(r, c)
-                if adj_mines == 0:
-                    rwd += self.rewards.reveal_zero
-
-                # Solver bonus
-                if cell in solver_safe:
-                    rwd += self.rewards.solver_approve_reveal
-                elif cell in solver_mines:
-                    # Model is revealing a cell solver thinks is a mine
-                    # — risky, small penalty
-                    rwd -= 1.0
-
-        elif move_type == MoveType.FLAG:
-            if game.visible[r, c] == CellState.COVERED:
-                if game.board[r, c] == -1:  # correctly flagging a mine
-                    rwd += self.rewards.flag_correct
-                    if cell in solver_mines:
-                        rwd += self.rewards.solver_approve_flag
-                else:
-                    rwd += self.rewards.flag_wrong
-
-        return rwd
+        return self.state, reward, False
 
     @property
-    def covered_cells(self) -> np.ndarray:
-        """Boolean mask of covered cells."""
+    def state(self) -> np.ndarray:
+        """Current board as (10, H, W) channels."""
+        if self.game is None:
+            return np.zeros((10, self.height, self.width), dtype=np.float32)
+        return self.game.board_to_channels().astype(np.float32)
+
+    @property
+    def covered_mask(self) -> np.ndarray:
+        """Boolean array of covered cells: (H, W)."""
         if self.game is None:
             return np.zeros((self.height, self.width), dtype=bool)
         return self.game.covered_cells
@@ -153,3 +126,23 @@ class MinesweeperEnv:
     @property
     def steps(self) -> int:
         return self._steps
+
+    @property
+    def mine_hits(self) -> int:
+        return self._hits
+
+    def _random_board(self) -> MinesweeperGame:
+        game = MinesweeperGame(self.width, self.height, self.total_mines)
+        # Random first click on safe cell
+        r = self.rng.integers(0, self.height)
+        c = self.rng.integers(0, self.width)
+        game.make_move(r, c, MoveType.REVEAL)
+        return game
+
+    def _compute_reward(self, r: int, c: int) -> float:
+        """Compute reward before executing the move."""
+        if self.game is None:
+            return 0.0
+        if self.game.board[r, c] == -1:
+            return self.rewards.hit_mine
+        return self.rewards.reveal_safe + self.rewards.step_penalty
