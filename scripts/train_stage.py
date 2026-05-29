@@ -13,9 +13,9 @@
     python scripts/train_stage.py --stage S1 --resume      # 从 checkpoint 续训
 
 密度课程 (3 阶段, 密度递增):
-    S1 : 8×8 / 10雷   (15.6% 密度, 从头, --refine 4)
-    S2 : 8×8 / 20雷   (31.3% 密度, 继承 S1, --refine 4)
-    S3 : 10×10 / 40雷 (40.0% 密度, 继承 S2, --refine 4)
+    S1 : 8×8 / 10雷   (15.6% 密度, 从头, 1 epoch)
+    S2 : 8×8 / 20雷   (31.3% 密度, 继承 S1, 1 epoch)
+    S3 : 10×10 / 40雷 (40.0% 密度, 继承 S2, 2 epoch)
 
    → RL: python scripts/train_rl.py --pretrained checkpoints/S3/best_model.pt
 
@@ -39,21 +39,21 @@ STAGES = {
     # ===== 核心路线: 密度递增 (3 阶段) =====
     "S1": {
         "width": 8, "height": 8, "mines": 10,
-        "n_samples": 10000, "epochs": 5,
+        "n_samples": 10000, "epochs": 1,
         "data_dir": "data/S1", "save_dir": "checkpoints/S1",
         "lr": 1e-3, "weight_decay": 1e-4,
         "pretrained": None,
     },
     "S2": {
         "width": 8, "height": 8, "mines": 20,
-        "n_samples": 10000, "epochs": 5,
+        "n_samples": 10000, "epochs": 1,
         "data_dir": "data/S2", "save_dir": "checkpoints/S2",
         "lr": 3e-4, "weight_decay": 1e-4,
         "pretrained": "checkpoints/S1/best_model.pt",
     },
     "S3": {
         "width": 10, "height": 10, "mines": 40,
-        "n_samples": 10000, "epochs": 8,
+        "n_samples": 10000, "epochs": 2,
         "data_dir": "data/S3", "save_dir": "checkpoints/S3",
         "lr": 3e-4, "weight_decay": 1e-4,
         "pretrained": "checkpoints/S2/best_model.pt",
@@ -61,21 +61,21 @@ STAGES = {
     # ===== 可选: 更细粒度的密度阶梯 =====
     "S1.5": {
         "width": 8, "height": 8, "mines": 15,
-        "n_samples": 10000, "epochs": 5,
+        "n_samples": 10000, "epochs": 1,
         "data_dir": "data/S1_5", "save_dir": "checkpoints/S1_5",
         "lr": 3e-4, "weight_decay": 1e-4,
         "pretrained": "checkpoints/S1/best_model.pt",
     },
     "S2.5": {
         "width": 8, "height": 8, "mines": 25,
-        "n_samples": 10000, "epochs": 5,
+        "n_samples": 10000, "epochs": 1,
         "data_dir": "data/S2_5", "save_dir": "checkpoints/S2_5",
         "lr": 3e-4, "weight_decay": 1e-4,
         "pretrained": "checkpoints/S2/best_model.pt",
     },
     "S2.75": {
         "width": 8, "height": 8, "mines": 30,
-        "n_samples": 10000, "epochs": 5,
+        "n_samples": 10000, "epochs": 1,
         "data_dir": "data/S2_75", "save_dir": "checkpoints/S2_75",
         "lr": 3e-4, "weight_decay": 1e-4,
         "pretrained": "checkpoints/S2_5/best_model.pt",
@@ -83,14 +83,14 @@ STAGES = {
     # ===== 可选: 大棋盘 =====
     "S3L": {
         "width": 12, "height": 12, "mines": 40,
-        "n_samples": 10000, "epochs": 8,
+        "n_samples": 10000, "epochs": 2,
         "data_dir": "data/S3L", "save_dir": "checkpoints/S3L",
         "lr": 3e-4, "weight_decay": 1e-4,
         "pretrained": "checkpoints/S2/best_model.pt",
     },
     "S4L": {
         "width": 16, "height": 16, "mines": 80,
-        "n_samples": 2000, "epochs": 8,
+        "n_samples": 2000, "epochs": 2,
         "data_dir": "data/S4L", "save_dir": "checkpoints/S4L",
         "lr": 3e-4, "weight_decay": 1e-4,
         "pretrained": "checkpoints/S3L/best_model.pt",
