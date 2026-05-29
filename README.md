@@ -48,7 +48,7 @@ python scripts/train_stage.py --stage S2.5    # 8×8/25雷 继承 S2 (高密度)
 python scripts/train_stage.py --stage S2.75   # 8×8/30雷 继承 S2.5 (极限密度)
 
 # 3. 评估（自适应 refinement + board pool 自动开启）
-python scripts/evaluate.py checkpoints/S2_5/best_model.pt --no_guess
+python scripts/evaluate.py checkpoints/S2_5/best_model.pt
 
 # 4. RL 微调（从监督权重起步）
 python scripts/train_rl.py \
@@ -167,7 +167,6 @@ python scripts/train_stage.py --stage S2.5 [OPTIONS]
   --resume         从 checkpoint 续训（自动追加 epoch）
   --refine N       迭代 refinement 步数（默认 1）
   --eval_only      仅评估已有 checkpoint
-  --random_eval    使用随机棋盘评估（默认无猜）
   --force_data     强制重新生成数据
   --device auto    设备选择
 ```

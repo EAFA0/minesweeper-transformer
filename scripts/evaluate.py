@@ -1,9 +1,6 @@
 """Model evaluation — play full minesweeper games and measure win rate + action accuracy.
 
-Supports two evaluation modes:
-  --no_guess : No-guess boards (ms-toollib) — measures pure reasoning ability
-  (default)  : Random boards — measures real-world performance including guessing
-
+Always uses no-guess boards (ms-toollib or board pool).
 The model's probability estimates are used to pick moves (always lowest P(mine)).
 """
 
@@ -32,12 +29,12 @@ def load_model(checkpoint_path: str, device: str) -> MinesweeperTransformer:
 
 
 class BoardPool:
-    """Save and reuse generated boards to avoid slow ms-toollib regeneration.
+    """Save and reuse generated no-guess boards to avoid slow ms-toollib regeneration.
 
     Usage:
         pool = BoardPool("boards.npz", width=16, height=16, mines=80)
         for i in range(n_games):
-            game = pool.get(i, rng=rng, use_no_guess=True)
+            game = pool.get(i, rng=rng)
             # ... play game ...
     """
 
@@ -54,7 +51,7 @@ class BoardPool:
             return self._cache_mines, self._cache_visible or []
         if self.path.exists():
             data = np.load(self.path, allow_pickle=True)
-            n = len(data.files) // 2  # mines_i + visible_i per board
+            n = len(data.files) // 2
             self._cache_mines = [data[f"mines_{i}"] for i in range(n)]
             self._cache_visible = [data[f"visible_{i}"] for i in range(n)]
             return self._cache_mines, self._cache_visible
@@ -69,8 +66,8 @@ class BoardPool:
         self._cache_mines = mines
         self._cache_visible = visibles
 
-    def get(self, idx: int, rng: np.random.Generator, use_no_guess: bool) -> Optional[MinesweeperGame]:
-        """Get board #idx. Generates and caches if not in pool."""
+    def get(self, idx: int, rng: np.random.Generator) -> Optional[MinesweeperGame]:
+        """Get board #idx. Generates via ms-toollib and caches if not in pool."""
         mines_list, visibles_list = self._load()
         if idx < len(mines_list):
             return MinesweeperGame.from_mine_mask(
@@ -78,24 +75,16 @@ class BoardPool:
                 first_done=True, visible=visibles_list[idx],
             )
 
-        # Generate new board
-        if use_no_guess:
-            from data.no_guess import generate_no_guess_board
-            ng_rng = np.random.default_rng(rng.integers(0, 2**31))
-            game = generate_no_guess_board(
-                width=self.width, height=self.height, total_mines=self.mines,
-                rng=ng_rng, max_attempts=200,
-            )
-        else:
-            game = MinesweeperGame(self.width, self.height, self.mines)
-            r = rng.integers(0, self.height)
-            c = rng.integers(0, self.width)
-            game.make_move(r, c, MoveType.REVEAL)
+        from data.no_guess import generate_no_guess_board
+        ng_rng = np.random.default_rng(rng.integers(0, 2**31))
+        game = generate_no_guess_board(
+            width=self.width, height=self.height, total_mines=self.mines,
+            rng=ng_rng, max_attempts=200,
+        )
 
         if game is None or game.status != GameStatus.PLAYING:
             return None
 
-        # Save to pool
         mine_mask = game.get_mine_mask()
         mines_list.append(mine_mask)
         visibles_list.append(game.visible.copy())
@@ -135,27 +124,20 @@ def play_one_game(
     height: int = 8,
     total_mines: int = 10,
     rng: Optional[np.random.Generator] = None,
-    use_no_guess: bool = False,
-    no_guess_rng: Optional[np.random.Generator] = None,
     max_steps: int = 200,
     prebuilt_game: Optional[MinesweeperGame] = None,
 ) -> dict:
-    """Play one game with the model.
-
-    If prebuilt_game is provided (from BoardPool), uses it directly.
-    Otherwise generates a new board via ms-toollib or random placement.
-    """
+    """Play one game on a no-guess board. Returns detailed stats."""
     if rng is None:
         rng = np.random.default_rng()
 
     if prebuilt_game is not None:
         game = prebuilt_game
-    elif use_no_guess:
+    else:
         from data.no_guess import generate_no_guess_board
-        ng_rng = no_guess_rng or rng
         game = generate_no_guess_board(
             width=width, height=height, total_mines=total_mines,
-            rng=ng_rng, max_attempts=200,
+            rng=rng, max_attempts=200,
         )
         if game is None:
             return {
@@ -163,11 +145,6 @@ def play_one_game(
                 "safe_reveals": 0, "mine_hits": 0,
                 "action_accuracy": 0.0, "generation_failed": True,
             }
-    else:
-        game = MinesweeperGame(width, height, total_mines)
-        r = rng.integers(0, height)
-        c = rng.integers(0, width)
-        game.make_move(r, c, MoveType.REVEAL)
 
     steps = 0
     safe_reveals = 0
@@ -207,24 +184,18 @@ def evaluate(
     total_mines: int = 10,
     seed: int = 42,
     device: str = "cpu",
-    use_no_guess: bool = False,
     board_pool: Optional[Path] = None,
 ) -> dict:
-    """Run evaluation. Returns statistics dict."""
+    """Run evaluation on no-guess boards. Returns statistics dict."""
     device = torch.device(device)
     model = load_model(checkpoint_path, device)
-    mode_str = "No-guess (reasoning test)" if use_no_guess else "Random (with guessing)"
     print(f"Model: {model.num_parameters:,} parameters")
     print(f"Device: {device}")
-    print(f"Mode: {mode_str}")
-    print(f"Games to play: {n_games} ({width}×{height}, {total_mines} mines)")
+    print(f"Games: {n_games} ({width}×{height}, {total_mines} mines)")
     print()
 
     rng = np.random.default_rng(seed)
-    # Separate RNG for no-guess generation to keep game sequence deterministic
-    ng_rng = np.random.default_rng(seed + 1) if use_no_guess else None
 
-    # Board pool (avoid regenerating slow ms-toollib boards)
     pool = None
     if board_pool:
         pool = BoardPool(board_pool, width, height, total_mines)
@@ -242,17 +213,16 @@ def evaluate(
     progress_interval = max(1, min(50, n_games // 10))
 
     for i in range(n_games):
-        prebuilt = pool.get(i, rng, use_no_guess) if pool else None
+        prebuilt = pool.get(i, rng) if pool else None
         game_stats = play_one_game(
             model, device, width, height, total_mines,
-            rng=rng, use_no_guess=use_no_guess, no_guess_rng=ng_rng,
-            prebuilt_game=prebuilt,
+            rng=rng, prebuilt_game=prebuilt,
         )
 
         if game_stats.get("generation_failed"):
             gen_failures += 1
             results["gen_failed"] += 1
-            if (i + 1) % 100 == 0:
+            if (i + 1) % progress_interval == 0:
                 print(f"  [{i + 1:5d}/{n_games}] gen_failures={gen_failures}")
             continue
 
@@ -293,16 +263,17 @@ def evaluate(
 
     print()
     print("═" * 60)
-    print(f"Mode:              {mode_str}")
     print(f"Total games:       {n_games}")
     if gen_failures > 0:
         print(f"Gen failures:      {gen_failures} (skipped)")
     print(f"Won:               {results['won']} ({win_rate:.1%})")
-    print(f"Lost:              {results['lost']} ({results['lost']/max(1,played):.1%})" if played > 0 else f"Lost:              0 (0.0%)")
-    print(f"Stuck:             {results['stuck']} ({results['stuck']/max(1,played):.1%})" if played > 0 else f"Stuck:             0 (0.0%)")
+    if played > 0:
+        print(f"Lost:              {results['lost']} ({results['lost']/max(1,played):.1%})")
+    print(f"Stuck:             {results['stuck']}")
     print(f"Action accuracy:   {overall_action_acc:.3f} ({results['total_safe_reveals']}/{total_reveals})")
     print(f"Avg steps:         {avg_steps:.1f}")
-    print(f"Time:              {elapsed:.1f}s ({elapsed/max(1,played):.3f}s/game)" if played > 0 else f"Time:              {elapsed:.1f}s")
+    if played > 0:
+        print(f"Time:              {elapsed:.1f}s ({elapsed/max(1,played):.3f}s/game)")
     print("═" * 60)
 
     results["win_rate"] = win_rate
@@ -314,27 +285,22 @@ def evaluate(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Evaluate Minesweeper Transformer by playing full games"
+        description="Evaluate Minesweeper Transformer on no-guess boards"
     )
     parser.add_argument("checkpoint", help="Path to model checkpoint (.pt)")
-    parser.add_argument("--n_games", type=int, default=500,
-                        help="Number of games to play (default: 500)")
+    parser.add_argument("--n_games", type=int, default=500)
     parser.add_argument("--width", type=int, default=8)
     parser.add_argument("--height", type=int, default=8)
     parser.add_argument("--mines", type=int, default=10)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--device", default="auto",
-                        help="Device: cpu, cuda, mps, or auto")
-    parser.add_argument("--no_guess", action="store_true",
-                        help="Evaluate on no-guess boards (pure reasoning, no luck)")
+    parser.add_argument("--device", default="auto")
     parser.add_argument("--board_pool", type=Path, default=None,
-                        help="Save/load generated boards to .npz for reuse (default: auto)")
+                        help="Save/load boards to .npz (default: auto)")
     parser.add_argument("--no_board_pool", action="store_true",
-                        help="Disable board pooling (always regenerate boards)")
+                        help="Disable board pooling")
 
     args = parser.parse_args()
 
-    # Auto-generate board pool path if not disabled
     if args.board_pool is None and not args.no_board_pool:
         args.board_pool = Path(f"eval_boards_{args.width}x{args.height}_{args.mines}.npz")
 
@@ -356,7 +322,6 @@ def main():
         total_mines=args.mines,
         seed=args.seed,
         device=device,
-        use_no_guess=args.no_guess,
         board_pool=args.board_pool,
     )
 

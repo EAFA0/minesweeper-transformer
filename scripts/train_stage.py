@@ -138,8 +138,6 @@ def main():
                    help="迭代 refinement 步数 (default: 1 = 单次推理)")
     p.add_argument("--eval_only", action="store_true",
                    help="仅评估已有 checkpoint，不训练")
-    p.add_argument("--random_eval", action="store_true",
-                   help="评估使用随机棋盘 (默认用无猜棋盘测试纯推理)")
     p.add_argument("--device", default="auto")
     p.add_argument("--n_games", type=int, default=500,
                    help="评估时玩的游戏数 (default: 500)")
@@ -224,12 +222,7 @@ def main():
             "--n_games", str(args.n_games),
             "--device", args.device,
         ]
-        if not args.random_eval:
-            eval_cmd.append("--no_guess")
-        eval_desc = f"{args.stage}: Evaluate"
-        if not args.random_eval:
-            eval_desc += " (no-guess)"
-        run(eval_cmd, eval_desc)
+        run(eval_cmd, f"{args.stage}: Evaluate")
     else:
         print(f"⚠ No checkpoint at {ckpt}")
 
