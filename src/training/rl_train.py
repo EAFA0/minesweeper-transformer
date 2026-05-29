@@ -152,7 +152,7 @@ def play_game(
             probs = probs / probs.sum()
             idx = torch.multinomial(probs, 1).item()
 
-        r, c = divmod(idx, env.width)
+        r, c = divmod(idx, covered.shape[1])  # padded width
         state, reward, done = env.step(r, c)
         total_return += reward
         steps += 1
@@ -234,7 +234,7 @@ def reinforce_step(
             probs = torch.exp(log_probs.flatten())
             probs = probs / probs.sum()
             idx = torch.multinomial(probs, 1).item()
-            r, c = divmod(idx, env.width)
+            r, c = divmod(idx, covered.shape[1])  # padded width
 
             next_state, reward, done = env.step(r, c)
 
