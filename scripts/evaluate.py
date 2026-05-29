@@ -1,9 +1,10 @@
 """Model evaluation — play full minesweeper games and measure win rate + action accuracy.
 
-Uses the model's probability estimates to pick moves (always lowest P(mine)).
-Tracks:
-- Win rate (games won / total)
-- Action accuracy (reveals that didn't hit a mine / total reveals)
+Supports two evaluation modes:
+  --no_guess : No-guess boards (ms-toollib) — measures pure reasoning ability
+  (default)  : Random boards — measures real-world performance including guessing
+
+The model's probability estimates are used to pick moves (always lowest P(mine)).
 """
 
 import argparse
@@ -23,7 +24,7 @@ from model.architecture import MinesweeperTransformer, ModelConfig
 
 
 def load_model(checkpoint_path: str, device: str) -> MinesweeperTransformer:
-    """Load a trained model from checkpoint, with format migration."""
+    """Load a trained model from checkpoint."""
     model = MinesweeperTransformer(ModelConfig()).to(device)
     model.load_pretrained(checkpoint_path, device)
     model.eval()
@@ -35,7 +36,7 @@ def pick_action(
     game: MinesweeperGame,
     device: str,
 ) -> Optional[Tuple[MoveType, int, int]]:
-    """Choose the next move: always reveal the covered cell with lowest P(mine)."""
+    """Choose the next move: reveal the covered cell with lowest P(mine)."""
     channels = game.board_to_channels()
     with torch.no_grad():
         x = torch.from_numpy(channels).unsqueeze(0).to(device)
@@ -58,18 +59,38 @@ def play_one_game(
     height: int = 8,
     total_mines: int = 10,
     rng: Optional[np.random.Generator] = None,
-    max_steps: int = 100,
+    use_no_guess: bool = False,
+    no_guess_rng: Optional[np.random.Generator] = None,
+    max_steps: int = 200,
 ) -> dict:
-    """Play one game with the model. Returns detailed stats dict."""
+    """Play one game with the model. Returns detailed stats dict.
+
+    If use_no_guess=True, generates a no-guess board via ms-toollib
+    (first click already done by the generator). Otherwise uses a
+    random board with a random first click.
+    """
     if rng is None:
         rng = np.random.default_rng()
 
-    game = MinesweeperGame(width, height, total_mines)
-
-    # Random first click
-    r = rng.integers(0, height)
-    c = rng.integers(0, width)
-    game.make_move(r, c, MoveType.REVEAL)
+    if use_no_guess:
+        from data.no_guess import generate_no_guess_board
+        ng_rng = no_guess_rng or rng
+        game = generate_no_guess_board(
+            width=width, height=height, total_mines=total_mines,
+            rng=ng_rng, max_attempts=200,
+        )
+        if game is None:
+            return {
+                "status": None, "steps": 0,
+                "safe_reveals": 0, "mine_hits": 0,
+                "action_accuracy": 0.0, "generation_failed": True,
+            }
+    else:
+        game = MinesweeperGame(width, height, total_mines)
+        # Random first click
+        r = rng.integers(0, height)
+        c = rng.integers(0, width)
+        game.make_move(r, c, MoveType.REVEAL)
 
     steps = 0
     safe_reveals = 0
@@ -81,7 +102,6 @@ def play_one_game(
             break
 
         move_type, mr, mc = action
-        # Check if the chosen cell is actually safe (ground truth)
         is_safe = not game.get_mine_mask()[mr, mc]
 
         game.make_move(mr, mc, move_type)
@@ -98,6 +118,7 @@ def play_one_game(
         "safe_reveals": safe_reveals,
         "mine_hits": mine_hits,
         "action_accuracy": safe_reveals / max(1, safe_reveals + mine_hits),
+        "generation_failed": False,
     }
 
 
@@ -109,27 +130,43 @@ def evaluate(
     total_mines: int = 10,
     seed: int = 42,
     device: str = "cpu",
+    use_no_guess: bool = False,
 ) -> dict:
     """Run evaluation. Returns statistics dict."""
     device = torch.device(device)
     model = load_model(checkpoint_path, device)
+    mode_str = "No-guess (reasoning test)" if use_no_guess else "Random (with guessing)"
     print(f"Model: {model.num_parameters:,} parameters")
     print(f"Device: {device}")
-    print(f"Games to play: {n_games}")
+    print(f"Mode: {mode_str}")
+    print(f"Games to play: {n_games} ({width}×{height}, {total_mines} mines)")
     print()
 
     rng = np.random.default_rng(seed)
+    # Separate RNG for no-guess generation to keep game sequence deterministic
+    ng_rng = np.random.default_rng(seed + 1) if use_no_guess else None
+
     results = {
-        "won": 0, "lost": 0, "stuck": 0,
+        "won": 0, "lost": 0, "stuck": 0, "gen_failed": 0,
         "steps": [], "action_accuracies": [],
         "total_safe_reveals": 0, "total_mine_hits": 0,
     }
     t0 = time.time()
+    gen_failures = 0
 
     for i in range(n_games):
         game_stats = play_one_game(
-            model, device, width, height, total_mines, rng=rng
+            model, device, width, height, total_mines,
+            rng=rng, use_no_guess=use_no_guess, no_guess_rng=ng_rng,
         )
+
+        if game_stats.get("generation_failed"):
+            gen_failures += 1
+            results["gen_failed"] += 1
+            if (i + 1) % 100 == 0:
+                print(f"  [{i + 1:5d}/{n_games}] gen_failures={gen_failures}")
+            continue
+
         results["steps"].append(game_stats["steps"])
         results["action_accuracies"].append(game_stats["action_accuracy"])
         results["total_safe_reveals"] += game_stats["safe_reveals"]
@@ -145,7 +182,8 @@ def evaluate(
 
         if (i + 1) % 100 == 0:
             elapsed = time.time() - t0
-            wr = results["won"] / (i + 1)
+            played = i + 1 - gen_failures
+            wr = results["won"] / max(1, played) if played > 0 else 0
             total_reveals = results["total_safe_reveals"] + results["total_mine_hits"]
             act_acc = results["total_safe_reveals"] / max(1, total_reveals)
             print(
@@ -158,21 +196,25 @@ def evaluate(
             )
 
     elapsed = time.time() - t0
-    win_rate = results["won"] / n_games
+    played = n_games - gen_failures
+    win_rate = results["won"] / max(1, played) if played > 0 else 0
     avg_steps = np.mean(results["steps"]) if results["steps"] else 0
     total_reveals = results["total_safe_reveals"] + results["total_mine_hits"]
     overall_action_acc = results["total_safe_reveals"] / max(1, total_reveals)
 
     print()
-    print("═" * 50)
+    print("═" * 60)
+    print(f"Mode:              {mode_str}")
     print(f"Total games:       {n_games}")
+    if gen_failures > 0:
+        print(f"Gen failures:      {gen_failures} (skipped)")
     print(f"Won:               {results['won']} ({win_rate:.1%})")
-    print(f"Lost:              {results['lost']} ({results['lost']/n_games:.1%})")
-    print(f"Stuck:             {results['stuck']} ({results['stuck']/n_games:.1%})")
+    print(f"Lost:              {results['lost']} ({results['lost']/max(1,played):.1%})" if played > 0 else f"Lost:              0 (0.0%)")
+    print(f"Stuck:             {results['stuck']} ({results['stuck']/max(1,played):.1%})" if played > 0 else f"Stuck:             0 (0.0%)")
     print(f"Action accuracy:   {overall_action_acc:.3f} ({results['total_safe_reveals']}/{total_reveals})")
     print(f"Avg steps:         {avg_steps:.1f}")
-    print(f"Time:              {elapsed:.1f}s ({elapsed/n_games:.3f}s/game)")
-    print("═" * 50)
+    print(f"Time:              {elapsed:.1f}s ({elapsed/max(1,played):.3f}s/game)" if played > 0 else f"Time:              {elapsed:.1f}s")
+    print("═" * 60)
 
     results["win_rate"] = win_rate
     results["avg_steps"] = avg_steps
@@ -186,14 +228,16 @@ def main():
         description="Evaluate Minesweeper Transformer by playing full games"
     )
     parser.add_argument("checkpoint", help="Path to model checkpoint (.pt)")
-    parser.add_argument("--n_games", type=int, default=1000,
-                        help="Number of games to play (default: 1000)")
+    parser.add_argument("--n_games", type=int, default=500,
+                        help="Number of games to play (default: 500)")
     parser.add_argument("--width", type=int, default=8)
     parser.add_argument("--height", type=int, default=8)
     parser.add_argument("--mines", type=int, default=10)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default="auto",
                         help="Device: cpu, cuda, mps, or auto")
+    parser.add_argument("--no_guess", action="store_true",
+                        help="Evaluate on no-guess boards (pure reasoning, no luck)")
 
     args = parser.parse_args()
 
@@ -215,6 +259,7 @@ def main():
         total_mines=args.mines,
         seed=args.seed,
         device=device,
+        use_no_guess=args.no_guess,
     )
 
 

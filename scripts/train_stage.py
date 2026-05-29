@@ -97,6 +97,8 @@ def main():
                    help="从已有 checkpoint 续训")
     p.add_argument("--eval_only", action="store_true",
                    help="仅评估已有 checkpoint，不训练")
+    p.add_argument("--random_eval", action="store_true",
+                   help="评估使用随机棋盘 (默认用无猜棋盘测试纯推理)")
     p.add_argument("--device", default="auto")
     p.add_argument("--n_games", type=int, default=500,
                    help="评估时玩的游戏数 (default: 500)")
@@ -166,7 +168,7 @@ def main():
     # ── 3) Evaluate ───────────────────────────────────────────────────
     ckpt = Path(cfg["save_dir"]) / "best_model.pt"
     if ckpt.exists():
-        run([
+        eval_cmd = [
             sys.executable, "scripts/evaluate.py",
             str(ckpt),
             "--width", str(cfg["width"]),
@@ -174,7 +176,13 @@ def main():
             "--mines", str(cfg["mines"]),
             "--n_games", str(args.n_games),
             "--device", args.device,
-        ], f"{args.stage}: Evaluate")
+        ]
+        if not args.random_eval:
+            eval_cmd.append("--no_guess")
+        eval_desc = f"{args.stage}: Evaluate"
+        if not args.random_eval:
+            eval_desc += " (no-guess)"
+        run(eval_cmd, eval_desc)
     else:
         print(f"⚠ No checkpoint at {ckpt}")
 
