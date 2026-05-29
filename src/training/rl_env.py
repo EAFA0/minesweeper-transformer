@@ -105,19 +105,23 @@ class RLEnv:
         else:
             w, h, mines = self.width, self.height, self.total_mines
 
-        self.game = generate_self_validated_board(
-            width=w, height=h, total_mines=mines,
-            rng=self.rng, warmup_clicks=self.warmup_clicks,
-        )
-        if self.game is None:
+        # Try to generate board, retry with easier config if failed
+        self.game = None
+        for _ in range(5):  # up to 5 attempts with different seeds
             self.game = generate_self_validated_board(
                 width=w, height=h, total_mines=mines,
-                rng=np.random.default_rng(),
+                rng=self.rng, warmup_clicks=self.warmup_clicks,
             )
+            if self.game is not None:
+                break
+            # Reduce mines slightly for next attempt if density is high
+            if mines > w * h * 0.3:
+                mines = max(1, mines - 1)
+
         if self.game is None:
             raise RuntimeError(
                 f"Failed to generate self-validated board "
-                f"{w}×{h}/{mines}"
+                f"{w}×{h}/{mines} (after retries)"
             )
 
         return self.state
