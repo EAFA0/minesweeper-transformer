@@ -314,6 +314,7 @@ def train_rl(config: RLConfig) -> dict:
         print(f"Fresh model: {model.num_parameters:,} params")
 
     # Board pool (optional, pre-generate for faster RL)
+    board_rng = np.random.default_rng(42)
     train_pool = None
     eval_pool = None
     if config.board_pool_path:
@@ -322,7 +323,7 @@ def train_rl(config: RLConfig) -> dict:
         train_pool = RLBoardPool(
             p, min_size=config.mixed_min_size, max_size=config.mixed_max_size,
             min_density=config.mixed_min_density, max_density=config.mixed_max_density,
-            target_size=config.total_games, rng=rng,
+            target_size=config.total_games, rng=board_rng,
         )
         print(f"Board pool: {train_pool.size}/{config.total_games} boards in {p}")
         if train_pool.size < config.total_games:
