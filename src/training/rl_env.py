@@ -87,6 +87,9 @@ class RLEnv:
             h = self.rng.integers(self.mixed_min_size, self.mixed_max_size + 1)
             density = self.rng.uniform(self.mixed_min_density, self.mixed_max_density)
             mines = max(1, int(w * h * density))
+            self.width = w
+            self.height = h
+            self.total_mines = mines
         else:
             w, h, mines = self.width, self.height, self.total_mines
 
