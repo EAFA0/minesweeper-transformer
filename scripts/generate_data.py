@@ -18,6 +18,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from data.generator import generate_training_data
+from data.mixed_generator import generate_mixed_data
 
 
 def data_exists(output_dir: Path, expected_n_samples: int) -> bool:
@@ -69,6 +70,16 @@ def main():
                         help="Number of games per .npz file (default: 100)")
     parser.add_argument("--force", action="store_true",
                         help="Force regeneration even if data already exists")
+    parser.add_argument("--mixed", action="store_true",
+                        help="Generate mixed dataset (variable sizes + densities)")
+    parser.add_argument("--min_size", type=int, default=4,
+                        help="Min board size for mixed mode (default: 4)")
+    parser.add_argument("--max_size", type=int, default=8,
+                        help="Max board size for mixed mode (default: 8)")
+    parser.add_argument("--min_density", type=float, default=0.1,
+                        help="Min mine density for mixed mode (default: 0.1)")
+    parser.add_argument("--max_density", type=float, default=0.5,
+                        help="Max mine density for mixed mode (default: 0.5)")
 
     args = parser.parse_args()
 
@@ -80,6 +91,27 @@ def main():
         total = sum(1 for _ in data_files)
         print(f"   {total} files, target={args.n_samples} games")
         print(f"   Use --force to regenerate")
+        return
+
+    if args.mixed:
+        stats = generate_mixed_data(
+            output_dir=output_dir,
+            n_samples=args.n_samples,
+            min_size=args.min_size,
+            max_size=args.max_size,
+            min_density=args.min_density,
+            max_density=args.max_density,
+            seed=args.seed,
+            samples_per_file=args.samples_per_file,
+            show_progress=not args.no_progress,
+        )
+        print(f"\n📊 Mixed generation complete!")
+        print(f"   Generated: {stats['generated']} games from {stats['attempts']} attempts")
+        print(f"   Size range: {args.min_size}-{args.max_size}, density: {args.min_density}-{args.max_density}")
+        print(f"   Avg steps per game: {stats['avg_steps_per_game']:.1f}")
+        print(f"   Total training steps: {stats['total_steps']}")
+        print(f"   Output files: {stats['output_files']}")
+        print(f"   Time: {stats['elapsed_seconds']:.1f}s")
         return
 
     stats = generate_training_data(
