@@ -271,7 +271,7 @@ class MinesweeperTransformer(nn.Module):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
     @torch.no_grad()
-    def predict(self, x: torch.Tensor, max_refine_steps: int = 12) -> torch.Tensor:
+    def predict(self, x: torch.Tensor, max_refine_steps: int = 5) -> torch.Tensor:
         """Return P(mine) probabilities with adaptive refinement.
 
         Inference uses more steps than training (default 12 vs train's random 1-8).

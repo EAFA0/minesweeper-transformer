@@ -103,20 +103,16 @@ def get_logits(
     model: MinesweeperTransformer,
     state: np.ndarray,
     device: str,
-    refine_steps: int = 1,
 ) -> torch.Tensor:
-    """Get per-cell mine logits for action selection.
+    """Get per-cell mine logits for action selection (single pass, fast).
 
-    Uses model.predict() which automatically handles refinement
-    when the model was trained for it.
-
-    Returns (H, W) float tensor of logits.
+    Trajectory collection uses single-pass inference for speed.
+    Refinement is applied during gradient computation only.
     """
     x = torch.from_numpy(state).unsqueeze(0).to(device)
-    probs = model.predict(x)  # (1, 1, H, W) — auto-refined if model supports it
-    eps = 1e-7
-    probs = probs.clamp(eps, 1 - eps)
-    return torch.log(probs / (1 - probs)).squeeze(0).squeeze(0)  # (H, W)
+    with torch.no_grad():
+        raw = model(x)
+    return raw.squeeze(0)[0]  # (H, W) — channel 0 raw logits
 
 
 # ─── Game Simulation ────────────────────────────────────────────────────────
@@ -141,7 +137,7 @@ def play_game(
         if not covered.any():
             break
 
-        logits = get_logits(model, state, device, refine_steps)
+        logits = get_logits(model, state, device)
         covered_t = torch.from_numpy(covered).to(device)
 
         if deterministic:
