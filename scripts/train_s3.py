@@ -16,7 +16,7 @@ from pathlib import Path
 STAGE = "S3"
 DEFAULTS = {
     "width": 12, "height": 12, "mines": 40,
-    "n_samples": 10000, "epochs": 30,
+    "n_samples": 10000, "epochs": 10,
     "data_dir": "data/S3", "save_dir": "checkpoints/S3",
     "pretrained": "checkpoints/S2/best_model.pt",
 }

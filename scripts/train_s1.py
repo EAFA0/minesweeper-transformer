@@ -19,7 +19,7 @@ from pathlib import Path
 STAGE = "S1"
 DEFAULTS = {
     "width": 8, "height": 8, "mines": 10,
-    "n_samples": 10000, "epochs": 50,
+    "n_samples": 10000, "epochs": 5,
     "data_dir": "data/S1", "save_dir": "checkpoints/S1",
 }
 
