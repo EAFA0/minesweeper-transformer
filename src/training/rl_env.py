@@ -57,6 +57,7 @@ class RLEnv:
         mixed_max_density: float = 0.40,
         rewards: Optional[Rewards] = None,
         rng: Optional[np.random.Generator] = None,
+        board_pool: Optional[Any] = None,  # RLBoardPool for pre-generated boards
     ):
         self.width = width
         self.height = height
@@ -71,6 +72,7 @@ class RLEnv:
         self.mixed_max_density = mixed_max_density
         self.rewards = rewards or Rewards()
         self.rng = rng or np.random.default_rng()
+        self.board_pool = board_pool
 
         self.game: Optional[MinesweeperGame] = None
         self._steps: int = 0
@@ -80,6 +82,16 @@ class RLEnv:
         """Start a new game. Returns initial state channels (10, H, W)."""
         self._steps = 0
         self._hits = 0
+
+        # Board pool: sample pre-generated board
+        if self.board_pool is not None:
+            result = self.board_pool.sample(self.rng)
+            if result is not None:
+                self.game, w, h = result
+                self.width = w
+                self.height = h
+                self.total_mines = int(self.game.get_mine_mask().sum())
+                return self.state
 
         # Mixed mode: random size + density each episode
         if self.mixed:

@@ -39,6 +39,10 @@ def main() -> None:
     parser.add_argument("--save_dir", default="checkpoints/rl")
     parser.add_argument("--refine", type=int, default=8, dest="refine_steps",
                         help="Iterative refinement steps (default: 8)")
+    parser.add_argument("--board_pool", default="rl_boards.npz",
+                        help="Pre-generate boards to .npz (speeds up RL)")
+    parser.add_argument("--no_board_pool", action="store_true",
+                        help="Disable board pooling")
     parser.add_argument("--device", default="auto")
 
     args = parser.parse_args()
@@ -59,6 +63,7 @@ def main() -> None:
         total_mines=args.mines,
         mine_continue=args.mine_continue,
         warmup_clicks=args.warmup_clicks,
+        board_pool_path="" if args.no_board_pool else args.board_pool,
         pretrained_path=args.pretrained,
         total_games=args.total_games,
         lr=args.lr,

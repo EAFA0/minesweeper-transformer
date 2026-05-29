@@ -42,6 +42,7 @@ class RLConfig:
     mixed_max_size: int = 10
     mixed_min_density: float = 0.10
     mixed_max_density: float = 0.40
+    board_pool_path: str = ""  # pre-generate boards for faster RL (recommended)
 
     # RL hyperparameters
     temperature: float = 1.0
@@ -312,6 +313,24 @@ def train_rl(config: RLConfig) -> dict:
     else:
         print(f"Fresh model: {model.num_parameters:,} params")
 
+    # Board pool (optional, pre-generate for faster RL)
+    train_pool = None
+    eval_pool = None
+    if config.board_pool_path:
+        from training.rl_board_pool import RLBoardPool
+        p = Path(config.board_pool_path)
+        train_pool = RLBoardPool(
+            p, min_size=config.mixed_min_size, max_size=config.mixed_max_size,
+            min_density=config.mixed_min_density, max_density=config.mixed_max_density,
+            target_size=config.total_games, rng=rng,
+        )
+        print(f"Board pool: {train_pool.size}/{config.total_games} boards in {p}")
+        if train_pool.size < config.total_games:
+            print(f"  Filling pool (this may take a while)...")
+            train_pool.fill()
+            print(f"  Done — {train_pool.size} boards ready")
+        eval_pool = train_pool  # share pool for eval
+
     # Environments (separate for train/eval to avoid state leaks)
     rng = np.random.default_rng(42)
     train_env = RLEnv(
@@ -325,6 +344,7 @@ def train_rl(config: RLConfig) -> dict:
         mixed_min_density=config.mixed_min_density,
         mixed_max_density=config.mixed_max_density,
         rng=rng,
+        board_pool=train_pool,
     )
     eval_env = RLEnv(
         width=config.width, height=config.height,
@@ -337,6 +357,7 @@ def train_rl(config: RLConfig) -> dict:
         mixed_min_density=config.mixed_min_density,
         mixed_max_density=config.mixed_max_density,
         rng=np.random.default_rng(99),
+        board_pool=eval_pool,
     )
 
     # Optimizer
