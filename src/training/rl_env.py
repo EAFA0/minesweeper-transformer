@@ -49,6 +49,7 @@ class RLEnv:
         total_mines: int = 10,
         mine_continue: bool = False,
         max_steps: int = 200,
+        warmup_clicks: int = 0,
         rewards: Optional[Rewards] = None,
         rng: Optional[np.random.Generator] = None,
     ):
@@ -57,6 +58,7 @@ class RLEnv:
         self.total_mines = total_mines
         self.mine_continue = mine_continue
         self.max_steps = max_steps
+        self.warmup_clicks = warmup_clicks
         self.rewards = rewards or Rewards()
         self.rng = rng or np.random.default_rng()
 
@@ -72,6 +74,7 @@ class RLEnv:
         self.game = generate_self_validated_board(
             width=self.width, height=self.height,
             total_mines=self.total_mines, rng=self.rng,
+            warmup_clicks=self.warmup_clicks,
         )
         if self.game is None:
             # Should rarely happen with hint-based solver; if it does,

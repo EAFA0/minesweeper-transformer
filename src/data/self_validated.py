@@ -1,17 +1,18 @@
 """Self-validated board generator — fast alternative to ms-toollib.
 
 Uses our own ProbabilitySolver to verify board solvability.
-Much faster than ms-toollib's SAT solver (~1-10s vs 10-50s per board).
+Much faster than ms-toollib's SAT solver (~0.1-1s vs 10-50s per board).
 
 Algorithm:
   1. Randomly place mines
-  2. Random first click on a safe cell
-  3. Use ProbabilitySolver to play through the board
-  4. At each step, reveal any cell with P(mine) == 0
-  5. If stuck (all covered cells have P > 0), board is too ambiguous → discard
-  6. Success = solver completes the board (all safe cells revealed)
+  2. Zero-cell first click to open a safe region
+  3. N warmup clicks: reveal random safe cells (opens the board for the model)
+  4. ProbabilitySolver tries to finish the board
+  5. If solved → return game with warmup clicks applied
+  6. If stuck → retry with new random board
 
-The returned game has its first click applied and is ready for model inference.
+The warmup clicks ensure the model starts with enough visible information.
+Without them, dense boards have too few visible cells for any model to reason.
 """
 
 import time
@@ -31,23 +32,18 @@ def generate_self_validated_board(
     rng: Optional[np.random.Generator] = None,
     max_attempts: int = 50,
     max_steps: int = 300,
+    warmup_clicks: int = 0,
     verbose: bool = False,
 ) -> Optional[MinesweeperGame]:
     """Generate a board that ProbabilitySolver can solve.
 
-    Returns a game with first click already applied, or None if
-    max_attempts exceeded.
+    Returns a game with first click + warmup clicks already applied,
+    or None if max_attempts exceeded.
 
-    Args:
-        width, height: board dimensions
-        total_mines: number of mines
-        rng: random generator (seeded or default)
-        max_attempts: max board generation attempts
-        max_steps: max solver steps before giving up
-        verbose: print generation progress
-
-    Returns:
-        MinesweeperGame with first click applied, or None
+    warmup_clicks: number of random safe reveals to open the board.
+      Higher values give the model more initial information.
+      Default 0 (just the first click) — works well for sparse boards.
+      Recommend 3-5 for dense boards (8×8/20+ mines).
     """
     if rng is None:
         rng = np.random.default_rng()
@@ -58,70 +54,69 @@ def generate_self_validated_board(
         # Create game with random mines
         game = MinesweeperGame(width, height, total_mines)
 
-        # Find a zero cell for first click (guaranteed to trigger flood fill)
-        # A zero cell has no adjacent mines
+        # Find a zero cell for first click
         zero_cells = []
         for rr in range(height):
             for cc in range(width):
                 if game.board[rr, cc] != -1:
-                    adj = game._count_adjacent_mines(rr, cc)
-                    if adj == 0:
+                    if game._count_adjacent_mines(rr, cc) == 0:
                         zero_cells.append((rr, cc))
 
         if not zero_cells:
-            if verbose:
-                print(f"  Attempt {attempt+1}: no zero cell found, retrying")
             continue
 
         r, c = zero_cells[rng.integers(0, len(zero_cells))]
         game.make_move(r, c, MoveType.REVEAL)
         if game.status != GameStatus.PLAYING:
-            if verbose:
-                print(f"  Attempt {attempt+1}: first click hit mine, retrying")
             continue
 
-        # Try to solve with ProbabilitySolver
-        solved = _try_solve(game, max_steps=max_steps)
+        # Apply warmup clicks: reveal random safe cells to open more of the board
+        for _ in range(warmup_clicks):
+            covered = game.covered_cells
+            safe = []
+            for rr in range(height):
+                for cc in range(width):
+                    if covered[rr, cc] and game.board[rr, cc] != -1:
+                        safe.append((rr, cc))
+            if not safe:
+                break
+            wr, wc = safe[rng.integers(0, len(safe))]
+            game.make_move(wr, wc, MoveType.REVEAL)
+
+        # Save state at this point (after warmup, before solver)
+        mine_mask = game.get_mine_mask()
+        visible_snapshot = game.visible.copy()
+
+        # Try to solve from here
+        solved = _try_solve_from(game, max_steps=max_steps)
 
         dt = time.time() - t0
         if solved:
             if verbose:
-                print(f"  Attempt {attempt+1}: ✓ solved in {dt:.1f}s")
-            # Return fresh game with same mine layout
-            return _recreate_game(width, height, game.get_mine_mask(), r, c)
+                visible = int((visible_snapshot >= 0).sum())
+                print(f"  Attempt {attempt+1}: ✓ {dt:.1f}s  revealed={visible}/{width*height}")
+            return MinesweeperGame.from_mine_mask(
+                width, height, mine_mask,
+                first_done=True, visible=visible_snapshot,
+            )
 
         if verbose:
-            print(f"  Attempt {attempt+1}: ✗ too hard ({dt:.1f}s), retrying")
+            print(f"  Attempt {attempt+1}: ✗ {dt:.1f}s")
 
     return None
 
 
-def _try_solve(game: MinesweeperGame, max_steps: int = 300,
-               warmup_clicks: int = 3, max_hints: int = 5) -> bool:
-    """Try to solve the board using ProbabilitySolver.
+def _try_solve_from(game: MinesweeperGame, max_steps: int = 300,
+                    max_hints: int = 5) -> bool:
+    """Try to solve from current game state using ProbabilitySolver.
 
-    Algorithm:
-      1. Warmup: reveal warmup_clicks random safe cells to open the board
-      2. Solver phase: reveal cells with P(mine) == 0
-      3. If stuck (no P=0 cell): reveal a random safe cell as a "hint"
-         and retry. Give up after max_hints hints.
-
-    The hint mechanism handles dense boards where the solver occasionally
-    needs a nudge — after the hint reveals new numbers, P=0 cells often emerge.
+    When stuck (no P=0 cell), uses a 'hint' — reveals a random
+    safe cell. Gives up after max_hints hints.
 
     Returns True if the solver completes the board.
     """
-    width, height = game.width, game.height
     hints_used = 0
 
-    # Warmup: reveal random safe cells to give the solver information
-    for _ in range(warmup_clicks):
-        if game.status != GameStatus.PLAYING:
-            return game.status == GameStatus.WON
-        if not _reveal_random_safe(game):
-            return False
-
-    # Solver-driven phase with hints for stuck moments
     for _ in range(max_steps):
         if game.status != GameStatus.PLAYING:
             return game.status == GameStatus.WON
@@ -136,14 +131,11 @@ def _try_solve(game: MinesweeperGame, max_steps: int = 300,
         safe_mask = covered & (probs == 0.0)
 
         if safe_mask.any():
-            # Found a definitely-safe cell — reveal it
-            safe_indices = np.argwhere(safe_mask)
-            r, c = safe_indices[0]
+            r, c = np.argwhere(safe_mask)[0]
             game.make_move(r, c, MoveType.REVEAL)
             if game.status == GameStatus.LOST:
                 return False
         else:
-            # Stuck: use a hint
             if hints_used >= max_hints:
                 return False
             hints_used += 1
@@ -156,34 +148,13 @@ def _try_solve(game: MinesweeperGame, max_steps: int = 300,
 def _reveal_random_safe(game: MinesweeperGame) -> bool:
     """Reveal a random covered safe cell. Returns False if none exists."""
     covered = game.covered_cells
-    safe_indices = []
+    safe = []
     for rr in range(game.height):
         for cc in range(game.width):
             if covered[rr, cc] and game.board[rr, cc] != -1:
-                safe_indices.append((rr, cc))
-    if not safe_indices:
+                safe.append((rr, cc))
+    if not safe:
         return False
-    r, c = safe_indices[np.random.default_rng().integers(0, len(safe_indices))]
+    r, c = safe[np.random.default_rng().integers(0, len(safe))]
     game.make_move(r, c, MoveType.REVEAL)
     return True
-
-
-def _recreate_game(
-    width: int, height: int, mine_mask: np.ndarray,
-    first_r: int, first_c: int,
-) -> MinesweeperGame:
-    """Recreate a game from mine mask, applying the same first click."""
-    game = MinesweeperGame.__new__(MinesweeperGame)
-    game.width = width
-    game.height = height
-    game.total_mines = int(mine_mask.sum())
-    game.board = np.where(mine_mask, -1, 0).astype(np.int8)
-    game.visible = np.full((height, width), CellState.COVERED, dtype=np.int8)
-    game.status = GameStatus.PLAYING
-    game.first_move = False
-    game._mine_positions = np.argwhere(mine_mask)
-    game._safe_covered = width * height - game.total_mines
-
-    # Apply first click
-    game._reveal(first_r, first_c)
-    return game

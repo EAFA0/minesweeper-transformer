@@ -29,6 +29,8 @@ def main() -> None:
     parser.add_argument("--mines", type=int, default=10)
     parser.add_argument("--mine_continue", action="store_true",
                         help="Continue game after mine hit — denser training signal")
+    parser.add_argument("--warmup", type=int, default=3, dest="warmup_clicks",
+                        help="Random safe reveals before model takes over (default: 3)")
     parser.add_argument("--pretrained", default="",
                         help="Path to supervised checkpoint for warm-start")
     parser.add_argument("--total_games", type=int, default=5000,
@@ -56,6 +58,7 @@ def main() -> None:
         width=args.width, height=args.height,
         total_mines=args.mines,
         mine_continue=args.mine_continue,
+        warmup_clicks=args.warmup_clicks,
         pretrained_path=args.pretrained,
         total_games=args.total_games,
         lr=args.lr,

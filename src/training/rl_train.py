@@ -36,6 +36,7 @@ class RLConfig:
     height: int = 8
     total_mines: int = 10
     mine_continue: bool = False
+    warmup_clicks: int = 0  # random safe reveals before model takes over
 
     # RL hyperparameters
     temperature: float = 1.0
@@ -316,12 +317,14 @@ def train_rl(config: RLConfig) -> dict:
         width=config.width, height=config.height,
         total_mines=config.total_mines,
         mine_continue=config.mine_continue,
+        warmup_clicks=config.warmup_clicks,
         rng=rng,
     )
     eval_env = RLEnv(
         width=config.width, height=config.height,
         total_mines=config.total_mines,
         mine_continue=False,  # eval: game ends on mine
+        warmup_clicks=config.warmup_clicks,
         rng=np.random.default_rng(99),
     )
 
