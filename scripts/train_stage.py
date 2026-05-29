@@ -1,23 +1,30 @@
 #!/usr/bin/env python3
 """Minesweeper Transformer — 分阶段训练入口 (概率蒸馏)
 
-一个脚本替代 train_s1.py ~ train_s4.py。
+一个脚本替代所有 train_s*.py。
 根据 --stage 参数自动选择棋盘尺寸、雷数、预训练权重等。
 
 用法:
     python scripts/train_stage.py --stage S1            # 从头训练 8×8/10雷
-    python scripts/train_stage.py --stage S2            # 继承 S1.5 → 8×8/20雷
+    python scripts/train_stage.py --stage S2.5          # 继承 S2 → 8×8/25雷
     python scripts/train_stage.py --stage S3 --epochs 20  # 覆盖默认 epoch
     python scripts/train_stage.py --stage S1 --eval_only   # 仅评估
     python scripts/train_stage.py --stage S2 --force_data  # 强制重新生成数据
     python scripts/train_stage.py --stage S1 --resume      # 从 checkpoint 续训
 
-阶段预设:
-    S1   : 8×8 / 10雷  (从头训练, lr=1e-3, 5 epochs)
-    S1.5 : 8×8 / 15雷  (继承 S1,  lr=3e-4, 10 epochs)
-    S2   : 8×8 / 20雷  (继承 S1.5, lr=3e-4, 10 epochs)
-    S3   : 12×12 / 40雷 (继承 S2,  lr=3e-4, 10 epochs)
-    S4   : 16×16 / 80雷 (继承 S3,  lr=3e-4, 10 epochs)
+密度课程 (8×8 → 10×10, 通过提升雷密度增加约束复杂度):
+    S1    : 8×8 / 10雷   (15.6% 密度, 从头训练)
+    S1.5  : 8×8 / 15雷   (23.4% 密度, 继承 S1)
+    S2    : 8×8 / 20雷   (31.3% 密度, 继承 S1.5)
+    S2.5  : 8×8 / 25雷   (39.1% 密度, 继承 S2)    ← NEW
+    S2.75 : 8×8 / 30雷   (46.9% 密度, 继承 S2.5)  ← NEW
+    S3    : 12×12 / 40雷 (27.8% 密度, 继承 S2)
+    S3d   : 10×10 / 30雷 (30.0% 密度, 继承 S2.75)  ← NEW 密度路线
+    S3.5d : 10×10 / 40雷 (40.0% 密度, 继承 S3d)   ← NEW
+    S4    : 16×16 / 80雷 (31.3% 密度, 继承 S3)
+
+核心理念: 固定小棋盘，通过提升雷密度来增加约束复杂度。
+ms-toollib 在 8×8/10×10 上表现良好，避免大棋盘的生成瓶颈。
 """
 
 import argparse
@@ -28,6 +35,7 @@ from pathlib import Path
 # ── 阶段预设 ───────────────────────────────────────────────────────────────
 
 STAGES = {
+    # ===== 基础课程 =====
     "S1": {
         "width": 8, "height": 8, "mines": 10,
         "n_samples": 10000, "epochs": 5,
@@ -49,6 +57,22 @@ STAGES = {
         "lr": 3e-4, "weight_decay": 1e-4,
         "pretrained": "checkpoints/S1_5/best_model.pt",
     },
+    # ===== 密度课程 (8×8 高密度, 约束链极密) =====
+    "S2.5": {
+        "width": 8, "height": 8, "mines": 25,
+        "n_samples": 10000, "epochs": 10,
+        "data_dir": "data/S2_5", "save_dir": "checkpoints/S2_5",
+        "lr": 3e-4, "weight_decay": 1e-4,
+        "pretrained": "checkpoints/S2/best_model.pt",
+    },
+    "S2.75": {
+        "width": 8, "height": 8, "mines": 30,
+        "n_samples": 10000, "epochs": 10,
+        "data_dir": "data/S2_75", "save_dir": "checkpoints/S2_75",
+        "lr": 3e-4, "weight_decay": 1e-4,
+        "pretrained": "checkpoints/S2_5/best_model.pt",
+    },
+    # ===== 中等棋盘 + 密度 (10×10) =====
     "S3": {
         "width": 12, "height": 12, "mines": 40,
         "n_samples": 10000, "epochs": 10,
@@ -56,9 +80,24 @@ STAGES = {
         "lr": 3e-4, "weight_decay": 1e-4,
         "pretrained": "checkpoints/S2/best_model.pt",
     },
+    "S3d": {
+        "width": 10, "height": 10, "mines": 30,
+        "n_samples": 10000, "epochs": 10,
+        "data_dir": "data/S3d", "save_dir": "checkpoints/S3d",
+        "lr": 3e-4, "weight_decay": 1e-4,
+        "pretrained": "checkpoints/S2_75/best_model.pt",
+    },
+    "S3.5d": {
+        "width": 10, "height": 10, "mines": 40,
+        "n_samples": 10000, "epochs": 10,
+        "data_dir": "data/S3_5d", "save_dir": "checkpoints/S3_5d",
+        "lr": 3e-4, "weight_decay": 1e-4,
+        "pretrained": "checkpoints/S3d/best_model.pt",
+    },
+    # ===== 大棋盘 (ms-toollib 生成较慢) =====
     "S4": {
         "width": 16, "height": 16, "mines": 80,
-        "n_samples": 10000, "epochs": 10,
+        "n_samples": 2000, "epochs": 10,
         "data_dir": "data/S4", "save_dir": "checkpoints/S4",
         "lr": 3e-4, "weight_decay": 1e-4,
         "pretrained": "checkpoints/S3/best_model.pt",
@@ -124,7 +163,11 @@ def main():
     # Validate pretrained
     if pretrained and not Path(pretrained).exists() and not args.eval_only:
         print(f"❌ Pretrained checkpoint not found: {pretrained}")
-        prev_stage = {"S1.5": "S1", "S2": "S1.5", "S3": "S2", "S4": "S3"}.get(args.stage)
+        prev_stage = {
+            "S1.5": "S1", "S2": "S1.5", "S2.5": "S2", "S2.75": "S2.5",
+            "S3": "S2", "S3d": "S2.75", "S3.5d": "S3d",
+            "S4": "S3",
+        }.get(args.stage)
         if prev_stage:
             print(f"   Run with --stage {prev_stage} first")
         sys.exit(1)
