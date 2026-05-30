@@ -115,6 +115,7 @@ def get_logits(
     probabilities back to logits for softmax action selection.
     """
     x = torch.from_numpy(state).unsqueeze(0).to(device)
+    model.eval()  # CRITICAL: eval mode so BatchNorm uses running stats (not per-sample B=1 stats)
     with torch.no_grad():
         if refine_steps > 1:
             results = model.refine(x, num_steps=refine_steps)
@@ -186,6 +187,7 @@ def collect_eval(
     refine_steps: int = 1,
 ) -> Tuple[float, float, float]:
     """Evaluation: deterministic play. Returns (win_rate, avg_return, avg_steps)."""
+    model.eval()  # defense-in-depth: ensure BatchNorm uses running stats
     wins = 0
     total_return = 0.0
     total_steps = 0
@@ -224,7 +226,12 @@ def reinforce_step(
     Uses the SAME refinement steps for both rollout and gradient
     computation — this is required for on-policy REINFORCE.
     """
-    model.train()
+    # Use eval mode for both rollout and gradient computation.
+    # CRITICAL: BatchNorm in train mode uses per-batch statistics.
+    # Rollout has B=1 (single state) while gradient has B=chunk_size.
+    # These produce different normalizations → off-policy REINFORCE gradients.
+    # Eval mode uses consistent running stats from supervised pretraining.
+    model.eval()
 
     # Pre-determine refinement steps for this batch.
     # Rollout and loss MUST use the same number of steps
@@ -490,7 +497,8 @@ def train_rl(config: RLConfig) -> dict:
         "baseline": baseline,
     }, final_path)
 
-    # Final eval
+    # Final eval (collect_eval internally calls model.eval(), but be explicit)
+    model.eval()
     final_wr, final_ret, final_steps = collect_eval(
         eval_env, model, device,
         n_games=config.eval_games,
