@@ -37,8 +37,8 @@ def main() -> None:
                         help="Total games for RL training")
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--save_dir", default="checkpoints/rl")
-    parser.add_argument("--refine", type=int, default=8, dest="refine_steps",
-                        help="Iterative refinement steps (default: 8)")
+    parser.add_argument("--refine", type=int, default=4, dest="refine_steps",
+                        help="Iterative refinement steps (default: 4)")
     parser.add_argument("--temperature", type=float, default=1.0,
                         help="Action selection temperature (default: 1.0)")
     parser.add_argument("--entropy_coef", type=float, default=0.0,

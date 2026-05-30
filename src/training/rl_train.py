@@ -14,7 +14,6 @@ Policy:
 """
 
 import json
-import random
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -62,7 +61,7 @@ class RLConfig:
     grad_clip_norm: float = 1.0
 
     # Iterative refinement (uses refine() during inference)
-    refine_steps: int = 8  # iterative refinement for action selection + gradient
+    refine_steps: int = 4  # iterative refinement for action selection + gradient
 
     # Checkpoint
     pretrained_path: str = ""
@@ -215,7 +214,7 @@ def reinforce_step(
     baseline: float,
     device: str,
     n_games: int = 8,
-    refine_steps: int = 5,
+    refine_steps: int = 4,
 ) -> Tuple[float, float, float]:
     """One REINFORCE update. Returns (loss, avg_return, new_baseline).
 
@@ -230,7 +229,7 @@ def reinforce_step(
     # Pre-determine refinement steps for this batch.
     # Rollout and loss MUST use the same number of steps
     # for the sampled action probability π(a|s) to match.
-    actual_refine = random.randint(1, refine_steps) if refine_steps > 1 else 1
+    actual_refine = refine_steps if refine_steps > 1 else 1
 
     states: List[torch.Tensor] = []
     covered_masks: List[torch.Tensor] = []
