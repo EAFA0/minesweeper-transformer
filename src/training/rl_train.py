@@ -49,7 +49,10 @@ class RLConfig:
     temperature: float = 1.0
     gamma: float = 0.95
     baseline_ema: float = 0.1
-    entropy_coef: float = 0.05  # entropy bonus prevents premature policy collapse
+    entropy_coef: float = 0.0  # was 0.05 — removed; pretrained model doesn't need forced exploration
+
+    # Architecture overrides (RL-specific)
+    dropout: float = 0.0  # RL doesn't need dropout — pretrained weights are already converged
 
     # Training
     lr: float = 1e-4
@@ -364,6 +367,12 @@ def train_rl(config: RLConfig) -> dict:
         print(f"Loaded pretrained: {model.num_parameters:,} params")
     else:
         print(f"Fresh model: {model.num_parameters:,} params")
+
+    # Disable dropout for RL — pretrained weights are already converged
+    for m in model.modules():
+        if isinstance(m, torch.nn.Dropout):
+            m.p = config.dropout
+    print(f"Dropout set to {config.dropout}")
 
     # Board pool (optional, pre-generate for faster RL)
     board_rng = np.random.default_rng(42)

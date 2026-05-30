@@ -41,8 +41,8 @@ def main() -> None:
                         help="Iterative refinement steps (default: 8)")
     parser.add_argument("--temperature", type=float, default=1.0,
                         help="Action selection temperature (default: 1.0)")
-    parser.add_argument("--entropy_coef", type=float, default=0.05,
-                        help="Entropy bonus coefficient — prevents policy collapse (default: 0.05)")
+    parser.add_argument("--entropy_coef", type=float, default=0.0,
+                        help="Entropy bonus coefficient (default: 0.0 — disabled for RL)")
     parser.add_argument("--board_pool", default="rl_boards.npz",
                         help="Pre-generate boards to .npz (speeds up RL)")
     parser.add_argument("--no_board_pool", action="store_true",
