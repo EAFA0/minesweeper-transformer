@@ -286,6 +286,46 @@ class MinesweeperTransformer(nn.Module):
         results = self.refine(x, num_steps=max_refine_steps)
         return results[-1][:, 0:1]
 
+    @torch.no_grad()
+    def diagnose_refinement(self, x: torch.Tensor, max_refine_steps: int = 8) -> dict:
+        """Run refinement and report step statistics.
+
+        Returns dict with:
+            probs:       (B, 1, H, W) final P(mine) probs
+            n_steps:     tensor of shape (B,) — steps taken per sample
+            mean_steps:  average steps across batch
+            max_steps:   max steps in batch
+            min_steps:   min steps in batch
+            early_stop_rate: fraction that stopped early (< max_steps)
+        """
+        B = x.shape[0]
+        probs = torch.full((B, 1, x.shape[2], x.shape[3]), 0.5, device=x.device)
+        n_steps = torch.zeros(B, dtype=torch.long, device=x.device)
+
+        for step in range(max_refine_steps):
+            raw = self._single_pass(x, probs)
+            probs_new = torch.sigmoid(raw[:, 0:1])
+            conf = torch.sigmoid(raw[:, 1:2])
+            probs = probs_new.detach()
+
+            # Count this step for samples that haven't converged yet
+            n_steps += 1
+
+            # Early stop: samples with mean conf > 0.95
+            converged = conf.mean(dim=[1, 2, 3]) > 0.95
+            if converged.all():
+                break
+
+        return {
+            "probs": probs,
+            "n_steps": n_steps,
+            "mean_steps": n_steps.float().mean().item(),
+            "max_steps": n_steps.max().item(),
+            "min_steps": n_steps.min().item(),
+            "early_stop_rate": (n_steps < max_refine_steps).float().mean().item(),
+            "step_distribution": torch.bincount(n_steps, minlength=max_refine_steps + 1).tolist(),
+        }
+
     def load_pretrained(self, checkpoint_path: str, device: str = "cpu") -> None:
         """Load weights from a checkpoint, with automatic format migration.
 
