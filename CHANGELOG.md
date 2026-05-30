@@ -5,16 +5,18 @@
 ## [未发布] - 2026-05-30
 
 ### 新增
-- **数据**: 新增多进程并行数据生成脚本 `scripts/generate_data_parallel.py`（16核 ~540 局/秒）
 - **文档**: 建立完整文档体系（AGENTS.md、CHANGELOG.md、architecture.md、training-log.md、conventions.md、pitfalls.md）
 - **环境**: RTX 4070 SUPER 训练环境就绪（ssh ubuntu@FAEX1.local）
+- **预训练**: 三阶段密度课程重整 — S1(规则) → S2(密度) → S_mixed(泛化)
 
 ### 变更
-- **数据**: 并行生成替代单进程版本，S1 数据生成从 ~180s 降至 ~18s（10× 加速）
-- **训练**: S1 预训练改用 CUDA，5 epoch 仅需 334s
+- **训练路线**: 废弃旧多阶段方案，统一为三阶段 `train_stage.py`
+- **数据生成**: 并行生成集成至 `generate_data.py --workers 0`（`generate_data_parallel.py` 已合并归入）
+- **Refinement**: 默认 refine=4（原为 8）
+- **代码清理**: 移除废弃的旧阶段 (S1.5/S3/S4)，统一 train_stage.py 入口
 
 ### 结果
-- **S1 (8×8/10雷)**: Val Acc 97.5%, Act Acc 100%, 297K 参数, 5 epochs
+- **S1 (8×8/10雷) 首训**: Val Acc 97.5%, 334s (5 epochs, refine=1)
 
 ---
 

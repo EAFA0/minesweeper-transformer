@@ -23,29 +23,34 @@
 
 ### 数据生成
 ```bash
-# 推荐：并行生成（16核 ~540 局/秒）
-python scripts/generate_data_parallel.py --n_samples 10000 --workers 16 --force
+# 推荐：固定尺寸并行生成 (auto workers)
+python scripts/generate_data.py --n_samples 10000 --workers 0  # 0=auto
 
-# 备选：混合数据
-python scripts/generate_data_parallel.py --n_samples 12000 --workers 16 \
-    --width 4 --height 8  # TODO: 并行版暂不支持 mixed，用 generate_data.py
+# 混合数据（单进程，因为每个 trajectory 尺寸不同）
+python scripts/generate_data.py --mixed --min_size 4 --max_size 8 \
+    --min_density 0.1 --max_density 0.5 --n_samples 12000
 
-# 旧版单进程（不推荐，除非 debug）
-python scripts/generate_data.py --n_samples 10000
+# 强制重新生成
+python scripts/generate_data.py --n_samples 10000 --workers 0 --force
 ```
 
 ### 训练
 ```bash
-# 推荐：分阶段训练
-python scripts/train_stage.py --stage S1 --device cuda
+# 三阶段预训练（统一入口）
+python scripts/train_stage.py --stage S1          # 从头训练 (2 epochs)
+python scripts/train_stage.py --stage S2          # 继承 S1 → 密度提升 (2 epochs)
+python scripts/train_stage.py --stage S_mixed     # 继承 S2 → 混合泛化 (5 epochs)
 
-# 直接调 train.py（需要已生成数据）
+# 带强制数据重新生成
+python scripts/train_stage.py --stage S1 --force_data
+
+# 仅评估
+python scripts/train_stage.py --stage S_mixed --eval_only
+python scripts/train_stage.py --stage S_mixed --eval 10 10 40  # 零样本评估
+
+# 直接调 train.py（调试用）
 python scripts/train.py --data_dir data/S1 --epochs 5 --device cuda \
     --save_dir checkpoints/S1 --lr 1e-3 --weight_decay 3e-4
-
-# RL 微调
-python scripts/train_rl.py --pretrained checkpoints/S1/best_model.pt \
-    --width 8 --height 8 --mines 10 --total_games 5000 --mine_continue
 ```
 
 ### 评估
@@ -75,7 +80,7 @@ python scripts/evaluate.py checkpoints/S1/best_model.pt \
 | 直接在训练机上改代码 | 在开发机改，git push，训练机 pull |
 | 忘记 `source .venv/bin/activate` | 训练机的 venv 必须手动激活 |
 | 多个 train.py 同时跑 | tmux 中检查 `nvidia-smi` 确认无残留 |
-| 数据生成用单进程 | 16核机器用并行版，速度快 10× |
+| 跑旧版 S1 (非三阶段路线) | 用 `train_stage.py --stage S1` (2 epochs, refine=4) |
 
 ---
 

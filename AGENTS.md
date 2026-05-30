@@ -27,8 +27,8 @@
 
 ## 🚦 项目现状
 
-- **当前路线**: 多阶段密度课程监督学习 → RL 微调（REINFORCE）
-- **最新结果**: S1 (8×8/10雷) 训练完成，Val Acc 97.5% (2026-05-30，4070 SUPER)
+- **当前路线**: 三阶段密度课程 — S1(规则) → S2(密度) → S_mixed(泛化) → RL 微调
+- **最新结果**: S1 (8×8/10雷) Val Acc 97.5% (2026-05-30，4070 SUPER)
 - **训练设备**: RTX 4070 SUPER (CUDA)，ssh ubuntu@FAEX1.local
 - **开发环境**: 本机 Linux + uv 包管理
 
@@ -48,14 +48,14 @@
 | 模块 | 路径 | 说明 |
 |------|------|------|
 | 模型架构 | `src/model/architecture.py` | CNN + Transformer + Refinement |
-| 数据生成 | `src/data/generator.py` | 概率蒸馏数据（单进程）|
-| 并行生成 | `scripts/generate_data_parallel.py` | 多进程数据生成（推荐）|
+| 数据生成 | `src/data/generator.py` | 概率蒸馏数据 (--workers 0 并行) |
+| 混合数据 | `src/data/mixed_generator.py` | 可变尺寸+密度 padded 数据 |
 | 数据集 | `src/training/dataset.py` | PyTorch Dataset + D4 增强 |
 | 监督训练 | `src/training/train.py` | 训练循环 + 自适应 refine |
 | RL 环境 | `src/training/rl_env.py` | REINFORCE 环境 |
 | RL 训练 | `src/training/rl_train.py` | 策略梯度训练 |
-| 评估 | `scripts/evaluate.py` | 模型胜率评估 |
-| 分阶段训练 | `scripts/train_stage.py` | 统一训练入口 |
+| 评估 | `scripts/evaluate.py` | 模型胜率评估 + BoardPool 缓存 |
+| **分阶段训练** | `scripts/train_stage.py` | **统一入口: S1→S2→S_mixed** |
 
 ## 🎯 Agent 开发约束
 
