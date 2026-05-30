@@ -233,13 +233,17 @@ class MinesweeperTransformer(nn.Module):
         Step 0: prev = uniform(0.5)
         Step k: probs_k, conf_k = model(board, probs_{k-1})
 
-        Stops early if mean confidence exceeds threshold (inference mode).
+        During inference, stops early when the model is confident about its
+        safest pick — i.e., the cell with lowest P(mine) has high confidence.
+        This means the model is "sure enough to act" and further refinement
+        won't change its decision.
+
         During training, always runs num_steps for consistent loss.
 
         Args:
             board:                (B, 10, H, W) board channels
             num_steps:            max refinement iterations
-            confidence_threshold: early-stop when mean(conf) > this
+            confidence_threshold: early-stop when confidence of safest cell > this
 
         Returns:
             List of (B, 2, H, W) tensors — [probs_sigmoid, conf_sigmoid] per step
@@ -256,12 +260,18 @@ class MinesweeperTransformer(nn.Module):
             results.append(torch.cat([probs, conf], dim=1))
 
             # Detach between iterations to prevent BPTT graph explosion.
-            # Only the sampled step k is trained — no need for multi-step backprop.
             probs = probs.detach()
 
-            # Early stop if confident enough (only during inference)
-            if not self.training and conf.mean() > confidence_threshold:
-                break
+            # Early stop (inference only): is model confident about its safest pick?
+            # "Safest pick" = cell with minimum P(mine). If confidence of that
+            # cell > threshold, the model won't change its action with more steps.
+            if not self.training:
+                probs_flat = probs.reshape(B, -1)       # (B, H*W)
+                conf_flat = conf.reshape(B, -1)          # (B, H*W)
+                min_idx = probs_flat.argmin(dim=1)       # (B,)
+                safest_conf = conf_flat.gather(1, min_idx.unsqueeze(1)).squeeze(1)  # (B,)
+                if safest_conf.min() > confidence_threshold:
+                    break
 
         return results
 
@@ -271,7 +281,7 @@ class MinesweeperTransformer(nn.Module):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
     @torch.no_grad()
-    def predict(self, x: torch.Tensor, max_refine_steps: int = 5) -> torch.Tensor:
+    def predict(self, x: torch.Tensor, max_refine_steps: int = 12) -> torch.Tensor:
         """Return P(mine) probabilities with adaptive refinement.
 
         Inference uses more steps than training (default 12 vs train's random 1-8).
@@ -288,33 +298,46 @@ class MinesweeperTransformer(nn.Module):
 
     @torch.no_grad()
     def diagnose_refinement(self, x: torch.Tensor, max_refine_steps: int = 8) -> dict:
-        """Run refinement and report step statistics.
+        """Run refinement and report per-sample step statistics.
+
+        Uses the same early-stop criterion as refine(): stops when the
+        cell with lowest P(mine) has confidence > 0.95.
 
         Returns dict with:
-            probs:       (B, 1, H, W) final P(mine) probs
-            n_steps:     tensor of shape (B,) — steps taken per sample
-            mean_steps:  average steps across batch
-            max_steps:   max steps in batch
-            min_steps:   min steps in batch
-            early_stop_rate: fraction that stopped early (< max_steps)
+            probs:            (B, 1, H, W) final P(mine) probs
+            n_steps:          tensor of shape (B,) — steps taken per sample
+            mean_steps:       average steps across batch
+            max_steps:        max steps in batch
+            min_steps:        min steps in batch
+            early_stop_rate:  fraction that stopped early (< max_steps)
+            step_distribution: count per step bucket
         """
         B = x.shape[0]
         probs = torch.full((B, 1, x.shape[2], x.shape[3]), 0.5, device=x.device)
         n_steps = torch.zeros(B, dtype=torch.long, device=x.device)
+        done = torch.zeros(B, dtype=torch.bool, device=x.device)
 
         for step in range(max_refine_steps):
             raw = self._single_pass(x, probs)
             probs_new = torch.sigmoid(raw[:, 0:1])
             conf = torch.sigmoid(raw[:, 1:2])
+
+            # Per-sample: check if safest cell is confidently safe
+            probs_flat = probs_new.reshape(B, -1)
+            conf_flat = conf.reshape(B, -1)
+            min_idx = probs_flat.argmin(dim=1)
+            safest_conf = conf_flat.gather(1, min_idx.unsqueeze(1)).squeeze(1)
+
+            converged_now = ~done & (safest_conf > 0.95)
+            done = done | converged_now
+            n_steps = torch.where(converged_now, step + 1, n_steps)
+
             probs = probs_new.detach()
 
-            # Count this step for samples that haven't converged yet
-            n_steps += 1
-
-            # Early stop: samples with mean conf > 0.95
-            converged = conf.mean(dim=[1, 2, 3]) > 0.95
-            if converged.all():
+            if done.all():
                 break
+
+        n_steps = torch.where(~done, max_refine_steps, n_steps)
 
         return {
             "probs": probs,
