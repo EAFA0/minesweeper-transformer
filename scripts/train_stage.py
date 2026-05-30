@@ -193,7 +193,7 @@ def main():
         "--device", args.device,
         "--lr", str(lr),
         "--weight_decay", str(cfg["weight_decay"]),
-        "--refine", "4",
+        "--refine", "8",
     ]
     if pretrained and not args.resume:
         cmd.extend(["--pretrained", pretrained])
