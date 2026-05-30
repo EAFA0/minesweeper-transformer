@@ -77,6 +77,13 @@ def _save_buffer(buffer: list, output_dir: Path, file_idx: int) -> None:
     )
 
 
+def _parallel_worker(seed, width, height, total_mines):
+    """Wrapper for multiprocessing: seed → record_game_trajectory."""
+    rng = np.random.default_rng(seed)
+    return record_game_trajectory(width=width, height=height,
+                                  total_mines=total_mines, rng=rng)
+
+
 def generate_training_data_parallel(
     output_dir: Path,
     n_samples: int = 10000,
@@ -92,8 +99,8 @@ def generate_training_data_parallel(
     n_seeds = int(n_samples * 1.5)
     seeds = rng.integers(0, 2**31 - 1, size=n_seeds)
 
-    worker_func = partial(record_game_trajectory,
-                          width=width, height=height, total_mines=total_mines)
+    worker_func = partial(_parallel_worker, width=width, height=height,
+                          total_mines=total_mines)
 
     try:
         from tqdm import tqdm
