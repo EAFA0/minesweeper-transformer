@@ -227,23 +227,25 @@ class MinesweeperTransformer(nn.Module):
         return self._single_pass(x, prev)
 
     def refine(self, board: torch.Tensor, num_steps: int = 5,
-               confidence_threshold: float = 0.95) -> List[torch.Tensor]:
+               confidence_threshold: float = 0.95,
+               convergence_eps: float = 1e-3) -> List[torch.Tensor]:
         """Iterative refinement: run model N times with self-feedback.
 
         Step 0: prev = uniform(0.5)
         Step k: probs_k, conf_k = model(board, probs_{k-1})
 
-        During inference, stops early when the model is confident about its
-        safest pick — i.e., the cell with lowest P(mine) has high confidence.
-        This means the model is "sure enough to act" and further refinement
-        won't change its decision.
+        During inference, stops early when P(mine) predictions have converged
+        (max absolute change between steps < convergence_eps).  This is more
+        reliable than confidence-based stopping because the confidence head
+        has no explicit supervision.
 
         During training, always runs num_steps for consistent loss.
 
         Args:
             board:                (B, 10, H, W) board channels
             num_steps:            max refinement iterations
-            confidence_threshold: early-stop when confidence of safest cell > this
+            confidence_threshold: (deprecated, kept for API compat)
+            convergence_eps:      stop when max|P_t - P_{t-1}| < this
 
         Returns:
             List of (B, 2, H, W) tensors — [probs_sigmoid, conf_sigmoid] per step
@@ -251,6 +253,7 @@ class MinesweeperTransformer(nn.Module):
         """
         B, _, H, W = board.shape
         probs = torch.full((B, 1, H, W), 0.5, device=board.device)
+        prev_probs = probs.clone()
         results = []
 
         for step in range(num_steps):
@@ -259,19 +262,15 @@ class MinesweeperTransformer(nn.Module):
             conf = torch.sigmoid(raw[:, 1:2])       # confidence
             results.append(torch.cat([probs, conf], dim=1))
 
-            # Detach between iterations to prevent BPTT graph explosion.
-            probs = probs.detach()
-
-            # Early stop (inference only): is model confident about its safest pick?
-            # "Safest pick" = cell with minimum P(mine). If confidence of that
-            # cell > threshold, the model won't change its action with more steps.
-            if not self.training:
-                probs_flat = probs.reshape(B, -1)       # (B, H*W)
-                conf_flat = conf.reshape(B, -1)          # (B, H*W)
-                min_idx = probs_flat.argmin(dim=1)       # (B,)
-                safest_conf = conf_flat.gather(1, min_idx.unsqueeze(1)).squeeze(1)  # (B,)
-                if safest_conf.min() > confidence_threshold:
+            # Early stop (inference only): has P(mine) converged?
+            if not self.training and step > 0:
+                max_change = (probs - prev_probs).abs().max().item()
+                if max_change < convergence_eps:
                     break
+
+            # Detach and save for convergence check
+            prev_probs = probs.detach()
+            probs = prev_probs.clone()
 
         return results
 
@@ -297,11 +296,12 @@ class MinesweeperTransformer(nn.Module):
         return results[-1][:, 0:1]
 
     @torch.no_grad()
-    def diagnose_refinement(self, x: torch.Tensor, max_refine_steps: int = 8) -> dict:
+    def diagnose_refinement(self, x: torch.Tensor, max_refine_steps: int = 8,
+                            convergence_eps: float = 1e-3) -> dict:
         """Run refinement and report per-sample step statistics.
 
-        Uses the same early-stop criterion as refine(): stops when the
-        cell with lowest P(mine) has confidence > 0.95.
+        Uses convergence-based early stop (same as refine()):
+        stops when max |P_t - P_{t-1}| < convergence_eps.
 
         Returns dict with:
             probs:            (B, 1, H, W) final P(mine) probs
@@ -314,28 +314,27 @@ class MinesweeperTransformer(nn.Module):
         """
         B = x.shape[0]
         probs = torch.full((B, 1, x.shape[2], x.shape[3]), 0.5, device=x.device)
+        prev_probs = probs.clone()
         n_steps = torch.zeros(B, dtype=torch.long, device=x.device)
         done = torch.zeros(B, dtype=torch.bool, device=x.device)
 
         for step in range(max_refine_steps):
             raw = self._single_pass(x, probs)
             probs_new = torch.sigmoid(raw[:, 0:1])
-            conf = torch.sigmoid(raw[:, 1:2])
 
-            # Per-sample: check if safest cell is confidently safe
-            probs_flat = probs_new.reshape(B, -1)
-            conf_flat = conf.reshape(B, -1)
-            min_idx = probs_flat.argmin(dim=1)
-            safest_conf = conf_flat.gather(1, min_idx.unsqueeze(1)).squeeze(1)
+            # Per-sample convergence: max |P_t - P_{t-1}| < eps
+            if step > 0:
+                max_change = (probs_new - prev_probs).abs().view(B, -1).max(dim=1).values
+                converged_now = ~done & (max_change < convergence_eps)
+                done = done | converged_now
+                n_steps = torch.where(converged_now, step + 1, n_steps)
 
-            converged_now = ~done & (safest_conf > 0.95)
-            done = done | converged_now
-            n_steps = torch.where(converged_now, step + 1, n_steps)
+                if done.all():
+                    probs = probs_new
+                    break
 
-            probs = probs_new.detach()
-
-            if done.all():
-                break
+            prev_probs = probs_new.clone()
+            probs = probs_new
 
         n_steps = torch.where(~done, max_refine_steps, n_steps)
 
@@ -387,7 +386,7 @@ class MinesweeperTransformer(nn.Module):
                     padded_b = torch.zeros_like(new_b)
                     padded_b[0:1] = old_b
                     state_dict[out_b_key] = padded_b
-            print("  (Migrated output head: 1→2 channels, confidence initialized to zero)")
+                    print("  (Migrated output head: 1→2 channels, confidence initialized to zero)")
 
         # Filter old positional encoding keys
         migrated = {}
