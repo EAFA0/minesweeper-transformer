@@ -152,6 +152,18 @@ python scripts/train_stage.py --stage S2 [OPTIONS]
   --device auto          设备选择
 ```
 
+## 文档体系
+
+| 文档 | 用途 |
+|------|------|
+| [AGENTS.md](AGENTS.md) | 核心索引（人类+AI），开发约束 |
+| [CHANGELOG.md](CHANGELOG.md) | 变更日志 |
+| [docs/training-log.md](docs/training-log.md) | **每次训练的完整记录** |
+| [docs/architecture.md](docs/architecture.md) | 架构决策（为什么这么设计） |
+| [docs/conventions.md](docs/conventions.md) | 项目约定（环境/命令/避坑） |
+| [docs/metrics.md](docs/metrics.md) | 指标速查 |
+| [agents/pitfalls.md](agents/pitfalls.md) | Agent 常见错误 |
+
 ## 说明
 
 - 使用 `uv` 管理依赖
