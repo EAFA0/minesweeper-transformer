@@ -24,7 +24,7 @@ from data.self_validated import generate_self_validated_board
 class Rewards:
     reveal_safe: float = 1.0
     hit_mine: float = -10.0
-    win: float = 20.0
+    win: float = 100.0
     step_penalty: float = 0.0
 
 
