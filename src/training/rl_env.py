@@ -9,12 +9,12 @@ with a penalty instead of ending. This provides denser training signal.
 """
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Any
 
 import numpy as np
 
 from minesweeper.game import MinesweeperGame
-from minesweeper.constants import MoveType, GameStatus
+from minesweeper.constants import CellState, MoveType, GameStatus
 from data.self_validated import generate_self_validated_board
 
 
@@ -131,9 +131,19 @@ class RLEnv:
         if self.game is None:
             raise RuntimeError("Call reset() first.")
 
-        reward = self._compute_reward(r, c)
+        is_mine = (self.game.board[r, c] == -1)
+        covered_before = self.game._safe_covered
+
         self.game.make_move(r, c, MoveType.REVEAL)
         self._steps += 1
+
+        covered_after = self.game._safe_covered
+        cells_revealed = covered_before - covered_after
+
+        if is_mine:
+            reward = self.rewards.hit_mine
+        else:
+            reward = cells_revealed * self.rewards.reveal_safe + self.rewards.step_penalty
 
         if self.game.status == GameStatus.WON:
             reward += self.rewards.win
@@ -141,6 +151,8 @@ class RLEnv:
         elif self.game.status == GameStatus.LOST:
             self._hits += 1
             if self.mine_continue:
+                # Convert exploded mine to flag — "you should have flagged this"
+                self.game.visible[r, c] = CellState.FLAGGED
                 self.game.status = GameStatus.PLAYING
                 return self.state, reward, False
             return self.state, reward, True
@@ -188,11 +200,3 @@ class RLEnv:
     @property
     def mine_hits(self) -> int:
         return self._hits
-
-    def _compute_reward(self, r: int, c: int) -> float:
-        """Compute reward before executing the move."""
-        if self.game is None:
-            return 0.0
-        if self.game.board[r, c] == -1:
-            return self.rewards.hit_mine
-        return self.rewards.reveal_safe + self.rewards.step_penalty

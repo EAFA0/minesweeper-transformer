@@ -39,6 +39,10 @@ def main() -> None:
     parser.add_argument("--save_dir", default="checkpoints/rl")
     parser.add_argument("--refine", type=int, default=8, dest="refine_steps",
                         help="Iterative refinement steps (default: 8)")
+    parser.add_argument("--temperature", type=float, default=1.0,
+                        help="Action selection temperature (default: 1.0)")
+    parser.add_argument("--entropy_coef", type=float, default=0.05,
+                        help="Entropy bonus coefficient — prevents policy collapse (default: 0.05)")
     parser.add_argument("--board_pool", default="rl_boards.npz",
                         help="Pre-generate boards to .npz (speeds up RL)")
     parser.add_argument("--no_board_pool", action="store_true",
@@ -69,6 +73,8 @@ def main() -> None:
         lr=args.lr,
         save_dir=args.save_dir,
         refine_steps=args.refine_steps,
+        temperature=args.temperature,
+        entropy_coef=args.entropy_coef,
         device=dev,
     )
     train_rl(config)

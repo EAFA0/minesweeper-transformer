@@ -14,6 +14,7 @@ Policy:
 """
 
 import json
+import random
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,6 +49,7 @@ class RLConfig:
     temperature: float = 1.0
     gamma: float = 0.95
     baseline_ema: float = 0.1
+    entropy_coef: float = 0.05  # entropy bonus prevents premature policy collapse
 
     # Training
     lr: float = 1e-4
@@ -103,16 +105,25 @@ def get_logits(
     model: MinesweeperTransformer,
     state: np.ndarray,
     device: str,
+    refine_steps: int = 1,
 ) -> torch.Tensor:
-    """Get per-cell mine logits for action selection (single pass, fast).
+    """Get per-cell mine logits for action selection.
 
-    Trajectory collection uses single-pass inference for speed.
-    Refinement is applied during gradient computation only.
+    When refine_steps > 1, runs the refinement loop and converts
+    probabilities back to logits for softmax action selection.
     """
     x = torch.from_numpy(state).unsqueeze(0).to(device)
     with torch.no_grad():
-        raw = model(x)
-    return raw.squeeze(0)[0]  # (H, W) — channel 0 raw logits
+        if refine_steps > 1:
+            results = model.refine(x, num_steps=refine_steps)
+            probs = results[-1][:, 0:1]
+            eps = 1e-7
+            probs = probs.clamp(eps, 1 - eps)
+            logits = torch.log(probs / (1 - probs))
+            return logits.squeeze(0)[0]
+        else:
+            raw = model(x)
+            return raw.squeeze(0)[0]  # (H, W) — channel 0 raw logits
 
 
 # ─── Game Simulation ────────────────────────────────────────────────────────
@@ -137,7 +148,7 @@ def play_game(
         if not covered.any():
             break
 
-        logits = get_logits(model, state, device)
+        logits = get_logits(model, state, device, refine_steps=refine_steps)
         covered_t = torch.from_numpy(covered).to(device)
 
         if deterministic:
@@ -196,6 +207,7 @@ def reinforce_step(
     optimizer: torch.optim.Optimizer,
     env: RLEnv,
     temperature: float,
+    entropy_coef: float,
     gamma: float,
     baseline: float,
     device: str,
@@ -206,10 +218,19 @@ def reinforce_step(
 
     Collects n_games of trajectories, computes policy gradient,
     updates model parameters.
+
+    Uses the SAME refinement steps for both rollout and gradient
+    computation — this is required for on-policy REINFORCE.
     """
     model.train()
 
+    # Pre-determine refinement steps for this batch.
+    # Rollout and loss MUST use the same number of steps
+    # for the sampled action probability π(a|s) to match.
+    actual_refine = random.randint(1, refine_steps) if refine_steps > 1 else 1
+
     states: List[torch.Tensor] = []
+    covered_masks: List[torch.Tensor] = []
     action_coords: List[Tuple[int, int]] = []
     advantages: List[float] = []
     total_return = 0.0
@@ -217,85 +238,113 @@ def reinforce_step(
 
     for _ in range(n_games):
         state = env.reset()
-        traj_rew: List[float] = []
+        game_return = 0.0
 
         for _ in range(env.max_steps):
             covered = env.covered_mask
             if not covered.any():
                 break
 
-            logits = get_logits(model, state, device)
+            logits = get_logits(model, state, device, refine_steps=actual_refine)
             covered_t = torch.from_numpy(covered).to(device)
 
             log_probs = action_log_probs(logits, covered_t, temperature)
             probs = torch.exp(log_probs.flatten())
             probs = probs / probs.sum()
             idx = torch.multinomial(probs, 1).item()
-            r, c = divmod(idx, covered.shape[1])  # padded width
+            r, c = divmod(idx, covered.shape[1])
 
             next_state, reward, done = env.step(r, c)
+            game_return += reward
 
-            traj_rew.append(reward)
             states.append(torch.from_numpy(state))
+            covered_masks.append(covered_t)
             action_coords.append((r, c))
+            advantages.append(reward)  # immediate reward = contextual bandit advantage
             n_steps_total += 1
 
             state = next_state
             if done:
                 break
 
-        # Compute returns (G_t = r_t + γ·r_{t+1} + ...)
-        G = 0.0
-        for reward in reversed(traj_rew):
-            G = reward + gamma * G
-            advantages.append(G - baseline)
-        total_return += sum(traj_rew)
+        total_return += game_return
 
     if n_steps_total == 0:
         return 0.0, 0.0, baseline
 
-    # Advantage normalization (stabilizes REINFORCE)
-    adv_tensor = torch.tensor(advantages, dtype=torch.float32)
-    adv_mean = adv_tensor.mean()
-    adv_std = adv_tensor.std() + 1e-8
-    advantages = ((adv_tensor - adv_mean) / adv_std).tolist()
+    # Scale advantages down — prevents huge gradients.
+    # No mean subtraction, so positive-reward actions stay positive.
+    advantages = [adv / 10.0 for adv in advantages]
 
-    # Policy gradient: compute logits through refinement (with detach — no BPTT chain)
     optimizer.zero_grad()
     batch_states = torch.stack(states).to(device)
+    covered_masks_t = torch.stack(covered_masks).to(device)
+    adv_t = torch.tensor(advantages, dtype=torch.float32, device=device)
+    r_coords = torch.tensor([r for r, c in action_coords], device=device)
+    c_coords = torch.tensor([c for r, c in action_coords], device=device)
 
-    if refine_steps > 1:
-        import random
-        B, _, H, W = batch_states.shape
-        k = random.randint(1, refine_steps)
-        prev = torch.full((B, 1, H, W), 0.5, device=device)
-        for _ in range(k):
-            raw = model._single_pass(batch_states, prev)
-            pred = torch.sigmoid(raw[:, 0:1])
-            conf = torch.sigmoid(raw[:, 1:2])
-            prev = pred.detach()  # cut BPTT chain — no 8-step graph explosion
-        probs = pred  # (N, 1, H, W) — step k P(mine)
-        eps = 1e-7
-        probs = probs.clamp(eps, 1 - eps)
-        logits = torch.log(probs / (1 - probs)).squeeze(1)
-    else:
-        raw = model(batch_states)  # (N, 2, H, W)
-        logits = raw[:, 0]  # (N, H, W) — channel 0 = P(mine) logits
+    # Process in chunks to allow full BPTT without OOM
+    chunk_size = 64
+    total_loss = 0.0
 
-    log_probs_sum = 0.0
-    for i, (r, c) in enumerate(action_coords):
-        covered_mask = (batch_states[i, 0] == 1).to(device)
-        lp = action_log_probs(logits[i], covered_mask, temperature)
-        log_probs_sum += lp[r, c] * advantages[i]
+    for i in range(0, n_steps_total, chunk_size):
+        chunk_states = batch_states[i:i+chunk_size]
+        chunk_covered = covered_masks_t[i:i+chunk_size]
+        chunk_adv = adv_t[i:i+chunk_size]
+        chunk_r = r_coords[i:i+chunk_size]
+        chunk_c = c_coords[i:i+chunk_size]
 
-    loss = -log_probs_sum / n_steps_total
-    loss.backward()
+        B, _, H, W = chunk_states.shape
+
+        if actual_refine > 1:
+            prev = torch.full((B, 1, H, W), 0.5, device=device)
+            for _ in range(actual_refine):
+                raw = model._single_pass(chunk_states, prev)
+                pred = torch.sigmoid(raw[:, 0:1])
+                prev = pred  # NO DETACH — full BPTT through refinement
+            probs = pred
+            eps = 1e-7
+            probs = probs.clamp(eps, 1 - eps)
+            chunk_logits = torch.log(probs / (1 - probs)).squeeze(1)
+        else:
+            raw = model(chunk_states)
+            chunk_logits = raw[:, 0]
+
+        flat_logits = chunk_logits.view(B, -1)
+        flat_covered = chunk_covered.view(B, -1)
+
+        policy_logits = torch.where(
+            flat_covered,
+            -flat_logits / temperature,
+            torch.tensor(-float('inf'), device=device)
+        )
+        log_probs_flat = policy_logits - torch.logsumexp(policy_logits, dim=1, keepdim=True)
+        log_probs = log_probs_flat.view(B, H, W)
+
+        # Entropy bonus: H = -sum(p * log p) — prevents policy collapse
+        probs_flat = torch.exp(log_probs_flat)
+        safe_log_probs = torch.where(
+            flat_covered,
+            log_probs_flat,
+            torch.tensor(0.0, device=device)
+        )
+        entropy = -(probs_flat * safe_log_probs).sum(dim=1).mean()
+
+        chosen_log_probs = log_probs[torch.arange(B, device=device), chunk_r, chunk_c]
+
+        policy_loss = -(chosen_log_probs * chunk_adv).sum() / n_steps_total
+        entropy_loss = -entropy_coef * entropy * (B / n_steps_total)
+        loss_chunk = policy_loss + entropy_loss
+
+        loss_chunk.backward()
+        total_loss += loss_chunk.item()
+
     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     optimizer.step()
 
     avg_return = total_return / n_games
     new_baseline = baseline * (1 - 0.1) + avg_return * 0.1
-    return loss.item(), avg_return, new_baseline
+    return total_loss, avg_return, new_baseline
 
 
 # ─── Full Training Loop ────────────────────────────────────────────────────
@@ -329,10 +378,13 @@ def train_rl(config: RLConfig) -> dict:
             target_size=config.total_games, rng=board_rng,
         )
         print(f"Board pool: {train_pool.size}/{config.total_games} boards in {p}")
-        if train_pool.size < config.total_games:
-            print(f"  Filling pool (this may take a while)...")
-            train_pool.fill()
-            print(f"  Done — {train_pool.size} boards ready")
+        if train_pool.size == 0:
+            raise ValueError(
+                f"Board pool {p} is empty or not found! "
+                f"Run 'python scripts/generate_rl_pool.py --output {p}' first."
+            )
+        elif train_pool.size < config.total_games:
+            print(f"  Warning: pool ({train_pool.size}) < total_games ({config.total_games}). Boards reused.")
         eval_pool = train_pool  # share pool for eval
 
     # Environments (separate for train/eval to avoid state leaks)
@@ -384,6 +436,7 @@ def train_rl(config: RLConfig) -> dict:
         loss, avg_ret, baseline = reinforce_step(
             model, optimizer, train_env,
             temperature=config.temperature,
+            entropy_coef=config.entropy_coef,
             gamma=config.gamma, baseline=baseline,
             device=device, n_games=config.games_per_batch,
             refine_steps=config.refine_steps,
