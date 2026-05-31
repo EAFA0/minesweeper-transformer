@@ -90,7 +90,7 @@ class RLBoardPool:
         idx = rng.integers(0, len(self._boards))
         idx = rng.integers(0, len(self._boards))
         mask, vis, w, h = self._boards[idx]
-        return MinesweeperGame.from_mine_mask(w, h, mask, first_done=False), w, h
+        return MinesweeperGame.from_mine_mask(w, h, mask, first_done=True, visible=vis), w, h
 
     def _generate_batch(self, n: int) -> None:
         """Generate n new boards and add to pool."""

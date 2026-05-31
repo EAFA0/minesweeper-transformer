@@ -91,6 +91,9 @@ class RLEnv:
                 self.width = w
                 self.height = h
                 self.total_mines = int(self.game.get_mine_mask().sum())
+                # Track pre-revealed cells so we can credit them at win time.
+                # Without this, boards with more flood fill give lower max scores.
+                self._pre_revealed = (w * h - self.total_mines) - self.game._safe_covered
                 return self.state
 
         # Mixed mode: random size + density each episode
@@ -146,11 +149,10 @@ class RLEnv:
             reward = cells_revealed * self.rewards.reveal_safe + self.rewards.step_penalty
 
         if self.game.status == GameStatus.WON:
-            # Include reward for all unrevealed safe cells.
-            # Without this, flagging all mines early yields less reward
-            # than clicking every cell one-by-one — perverse incentive.
-            unrevealed = self.game._safe_covered
-            reward += self.rewards.win + unrevealed * self.rewards.reveal_safe
+            # Credit pre-revealed cells + win bonus.
+            # pre_revealed cells were already flipped before the model started,
+            # but they count toward the goal of clearing all 60 safe cells.
+            reward += self.rewards.win + self._pre_revealed * self.rewards.reveal_safe
             return self.state, reward, True
         elif self.game.status == GameStatus.LOST:
             self._hits += 1
