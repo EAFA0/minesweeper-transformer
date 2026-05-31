@@ -1,10 +1,12 @@
 """Board pool for RL training — pre-generate boards to eliminate per-episode overhead.
 
-Similar to evaluate.py's BoardPool but designed for RL:
-  - Pre-generate N boards, save mine masks + visible states to .npz
-  - Each reset() randomly samples from the pool
-  - Auto-expand when pool runs low
-  - Mixed sizes: each board stores its (width, height) alongside mask
+Supports both mixed-size and fixed-size pools.
+
+Fixed mode:
+  RLBoardPool("pool.npz", width=10, height=10, mines=40, target_size=200)
+
+Mixed mode:
+  RLBoardPool("pool.npz", min_size=6, max_size=10, min_density=0.1, max_density=0.4)
 """
 
 from pathlib import Path
@@ -21,8 +23,7 @@ class RLBoardPool:
     """Pre-generated board cache for RL training.
 
     Usage:
-        pool = RLBoardPool("rl_boards.npz", min_size=6, max_size=10,
-                           min_density=0.1, max_density=0.4, target_size=5000)
+        pool = RLBoardPool("rl_boards.npz", width=10, height=10, mines=40, target_size=200)
         game, w, h = pool.sample(rng)  # returns (game, width, height)
     """
 
@@ -34,6 +35,9 @@ class RLBoardPool:
         min_density: float = 0.10,
         max_density: float = 0.40,
         target_size: int = 5000,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        mines: Optional[int] = None,
         rng: Optional[np.random.Generator] = None,
     ):
         self.path = Path(path)
@@ -42,6 +46,10 @@ class RLBoardPool:
         self.min_density = min_density
         self.max_density = max_density
         self.target_size = target_size
+        self.fixed_size = width is not None and height is not None and mines is not None
+        self.width = width
+        self.height = height
+        self.mines = mines
         self.rng = rng or np.random.default_rng()
 
         # (mine_mask, visible, width, height) per board
@@ -72,9 +80,9 @@ class RLBoardPool:
 
     def sample(self, rng: np.random.Generator) -> Optional[Tuple[MinesweeperGame, int, int]]:
         """Sample a random board from the pool, generating new ones if needed."""
-        # Generate more if pool is running low
         if len(self._boards) < 100:
-            self._generate_batch(min(self.target_size - len(self._boards), 500))
+            needed = self.target_size - len(self._boards)
+            self._generate_batch(max(needed, 50))
 
         if not self._boards:
             return None
@@ -86,10 +94,13 @@ class RLBoardPool:
     def _generate_batch(self, n: int) -> None:
         """Generate n new boards and add to pool."""
         for _ in range(n):
-            w = self.rng.integers(self.min_size, self.max_size + 1)
-            h = self.rng.integers(self.min_size, self.max_size + 1)
-            density = self.rng.uniform(self.min_density, self.max_density)
-            mines = max(1, int(w * h * density))
+            if self.fixed_size:
+                w, h, mines = self.width, self.height, self.mines
+            else:
+                w = self.rng.integers(self.min_size, self.max_size + 1)
+                h = self.rng.integers(self.min_size, self.max_size + 1)
+                density = self.rng.uniform(self.min_density, self.max_density)
+                mines = max(1, int(w * h * density))
 
             game = generate_self_validated_board(
                 width=w, height=h, total_mines=mines,

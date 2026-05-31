@@ -387,17 +387,22 @@ def train_rl(config: RLConfig) -> dict:
     if config.board_pool_path:
         from training.rl_board_pool import RLBoardPool
         p = Path(config.board_pool_path)
-        train_pool = RLBoardPool(
-            p, min_size=config.mixed_min_size, max_size=config.mixed_max_size,
-            min_density=config.mixed_min_density, max_density=config.mixed_max_density,
-            target_size=config.total_games, rng=board_rng,
+        kwargs = dict(
+            min_size=config.mixed_min_size,
+            max_size=config.mixed_max_size,
+            min_density=config.mixed_min_density,
+            max_density=config.mixed_max_density,
+            target_size=config.total_games,
+            rng=board_rng,
         )
+        if not config.mixed_env:
+            kwargs["width"] = config.width
+            kwargs["height"] = config.height
+            kwargs["mines"] = config.total_mines
+        train_pool = RLBoardPool(p, **kwargs)
         print(f"Board pool: {train_pool.size}/{config.total_games} boards in {p}")
         if train_pool.size == 0:
-            raise ValueError(
-                f"Board pool {p} is empty or not found! "
-                f"Run 'python scripts/generate_rl_pool.py --output {p}' first."
-            )
+            print(f"  Pool empty — boards will be generated on demand")
         elif train_pool.size < config.total_games:
             print(f"  Warning: pool ({train_pool.size}) < total_games ({config.total_games}). Boards reused.")
         eval_pool = train_pool  # share pool for eval
