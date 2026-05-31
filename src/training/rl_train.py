@@ -425,7 +425,7 @@ def train_rl(config: RLConfig) -> dict:
     eval_env = RLEnv(
         width=config.width, height=config.height,
         total_mines=config.total_mines,
-        mine_continue=False,
+        mine_continue=config.mine_continue,
         warmup_clicks=config.warmup_clicks,
         mixed=config.mixed_env,
         mixed_min_size=config.mixed_min_size,
