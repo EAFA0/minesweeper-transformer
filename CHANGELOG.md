@@ -2,21 +2,31 @@
 
 本项目的所有重要变更都将记录在此文件中。
 
-## [未发布] - 2026-05-30
+## [未发布] - 2026-05-31
 
 ### 新增
-- **文档**: 建立完整文档体系（AGENTS.md、CHANGELOG.md、architecture.md、training-log.md、conventions.md、pitfalls.md）
-- **环境**: RTX 4070 SUPER 训练环境就绪（ssh ubuntu@FAEX1.local）
-- **预训练**: 三阶段密度课程重整 — S1(规则) → S2(密度) → S_mixed(泛化)
+- **收敛检测**: early-stop `max|ΔP| < 1e-3` 替代置信度方案，S3 模型 90% 样本 5 步收敛
+- **RL 奖励设计**: mine_continue 训练/评估分离, hit_mine=-5, pre_revealed 补分 (满分 160)
+- **固定尺寸 RL**: `--no_mixed` flag, focused on 10×10/40
+- **RL Board Pool**: 固定尺寸生成 + eval 池复用
 
 ### 变更
-- **训练路线**: 废弃旧多阶段方案，统一为三阶段 `train_stage.py`
-- **数据生成**: 并行生成集成至 `generate_data.py --workers 0`（`generate_data_parallel.py` 已合并归入）
-- **Refinement**: 默认 refine=4（原为 8）
-- **代码清理**: 移除废弃的旧阶段 (S1.5/S3/S4)，统一 train_stage.py 入口
+- **三阶段路线**: S_mixed → S3 (8×8/25), 密度对齐 10×10/40 (39%→40%)
+- **max_refine_steps**: 12→16 (给 10×10/40 留余量)
+- **hit_mine**: -10→-5 (降低惩罚，ret 拉正)
+- **RL 环境**: 训练 `mine_continue=True`, 评估 `False` (分别优化信号和测量)
+
+### Bug 修复
+- `generate_data` 并行 worker 参数冲突 (partial 导致 seed→width)
+- `load_pretrained` 误报 "migrated output head" 消息 (print 在 if 外)
+- RL `_pre_revealed` 补分 (开局已翻格不计入导致满分 ≠ 160)
+- eval `mine_continue` 错配 (修复后立刻回退，评估需测真实胜率)
+- `first_done=False` OOD 回退 (模型未学过全覆态)
 
 ### 结果
-- **S1 (8×8/10雷) 首训**: Val Acc 97.5%, 334s (5 epochs, refine=1)
+- **S3 (8×8/25) 零样本 10×10/40**: 74% 胜率 (1000 局, 0 stuck)
+- **RL v3 (pre_revealed 补分)**: ret=152, baseline=145+, cold eval 88%
+- **提前退出**: S3 模型 90% early-stop (mean 5.0 steps, max 16)
 
 ---
 
