@@ -89,7 +89,9 @@ class RLBoardPool:
 
         idx = rng.integers(0, len(self._boards))
         mask, vis, w, h = self._boards[idx]
-        return MinesweeperGame.from_mine_mask(w, h, mask, first_done=True, visible=vis), w, h
+        # Start fully covered — model makes the first click itself.
+        # No-guess boards guarantee any first click is safe.
+        return MinesweeperGame.from_mine_mask(w, h, mask, first_done=False), w, h
 
     def _generate_batch(self, n: int) -> None:
         """Generate n new boards and add to pool."""
