@@ -79,10 +79,9 @@ class RLBoardPool:
         np.savez_compressed(self.path, **save_dict)
 
     def sample(self, rng: np.random.Generator) -> Optional[Tuple[MinesweeperGame, int, int]]:
-        """Sample a random board from the pool, generating new ones if needed."""
-        if len(self._boards) < 100:
-            needed = self.target_size - len(self._boards)
-            self._generate_batch(max(needed, 50))
+        """Sample a random board from the pool."""
+        if not self._boards:
+            return None
 
         if not self._boards:
             return None

@@ -25,6 +25,7 @@ import torch.nn.functional as F
 
 from model.architecture import MinesweeperTransformer, ModelConfig
 from training.rl_env import RLEnv, Rewards
+from minesweeper.constants import GameStatus
 
 
 # ─── Config ─────────────────────────────────────────────────────────────────
@@ -396,11 +397,12 @@ def train_rl(config: RLConfig) -> dict:
             kwargs["height"] = config.height
             kwargs["mines"] = config.total_mines
         train_pool = RLBoardPool(p, **kwargs)
-        print(f"Board pool: {train_pool.size}/{config.total_games} boards in {p}")
+        print(f"Board pool: {train_pool.size} boards loaded from {p}")
         if train_pool.size == 0:
-            print(f"  Pool empty — boards will be generated on demand")
+            print(f"  Pool empty — generating {min(100, config.total_games)} seed boards...")
+            train_pool.fill(min(100, config.total_games))
         elif train_pool.size < config.total_games:
-            print(f"  Warning: pool ({train_pool.size}) < total_games ({config.total_games}). Boards reused.")
+            print(f"  Pool ({train_pool.size}) < total_games ({config.total_games}) — boards will be reused.")
         eval_pool = train_pool  # share pool for eval
 
     # Environments (separate for train/eval to avoid state leaks)
