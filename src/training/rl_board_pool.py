@@ -78,20 +78,7 @@ class RLBoardPool:
             save_dict[f"h_{i}"] = np.array(h)
         np.savez_compressed(self.path, **save_dict)
 
-    def sample(self, rng: np.random.Generator) -> Optional[Tuple[MinesweeperGame, int, int]]:
-        """Sample a random board from the pool."""
-        if not self._boards:
-            return None
-
-        if not self._boards:
-            return None
-
-        idx = rng.integers(0, len(self._boards))
-        idx = rng.integers(0, len(self._boards))
-        mask, vis, w, h = self._boards[idx]
-        return MinesweeperGame.from_mine_mask(w, h, mask, first_done=True, visible=vis), w, h
-
-    def _generate_batch(self, n: int) -> None:
+    def _generate_batch(self, n: int, save: bool = True) -> None:
         """Generate n new boards and add to pool."""
         for _ in range(n):
             if self.fixed_size:
@@ -118,13 +105,40 @@ class RLBoardPool:
             if len(self._boards) >= self.target_size:
                 break
 
-        self._save()
+        if save:
+            self._save()
 
-    def fill(self) -> None:
-        """Ensure pool has target_size boards."""
+    def sample(self, rng: np.random.Generator) -> Optional[Tuple[MinesweeperGame, int, int]]:
+        """Sample a random board from the pool. If pool is not full, generate on the fly."""
+        if len(self._boards) < self.target_size:
+            self._generate_batch(1, save=False)
+            
+            # Save periodically to avoid rewriting large files too often
+            self._unsaved = getattr(self, '_unsaved', 0) + 1
+            if self._unsaved >= min(50, self.target_size):
+                self._save()
+                self._unsaved = 0
+
+        if not self._boards:
+            return None
+
+        idx = rng.integers(0, len(self._boards))
+        mask, vis, w, h = self._boards[idx]
+        return MinesweeperGame.from_mine_mask(w, h, mask, first_done=True, visible=vis), w, h
+
+    def fill(self, n: Optional[int] = None) -> None:
+        """Ensure pool has target_size boards (or up to n additional boards)."""
         needed = self.target_size - len(self._boards)
+        if n is not None:
+            needed = min(needed, n)
         if needed > 0:
-            self._generate_batch(needed)
+            self._generate_batch(needed, save=True)
+
+    def save_pending(self) -> None:
+        """Save any pending generated boards to disk."""
+        if getattr(self, '_unsaved', 0) > 0:
+            self._save()
+            self._unsaved = 0
 
     @property
     def size(self) -> int:

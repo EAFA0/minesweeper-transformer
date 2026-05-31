@@ -48,14 +48,18 @@ class BoardPool:
 
     def _load(self) -> Tuple[List[np.ndarray], List[np.ndarray]]:
         if self._cache_mines is not None:
-            return self._cache_mines, self._cache_visible or []
+            if self._cache_visible is None:
+                self._cache_visible = []
+            return self._cache_mines, self._cache_visible
         if self.path.exists():
             data = np.load(self.path, allow_pickle=True)
             n = len(data.files) // 2
             self._cache_mines = [data[f"mines_{i}"] for i in range(n)]
             self._cache_visible = [data[f"visible_{i}"] for i in range(n)]
             return self._cache_mines, self._cache_visible
-        return [], []
+        self._cache_mines = []
+        self._cache_visible = []
+        return self._cache_mines, self._cache_visible
 
     def _save(self, mines: List[np.ndarray], visibles: List[np.ndarray]) -> None:
         save_dict = {}
@@ -88,8 +92,20 @@ class BoardPool:
         mine_mask = game.get_mine_mask()
         mines_list.append(mine_mask)
         visibles_list.append(game.visible.copy())
-        self._save(mines_list, visibles_list)
+        
+        self._unsaved = getattr(self, '_unsaved', 0) + 1
+        if self._unsaved >= 50:
+            self._save(mines_list, visibles_list)
+            self._unsaved = 0
+            
         return game
+        
+    def save_pending(self) -> None:
+        """Save any pending generated boards to disk."""
+        if getattr(self, '_unsaved', 0) > 0:
+            mines_list, visibles_list = self._load()
+            self._save(mines_list, visibles_list)
+            self._unsaved = 0
 
 
 def pick_action(
@@ -253,6 +269,9 @@ def evaluate(
                 f"act_acc={act_acc:.3f}  "
                 f"({elapsed:.1f}s)"
             )
+
+    if pool:
+        pool.save_pending()
 
     elapsed = time.time() - t0
     played = n_games - gen_failures

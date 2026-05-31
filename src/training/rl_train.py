@@ -466,6 +466,10 @@ def train_rl(config: RLConfig) -> dict:
         metrics["avg_return"].append(avg_ret)
 
         if total_played % config.log_every == 0 or total_played <= config.games_per_batch:
+            # Save pending boards in pool periodically
+            if train_pool is not None:
+                train_pool.save_pending()
+
             eval_wr, _, _ = collect_eval(
                 eval_env, model, device,
                 n_games=min(20, config.eval_games),
@@ -510,6 +514,9 @@ def train_rl(config: RLConfig) -> dict:
     print(f"\n╔{'═'*58}╗")
     print(f"║  Final: wr={final_wr:.1%}  ret={final_ret:.1f}  steps={final_steps:.0f}")
     print(f"╚{'═'*58}╝")
+    
+    if train_pool is not None:
+        train_pool.save_pending()
 
     metrics["final_win_rate"] = final_wr
     metrics["final_avg_return"] = final_ret
