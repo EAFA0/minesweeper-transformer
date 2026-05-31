@@ -146,7 +146,11 @@ class RLEnv:
             reward = cells_revealed * self.rewards.reveal_safe + self.rewards.step_penalty
 
         if self.game.status == GameStatus.WON:
-            reward += self.rewards.win
+            # Include reward for all unrevealed safe cells.
+            # Without this, flagging all mines early yields less reward
+            # than clicking every cell one-by-one — perverse incentive.
+            unrevealed = self.game._safe_covered
+            reward += self.rewards.win + unrevealed * self.rewards.reveal_safe
             return self.state, reward, True
         elif self.game.status == GameStatus.LOST:
             self._hits += 1
