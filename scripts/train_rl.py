@@ -27,8 +27,8 @@ def main() -> None:
     parser.add_argument("--width", type=int, default=8)
     parser.add_argument("--height", type=int, default=8)
     parser.add_argument("--mines", type=int, default=10)
-    parser.add_argument("--mine_continue", action="store_true",
-                        help="Continue game after mine hit — denser training signal")
+    parser.add_argument("--no_mine_continue", action="store_false", dest="mine_continue",
+                        help="Stop game on first mine hit (default: continue for denser signal)")
     parser.add_argument("--warmup", type=int, default=0, dest="warmup_clicks",
                         help="Random safe reveals before model takes over (default: 0)")
     parser.add_argument("--pretrained", default="",

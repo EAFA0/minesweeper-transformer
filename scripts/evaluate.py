@@ -288,7 +288,7 @@ def main():
         description="Evaluate Minesweeper Transformer on no-guess boards"
     )
     parser.add_argument("checkpoint", help="Path to model checkpoint (.pt)")
-    parser.add_argument("--n_games", type=int, default=500)
+    parser.add_argument("--n_games", type=int, default=1000)
     parser.add_argument("--width", type=int, default=8)
     parser.add_argument("--height", type=int, default=8)
     parser.add_argument("--mines", type=int, default=10)
