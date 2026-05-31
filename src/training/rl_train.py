@@ -171,10 +171,6 @@ def play_game(
         if done:
             break
 
-    won = 1 if env.game is not None and env.game.status.value >= 3 else 0
-    # GameStatus.WON likely has value 3 (after playing)
-    # Actually check GameStatus directly
-    from minesweeper.constants import GameStatus
     won = 1 if env.game is not None and env.game.status == GameStatus.WON else 0
     return total_return, steps, won, env.mine_hits
 
