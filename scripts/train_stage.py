@@ -4,14 +4,14 @@
 三阶段密度课程:
   S1 (规则):  8×8 / 10雷 → 学习基本扫雷规则
   S2 (密度):  8×8 / 20雷 → 学习雷密度可变
-  S_mixed (泛化): 4-8大小 / 10-50%密度 → 零样本泛化
+  S3 (泛化):  8×8 / 25雷 → 高密度泛化 (39%密度, 接近评估目标 10×10/40)
 
 用法:
     python scripts/train_stage.py --stage S1        # 从头训练
     python scripts/train_stage.py --stage S2        # 继承 S1 → 密级提升
-    python scripts/train_stage.py --stage S_mixed   # 继承 S2 → 混合泛化
-    python scripts/train_stage.py --stage S_mixed --eval 10 10 40  # 零样本评估
-    python scripts/train_stage.py --stage S1 --force_data           # 重新生成数据
+    python scripts/train_stage.py --stage S3        # 继承 S2 → 高密度泛化
+    python scripts/train_stage.py --stage S3 --eval 10 10 40  # 零样本评估
+    python scripts/train_stage.py --stage S1 --force_data       # 重新生成数据
 """
 
 import argparse
@@ -28,9 +28,8 @@ STAGES = {
         "data_dir": "data/S1", "save_dir": "checkpoints/S1",
         "lr": 1e-3, "weight_decay": 3e-4,
         "pretrained": None,
-        "mixed": False,                         # fixed-size stage
         "eval": {"width": 8, "height": 8, "mines": 10},
-        "desc": "规则学习 — 8×8/10雷",
+        "desc": "规则学习 — 8×8/10雷 (16%密度)",
     },
     "S2": {
         "width": 8, "height": 8, "mines": 20,
@@ -38,28 +37,24 @@ STAGES = {
         "data_dir": "data/S2", "save_dir": "checkpoints/S2",
         "lr": 3e-4, "weight_decay": 3e-4,
         "pretrained": "checkpoints/S1/best_model.pt",
-        "mixed": False,
         "eval": {"width": 8, "height": 8, "mines": 20},
-        "desc": "密度变化 — 8×8/20雷",
+        "desc": "密度变化 — 8×8/20雷 (31%密度)",
     },
-    "S_mixed": {
-        "width": None, "height": None, "mines": None,  # mixed mode
-        "n_samples": 12000, "epochs": 5,
-        "data_dir": "data/mixed", "save_dir": "checkpoints/S_mixed",
+    "S3": {
+        "width": 8, "height": 8, "mines": 25,
+        "n_samples": 10000, "epochs": 5,
+        "data_dir": "data/S3", "save_dir": "checkpoints/S3",
         "lr": 3e-4, "weight_decay": 3e-4,
         "pretrained": "checkpoints/S2/best_model.pt",
-        "mixed": True,
-        "min_size": 4, "max_size": 8,
-        "min_density": 0.1, "max_density": 0.5,
         "eval": {"width": 10, "height": 10, "mines": 40},  # 零样本评估目标
-        "desc": "混合泛化 — 4-8大小 / 10-50%密度",
+        "desc": "高密度泛化 — 8×8/25雷 (39%密度, 接近目标 10×10/40)",
     },
 }
 
 PRETRAINED_CHAIN = {
     "S1": None,
     "S2": "S1",
-    "S_mixed": "S2",
+    "S3": "S2",
 }
 
 
@@ -75,16 +70,16 @@ def run(cmd, desc=""):
 
 def main():
     p = argparse.ArgumentParser(
-        description="Minesweeper Transformer — 三阶段预训练",
+        description="Minesweeper Transformer — 三阶段密度课程",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="示例:\n"
                "  python scripts/train_stage.py --stage S1\n"
                "  python scripts/train_stage.py --stage S2 --force_data\n"
-               "  python scripts/train_stage.py --stage S_mixed\n"
-               "  python scripts/train_stage.py --stage S_mixed --eval 10 10 40",
+               "  python scripts/train_stage.py --stage S3\n"
+               "  python scripts/train_stage.py --stage S3 --eval 10 10 40",
     )
     p.add_argument("--stage", required=True, choices=list(STAGES.keys()),
-                   help="训练阶段: S1 | S2 | S_mixed")
+                   help="训练阶段: S1 | S2 | S3")
     p.add_argument("--epochs", type=int, default=None,
                    help="覆盖默认 epoch 数")
     p.add_argument("--lr", type=float, default=None,
@@ -159,27 +154,15 @@ def main():
         return
 
     # ── 1) Generate data ──────────────────────────────────────────────
-    if cfg["mixed"]:
-        cmd = [
-            sys.executable, "scripts/generate_data.py",
-            "--mixed",
-            "--min_size", str(cfg["min_size"]),
-            "--max_size", str(cfg["max_size"]),
-            "--min_density", str(cfg["min_density"]),
-            "--max_density", str(cfg["max_density"]),
-            "--n_samples", str(n_samples),
-            "--output", cfg["data_dir"],
-        ]
-    else:
-        cmd = [
-            sys.executable, "scripts/generate_data.py",
-            "--width", str(cfg["width"]),
-            "--height", str(cfg["height"]),
-            "--mines", str(cfg["mines"]),
-            "--n_samples", str(n_samples),
-            "--output", cfg["data_dir"],
-            "--workers", "0",            # 0 = auto (cpu_count)
-        ]
+    cmd = [
+        sys.executable, "scripts/generate_data.py",
+        "--width", str(cfg["width"]),
+        "--height", str(cfg["height"]),
+        "--mines", str(cfg["mines"]),
+        "--n_samples", str(n_samples),
+        "--output", cfg["data_dir"],
+        "--workers", "0",            # 0 = auto (cpu_count)
+    ]
     if args.force_data:
         cmd.append("--force")
     run(cmd, f"{args.stage}: Generate data")
