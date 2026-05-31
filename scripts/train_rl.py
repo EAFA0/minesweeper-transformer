@@ -45,6 +45,8 @@ def main() -> None:
                         help="Entropy bonus coefficient (default: 0.0 — disabled for RL)")
     parser.add_argument("--board_pool", default="rl_boards.npz",
                         help="Pre-generate boards to .npz (speeds up RL)")
+    parser.add_argument("--no_mixed", action="store_true",
+                        help="Disable mixed env — use fixed width/height/mines only")
     parser.add_argument("--no_board_pool", action="store_true",
                         help="Disable board pooling")
     parser.add_argument("--device", default="auto")
@@ -75,6 +77,7 @@ def main() -> None:
         refine_steps=args.refine_steps,
         temperature=args.temperature,
         entropy_coef=args.entropy_coef,
+        mixed_env=not args.no_mixed,
         device=dev,
     )
     train_rl(config)
