@@ -23,7 +23,7 @@ from data.self_validated import generate_self_validated_board
 @dataclass(frozen=True)
 class Rewards:
     reveal_safe: float = 1.0
-    hit_mine: float = -10.0
+    hit_mine: float = -5.0
     win: float = 100.0
     step_penalty: float = 0.0
 
