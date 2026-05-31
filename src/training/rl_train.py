@@ -13,18 +13,17 @@ Policy:
   Lower P(mine) → higher probability of being chosen.
 """
 
-import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, List, Tuple
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 
 from model.architecture import MinesweeperTransformer, ModelConfig
 from training.rl_env import RLEnv, Rewards
+from training.rl_board_pool import RLBoardPool
 from minesweeper.constants import GameStatus
 
 
@@ -38,18 +37,22 @@ class RLConfig:
     total_mines: int = 10
     mine_continue: bool = False
     warmup_clicks: int = 0
-    mixed_env: bool = True           # random size + density each episode
+    mixed_env: bool = False          # random size + density each episode
     mixed_min_size: int = 6
     mixed_max_size: int = 10
     mixed_min_density: float = 0.10
     mixed_max_density: float = 0.40
     board_pool_path: str = ""  # pre-generate boards for faster RL (recommended)
 
+    # Reward shaping
+    reward_reveal_safe: float = 1.0
+    reward_floodfill_bonus: float = 0.05
+    reward_hit_mine: float = -20.0
+    reward_step_penalty: float = 0.0
+
     # RL hyperparameters
     temperature: float = 1.0
-    gamma: float = 0.95
-    baseline_ema: float = 0.1
-    entropy_coef: float = 0.0  # was 0.05 — removed; pretrained model doesn't need forced exploration
+    entropy_coef: float = 0.0  # pretrained RL fine-tuning does not need forced exploration
 
     # Architecture overrides (RL-specific)
     dropout: float = 0.0  # RL doesn't need dropout — pretrained weights are already converged
@@ -107,7 +110,7 @@ def action_log_probs(
 def get_logits(
     model: MinesweeperTransformer,
     state: np.ndarray,
-    device: str,
+    device: str | torch.device,
     refine_steps: int = 1,
 ) -> torch.Tensor:
     """Get per-cell mine logits for action selection.
@@ -137,7 +140,7 @@ def play_game(
     env: RLEnv,
     model: MinesweeperTransformer,
     temperature: float,
-    device: str,
+    device: str | torch.device,
     deterministic: bool = False,
     refine_steps: int = 1,
     max_steps: int = 200,
@@ -157,12 +160,12 @@ def play_game(
 
         if deterministic:
             masked = torch.where(covered_t, logits, torch.tensor(float('inf'), device=device))
-            idx = torch.argmin(masked).item()
+            idx = int(torch.argmin(masked).item())
         else:
             log_probs = action_log_probs(logits, covered_t, temperature)
             probs = torch.exp(log_probs.flatten())
             probs = probs / probs.sum()
-            idx = torch.multinomial(probs, 1).item()
+            idx = int(torch.multinomial(probs, 1).item())
 
         r, c = divmod(idx, covered.shape[1])  # padded width
         state, reward, done = env.step(r, c)
@@ -179,7 +182,7 @@ def play_game(
 def collect_eval(
     env: RLEnv,
     model: MinesweeperTransformer,
-    device: str,
+    device: str | torch.device,
     n_games: int,
     refine_steps: int = 1,
 ) -> Tuple[float, float, float]:
@@ -209,9 +212,8 @@ def reinforce_step(
     env: RLEnv,
     temperature: float,
     entropy_coef: float,
-    gamma: float,
     baseline: float,
-    device: str,
+    device: str | torch.device,
     n_games: int = 8,
     refine_steps: int = 4,
 ) -> Tuple[float, float, float]:
@@ -257,7 +259,7 @@ def reinforce_step(
             log_probs = action_log_probs(logits, covered_t, temperature)
             probs = torch.exp(log_probs.flatten())
             probs = probs / probs.sum()
-            idx = torch.multinomial(probs, 1).item()
+            idx = int(torch.multinomial(probs, 1).item())
             r, c = divmod(idx, covered.shape[1])
 
             next_state, reward, done = env.step(r, c)
@@ -278,14 +280,19 @@ def reinforce_step(
     if n_steps_total == 0:
         return 0.0, 0.0, baseline
 
-    # Scale advantages down — prevents huge gradients.
-    # No mean subtraction, so positive-reward actions stay positive.
-    advantages = [adv / 10.0 for adv in advantages]
+    # Advantage Normalization (Crucial for variance reduction)
+    # Advantage = (Reward - mean(Reward)) / (std(Reward) + 1e-8)
+    adv_tensor = torch.tensor(advantages, dtype=torch.float32, device=device)
+    if len(adv_tensor) > 1:
+        adv_mean = adv_tensor.mean()
+        adv_std = adv_tensor.std()
+        adv_t = (adv_tensor - adv_mean) / (adv_std + 1e-8)
+    else:
+        adv_t = adv_tensor - adv_tensor.mean()
 
     optimizer.zero_grad()
     batch_states = torch.stack(states).to(device)
     covered_masks_t = torch.stack(covered_masks).to(device)
-    adv_t = torch.tensor(advantages, dtype=torch.float32, device=device)
     r_coords = torch.tensor([r for r, c in action_coords], device=device)
     c_coords = torch.tensor([c for r, c in action_coords], device=device)
 
@@ -361,6 +368,11 @@ def train_rl(config: RLConfig) -> dict:
     print(f"=== RL Fine-tuning (REINFORCE) ===")
     print(f"Board: {config.width}×{config.height}, {config.total_mines} mines")
     print(f"Mine-continue: {config.mine_continue} | Refine: {config.refine_steps} steps")
+    print(
+        f"Rewards: safe={config.reward_reveal_safe}, "
+        f"floodfill_bonus={config.reward_floodfill_bonus}, "
+        f"mine={config.reward_hit_mine}, step={config.reward_step_penalty}"
+    )
     print(f"Device: {device}")
 
     # Load pretrained model
@@ -377,36 +389,30 @@ def train_rl(config: RLConfig) -> dict:
             m.p = config.dropout
     print(f"Dropout set to {config.dropout}")
 
-    # Board pool (optional, pre-generate for faster RL)
-    board_rng = np.random.default_rng(42)
+    # Board pool (optional, read-only by design; build it via scripts/generate_rl_pool.py)
     train_pool = None
     eval_pool = None
     if config.board_pool_path:
-        from training.rl_board_pool import RLBoardPool
         p = Path(config.board_pool_path)
-        kwargs = dict(
-            min_size=config.mixed_min_size,
-            max_size=config.mixed_max_size,
-            min_density=config.mixed_min_density,
-            max_density=config.mixed_max_density,
-            target_size=config.total_games,
-            rng=board_rng,
-        )
-        if not config.mixed_env:
-            kwargs["width"] = config.width
-            kwargs["height"] = config.height
-            kwargs["mines"] = config.total_mines
-        train_pool = RLBoardPool(p, **kwargs)
+        train_pool = RLBoardPool(p)
         print(f"Board pool: {train_pool.size} boards loaded from {p}")
         if train_pool.size == 0:
-            print(f"  Pool empty — generating {min(100, config.total_games)} seed boards...")
-            train_pool.fill(min(100, config.total_games))
+            raise RuntimeError(
+                f"Board pool is empty: {p}. "
+                f"Build it first with scripts/generate_rl_pool.py or pass --no_board_pool."
+            )
         elif train_pool.size < config.total_games:
             print(f"  Pool ({train_pool.size}) < total_games ({config.total_games}) — boards will be reused.")
         eval_pool = train_pool  # share pool for eval
 
     # Environments (separate for train/eval to avoid state leaks)
     rng = np.random.default_rng(42)
+    rewards = Rewards(
+        reveal_safe=config.reward_reveal_safe,
+        floodfill_bonus=config.reward_floodfill_bonus,
+        hit_mine=config.reward_hit_mine,
+        step_penalty=config.reward_step_penalty,
+    )
     train_env = RLEnv(
         width=config.width, height=config.height,
         total_mines=config.total_mines,
@@ -417,6 +423,7 @@ def train_rl(config: RLConfig) -> dict:
         mixed_max_size=config.mixed_max_size,
         mixed_min_density=config.mixed_min_density,
         mixed_max_density=config.mixed_max_density,
+        rewards=rewards,
         rng=rng,
         board_pool=train_pool,
     )
@@ -430,6 +437,7 @@ def train_rl(config: RLConfig) -> dict:
         mixed_max_size=config.mixed_max_size,
         mixed_min_density=config.mixed_min_density,
         mixed_max_density=config.mixed_max_density,
+        rewards=rewards,
         rng=np.random.default_rng(99),
         board_pool=eval_pool,
     )
@@ -441,7 +449,7 @@ def train_rl(config: RLConfig) -> dict:
 
     # Metrics
     baseline = 0.0
-    metrics = {
+    metrics: dict[str, Any] = {
         "game": [], "loss": [], "avg_return": [],
         "win_rate": [], "eval_win_rate": [],
     }
@@ -455,7 +463,7 @@ def train_rl(config: RLConfig) -> dict:
             model, optimizer, train_env,
             temperature=config.temperature,
             entropy_coef=config.entropy_coef,
-            gamma=config.gamma, baseline=baseline,
+            baseline=baseline,
             device=device, n_games=config.games_per_batch,
             refine_steps=config.refine_steps,
         )
@@ -466,10 +474,6 @@ def train_rl(config: RLConfig) -> dict:
         metrics["avg_return"].append(avg_ret)
 
         if total_played % config.log_every == 0 or total_played <= config.games_per_batch:
-            # Save pending boards in pool periodically
-            if train_pool is not None:
-                train_pool.save_pending()
-
             eval_wr, _, _ = collect_eval(
                 eval_env, model, device,
                 n_games=min(20, config.eval_games),
@@ -515,9 +519,6 @@ def train_rl(config: RLConfig) -> dict:
     print(f"║  Final: wr={final_wr:.1%}  ret={final_ret:.1f}  steps={final_steps:.0f}")
     print(f"╚{'═'*58}╝")
     
-    if train_pool is not None:
-        train_pool.save_pending()
-
     metrics["final_win_rate"] = final_wr
     metrics["final_avg_return"] = final_ret
     return metrics

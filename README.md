@@ -1,172 +1,126 @@
 # Minesweeper Transformer
 
-CNN + Transformer 混合架构的扫雷 AI。**概率蒸馏 → 迭代 refinement → RL 微调**三阶段训练管线。
-
-## 项目结构
-
-```
-├── src/
-│   ├── minesweeper/
-│   │   ├── game.py               # 扫雷引擎：布雷、翻开、flood fill
-│   │   ├── probability_solver.py # 精确概率求解器（约束传播 + 连通分量枚举）
-│   │   ├── solver.py             # 约束传播求解器（ms-toollib fallback）
-│   │   └── constants.py          # 常量与通道定义
-│   ├── data/
-│   │   ├── generator.py          # 单棋盘数据生成
-│   │   ├── mixed_generator.py    # 混合数据生成（可变尺寸 + 密度）
-│   │   ├── no_guess.py           # ms-toollib 无猜棋盘生成
-│   │   └── self_validated.py     # 自验证棋盘生成（ProbabilitySolver，RL用）
-│   ├── model/
-│   │   └── architecture.py       # CNN + Transformer + Iterative Refinement
-│   └── training/
-│       ├── dataset.py            # PyTorch DataLoader（D4 增强）
-│       ├── train.py              # 监督训练（自适应随机 k + ponder penalty）
-│       ├── rl_env.py             # RL 环境（自验证棋盘 + mine_continue）
-│       └── rl_train.py           # REINFORCE 策略梯度训练
-├── scripts/
-│   ├── generate_data.py          # 数据生成（支持 --mixed）
-│   ├── train.py                  # 监督训练 CLI
-│   ├── train_stage.py            # 分阶段训练入口（统一所有阶段）
-│   ├── train_rl.py               # RL 训练 CLI
-│   └── evaluate.py               # 模型评估（自适应 refinement + board pool）
-├── docs/
-│   └── metrics.md                # 指标速查
-├── README.md
-└── .gitignore
-```
+CNN + Transformer 混合架构的扫雷 AI。当前主线是 **监督预训练 `S1 -> S2 -> S3` + RL 微调**。
 
 ## 快速开始
 
 ```bash
-# 1. 安装
+# 1. 安装依赖
 uv sync
 
-# 2. 推荐：混合数据 + 单次训练（可变尺寸 4-8，密度 10%-50%）
-python scripts/generate_data.py --mixed --n_samples 12000 --output data/mixed
-python scripts/train.py --data_dir data/mixed --epochs 3 --refine 8 \
-  --save_dir checkpoints/S_mixed
+# 2. 监督预训练主线：S1 -> S2 -> S3
+python scripts/train_stage.py --all
 
-# 3. 评估
-python scripts/evaluate.py checkpoints/S_mixed/best_model.pt \
+# 3. 评估 S3 在目标棋盘上的零样本能力
+python scripts/evaluate.py checkpoints/S3/best_model.pt \
   --width 10 --height 10 --mines 40
 
-# 4. RL 微调
-python scripts/train_rl.py \
-  --pretrained checkpoints/S_mixed/best_model.pt \
+# 4. 构建 RL board pool
+python scripts/generate_rl_pool.py \
   --width 10 --height 10 --mines 40 \
-  --mine_continue --total_games 5000
+  --target_size 12000 \
+  --workers 16
+
+# 5. 从 S3 checkpoint 做 RL 微调
+python scripts/train_rl.py \
+  --pretrained checkpoints/S3/best_model.pt \
+  --width 10 --height 10 --mines 40 \
+  --total_games 5000 \
+  --lr 1e-6 \
+  --temperature 0.1
 ```
 
-> 备选：分阶段训练 `python scripts/train_stage.py --stage S1` → `S2` → `S3`
-
-### 依赖安装
-
-| 平台 | 命令 |
-|------|------|
-| Apple Silicon | `uv sync` |
-| NVIDIA GPU | `uv sync --index-url https://download.pytorch.org/whl/cu124` |
-| CPU | `uv sync --index-url https://download.pytorch.org/whl/cpu` |
+默认 RL pool 路径会按棋盘自动推导为 `rl_boards_10x10_40.npz`。
 
 ## 训练 Pipeline
 
-### Phase 1: 概率蒸馏（监督学习）
+### Phase 1: 概率蒸馏
 
-模型学习 ProbabilitySolver 输出的精确 P(mine) 概率矩阵。
+监督训练学习 `ProbabilitySolver` 输出的精确 `P(mine)` 概率矩阵。
 
-**推荐：混合数据单次训练。** 一次生成可变尺寸（4-8）和密度（10%-50%）的数据，单一训练跑覆盖全部难度，不需要分阶段切换权重。
-
-```
-数据: 混合无猜棋盘（可变尺寸 + 密度）→ ProbabilitySolver 计算标签
-模型: CNN(3层) → PE → Transformer(4层) → P(mine) + confidence
-损失: MSE(probs, target) + 0.3×MSE(conf, conf_target) + 0.1×ponder_penalty
-增强: D4 (旋转+翻转, 8×)
+```text
+数据: 自验证/无猜棋盘 -> ProbabilitySolver 概率标签
+模型: CNN -> Interpolatable PE -> Transformer -> P(mine) + confidence
+损失: masked MSE + confidence loss + ponder penalty
+增强: D4 旋转/翻转
 ```
 
-备选：分阶段密度课程（`train_stage.py --stage S1 S2 S3`），详见阶段表。
-
-### Phase 2: 自适应 Refinement 训练
-
-训练时每 batch 随机抽迭代步数 k ∈ [1, 8]，只对第 k 步算 loss。
-Ponder penalty 惩罚深迭代但低置信度。`detach()` 切断 BPTT，训练速度接近单次推理。
-
-推理时置信度 > 0.95 自动早停，上限 12 步。
-
-### Phase 3: RL 微调
-
-从 S3 权重 warm start，REINFORCE 策略梯度在自验证棋盘上微调。
-
-- **自验证棋盘**：ProbabilitySolver 验证每局可解
-- **mine_continue**：踩雷 -10 分，游戏继续（不中断 episode）
-- **自适应 refinement**：推理时自动多步迭代
-- **权重隔离**：checkpoint 保存在 `checkpoints/rl/`
-
-## 阶段表（备选路线）
+### Phase 2: 三阶段预训练
 
 | 阶段 | 棋盘 | 雷数 | 密度 | Epoch | 继承 |
 |------|------|------|------|-------|------|
-| S1 | 8×8 | 10 | 15.6% | 1 | 从头 |
-| S2 | 8×8 | 20 | 31.3% | 1 | S1 |
-| S3 | 10×10 | 40 | 40.0% | 2 | S2 |
+| S1 | 8×8 | 10 | 15.6% | 2 | 从头 |
+| S2 | 8×8 | 20 | 31.3% | 2 | S1 |
+| S3 | 8×8 | 25 | 39.1% | 5 | S2 |
 
-可选：`S1.5`(8×8/15), `S2.5`(8×8/25), `S2.75`(8×8/30), `S3L`(12×12/40), `S4L`(16×16/80)
+历史/实验阶段 `S1.5/S2.5/S2.75/S3L/S4L` 仍可通过 `--legacy_stage` 显式运行，但不属于默认主线。
 
-## 数据格式
+### Phase 3: RL 微调
 
-- **channels**: `(10, H, W)` float32 — [0]covered, [1]flagged, [2:10]numbers 1-8
-- **probs**: `(H, W)` float32 — ProbabilitySolver 精确概率
-- **mask**: `(H, W)` bool — 参与 loss 的 covered 格
+RL 使用预生成 self-validated board pool，训练侧只读取 pool，不在训练过程中生成数据。
 
-## 模型架构
+当前 reward shaping：
 
-```
-Input (B, 10, H, W) + [prev_probs (B, 1, H, W)]
-  → CNN: 3× Conv3×3 + BN + ReLU → (B, 64, H, W)
-  → 2D Interpolatable Positional Encoding
-  → Transformer Encoder: 4 layers, d=64, nhead=4, d_ff=256
-  → Conv1×1 → (B, 2, H, W) → P(mine) + confidence
+```text
+safe reveal       = +1.0
+extra floodfill   = +0.05 * (cells_revealed - 1)
+mine hit          = -20.0
+win reward        = none
+pre-reveal bonus  = none
 ```
 
-**297K 参数**。InterpolatablePE 支持任意棋盘尺寸。
+训练环境使用 `mine_continue=True` 获取密集纠错信号，评估环境使用真实规则：踩雷即结束。
 
-## 关键结果（旧管线，供参考）
+## 常用命令
 
-| 模型 | 任务 | Win Rate | Action Acc |
-|------|------|----------|------------|
-| S2.5 (refine 5) | 8×8/25 | 99.6% | 1.000 |
-| S2.5 (refine 5) | 10×10/40 零样本 | **97.0%** | 0.999 |
-| S3 (无 refine) | 16×16/40 零样本 | 99.0% | 1.000 |
+```bash
+# 单阶段训练
+python scripts/train_stage.py --stage S1
 
-新管线（自适应训练 + 混合数据）结果待补充。
+# 主线全阶段
+python scripts/train_stage.py --all
 
-## train_stage.py 参数
+# 显式运行历史阶段
+python scripts/train_stage.py --legacy_stage S1.5
 
+# 只评估已有 checkpoint
+python scripts/train_stage.py --stage S3 --eval_only --eval 10 10 40
+
+# 构建固定 RL pool
+python scripts/generate_rl_pool.py --width 10 --height 10 --mines 40 --target_size 12000
+
+# RL 微调
+python scripts/train_rl.py --pretrained checkpoints/S3/best_model.pt --width 10 --height 10 --mines 40
 ```
-python scripts/train_stage.py --stage S2 [OPTIONS]
 
-  --stage S1|S2|S3|...  训练阶段
-  --epochs N             覆盖默认 epoch 数
-  --resume               续训（自动追加 epoch）
-  --refine N             迭代 refinement 最大步数（默认 8）
-  --eval_only            仅评估已有 checkpoint
-  --force_data           强制重新生成数据
-  --device auto          设备选择
+## 项目结构
+
+```text
+src/minesweeper/       扫雷引擎、约束求解器、概率求解器
+src/data/              监督数据和自验证棋盘生成
+src/model/             CNN + Transformer + iterative refinement
+src/training/          监督训练、RL 环境、RL 训练、RL board pool
+scripts/generate_data.py      监督数据生成
+scripts/train_stage.py        S1/S2/S3 预训练入口
+scripts/evaluate.py           胜率评估入口
+scripts/generate_rl_pool.py   RL board pool 构建入口
+scripts/train_rl.py           RL 微调入口
 ```
 
 ## 文档体系
 
 | 文档 | 用途 |
 |------|------|
-| [AGENTS.md](AGENTS.md) | 核心索引（人类+AI），开发约束 |
+| [AGENTS.md](AGENTS.md) | 核心索引和开发约束 |
 | [CHANGELOG.md](CHANGELOG.md) | 变更日志 |
-| [docs/training-log.md](docs/training-log.md) | **每次训练的完整记录** |
-| [docs/architecture.md](docs/architecture.md) | 架构决策（为什么这么设计） |
-| [docs/conventions.md](docs/conventions.md) | 项目约定（环境/命令/避坑） |
+| [docs/training-log.md](docs/training-log.md) | 训练实验记录 |
+| [docs/architecture.md](docs/architecture.md) | 架构决策 |
+| [docs/conventions.md](docs/conventions.md) | 环境和命令约定 |
 | [docs/metrics.md](docs/metrics.md) | 指标速查 |
-| [agents/pitfalls.md](agents/pitfalls.md) | Agent 常见错误 |
+| [agents/pitfalls.md](agents/pitfalls.md) | Agent 避坑指南 |
 
 ## 说明
 
-- 使用 `uv` 管理依赖
-- `data/` 和 `checkpoints/` 已加入 `.gitignore`
-- 评估自动缓存 board pool（`eval_boards_*.npz`）
-- 推荐混合数据单次训练替代分阶段：`--mixed --n_samples 12000`
+- 使用 `uv` 管理依赖。
+- `data/`、`checkpoints/`、board pool 文件不入库。
+- mixed 数据路线仍保留为实验能力，但不再是默认推荐路线。

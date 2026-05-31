@@ -6,26 +6,26 @@
 
 ### 新增
 - **收敛检测**: early-stop `max|ΔP| < 1e-3` 替代置信度方案，S3 模型 90% 样本 5 步收敛
-- **RL 奖励设计**: mine_continue 训练/评估分离, hit_mine=-5, pre_revealed 补分 (满分 160)
-- **固定尺寸 RL**: `--no_mixed` flag, focused on 10×10/40
-- **RL Board Pool**: 固定尺寸生成 + eval 池复用
+- **RL 奖励设计**: `safe=+1`, `floodfill_bonus=+0.05/cell`, `hit_mine=-20`, 无 win bonus/预揭开补分
+- **固定尺寸 RL 默认路线**: `train_rl.py` 默认固定棋盘，`--mixed` 才启用混合池
+- **RL Board Pool 解耦**: `generate_rl_pool.py` 负责构建，训练侧只读 pool
 
 ### 变更
-- **三阶段路线**: S_mixed → S3 (8×8/25), 密度对齐 10×10/40 (39%→40%)
+- **三阶段路线**: 混合泛化阶段 → S3 (8×8/25), 密度对齐 10×10/40 (39%→40%)
 - **max_refine_steps**: 12→16 (给 10×10/40 留余量)
-- **hit_mine**: -10→-5 (降低惩罚，ret 拉正)
 - **RL 环境**: 训练 `mine_continue=True`, 评估 `False` (分别优化信号和测量)
+- **阶段入口**: `train_stage.py --stage` 只暴露 S1/S2/S3，历史阶段改用 `--legacy_stage`
 
 ### Bug 修复
 - `generate_data` 并行 worker 参数冲突 (partial 导致 seed→width)
 - `load_pretrained` 误报 "migrated output head" 消息 (print 在 if 外)
-- RL `_pre_revealed` 补分 (开局已翻格不计入导致满分 ≠ 160)
+- 移除 RL 通关奖励和预揭开补分，避免最后一步获得与动作无关的巨额奖励
 - eval `mine_continue` 错配 (修复后立刻回退，评估需测真实胜率)
 - `first_done=False` OOD 回退 (模型未学过全覆态)
 
 ### 结果
 - **S3 (8×8/25) 零样本 10×10/40**: 74% 胜率 (1000 局, 0 stuck)
-- **RL v3 (pre_revealed 补分)**: ret=152, baseline=145+, cold eval 88%
+- **纯 RL from scratch**: 20k 局可从负 return 学到正 return，但样本效率低，不作为主线
 - **提前退出**: S3 模型 90% early-stop (mean 5.0 steps, max 16)
 
 ---
@@ -45,8 +45,8 @@
 - 标签选用 MSE (ProbabilitySolver 精确概率)，非 BCE
 - 通道设计：11 通道 (covered + flagged + 1-8 numbers + mines_remaining_ratio)
 - 位置编码：InterpolatablePE 支持可变尺寸
-- Refinement 步数：训练固定 4，推理上限 12
+- Refinement 步数：训练固定 4，旧实现推理最大 12 步
 
 ### 已知问题
-- RL 微调从 S_mixed 起步曾退化至 73%（根因：checkpoint 迁移时 confidence 头被清零）
+- RL 微调从旧混合 checkpoint 起步曾退化至 73%（根因：checkpoint 迁移时 confidence 头被清零）
 - 10K 数据时 train loss 0.377 vs val loss 0.729（过拟合）

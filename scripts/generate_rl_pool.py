@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# pyright: reportMissingImports=false
 """Generate a pool of self-validated boards for RL training.
 
 Supports both fixed-size and mixed boards.
@@ -8,14 +9,13 @@ Usage:
     python scripts/generate_rl_pool.py --target_size 5000 --workers 16
 
     # Fixed: 10×10/40 mines only
-    python scripts/generate_rl_pool.py --target_size 5000 --width 10 --height 10 --mines 40 --output rl_10x10_40.npz
+    python scripts/generate_rl_pool.py --target_size 5000 --width 10 --height 10 --mines 40
 """
 
 import argparse
 import sys
 from pathlib import Path
 from multiprocessing import Pool, cpu_count
-from typing import Optional
 
 import numpy as np
 
@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from data.self_validated import generate_self_validated_board
 from minesweeper.constants import GameStatus
+from training.rl_board_pool import default_pool_path
 
 
 def generate_one_mixed(args_tuple):
@@ -54,7 +55,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Pre-generate RL boards pool with multiprocessing."
     )
-    parser.add_argument("--output", default="rl_boards.npz", help="Output .npz file")
+    parser.add_argument("--output", default="", help="Output .npz file")
     parser.add_argument("--target_size", type=int, default=5000, help="Number of boards")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--workers", type=int, default=None,
@@ -75,6 +76,9 @@ def main():
 
     workers = args.workers or cpu_count()
     fixed_mode = args.width is not None and args.height is not None and args.mines is not None
+    output = args.output or default_pool_path(
+        args.width, args.height, args.mines, mixed=not fixed_mode
+    )
 
     if fixed_mode:
         print(f"Generating {args.target_size} fixed boards "
@@ -100,7 +104,7 @@ def main():
             if len(results) % 100 == 0:
                 print(f"  {len(results)}/{args.target_size} boards generated...")
 
-    print(f"Saving to {args.output}...")
+    print(f"Saving to {output}...")
     save_dict = {}
     for i, (mask, vis, w, h) in enumerate(results):
         save_dict[f"mask_{i}"] = mask
@@ -108,7 +112,7 @@ def main():
         save_dict[f"w_{i}"] = np.array(w)
         save_dict[f"h_{i}"] = np.array(h)
 
-    np.savez_compressed(args.output, **save_dict)
+    np.savez_compressed(output, **save_dict)
     print(f"Done! RL pool saved with {len(results)} boards.")
 
 

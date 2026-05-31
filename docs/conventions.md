@@ -39,14 +39,22 @@ python scripts/generate_data.py --n_samples 10000 --workers 0 --force
 # 三阶段预训练（统一入口）
 python scripts/train_stage.py --stage S1          # 从头训练 (2 epochs)
 python scripts/train_stage.py --stage S2          # 继承 S1 → 密度提升 (2 epochs)
-python scripts/train_stage.py --stage S_mixed     # 继承 S2 → 混合泛化 (5 epochs)
+python scripts/train_stage.py --stage S3          # 继承 S2 → 高密度泛化 (5 epochs)
+python scripts/train_stage.py --all               # S1 → S2 → S3
 
 # 带强制数据重新生成
 python scripts/train_stage.py --stage S1 --force_data
 
 # 仅评估
-python scripts/train_stage.py --stage S_mixed --eval_only
-python scripts/train_stage.py --stage S_mixed --eval 10 10 40  # 零样本评估
+python scripts/train_stage.py --stage S3 --eval_only
+python scripts/train_stage.py --stage S3 --eval 10 10 40  # 零样本评估
+
+# 历史/实验阶段
+python scripts/train_stage.py --legacy_stage S1.5
+
+# RL board pool 构建 + 微调
+python scripts/generate_rl_pool.py --width 10 --height 10 --mines 40 --target_size 12000 --workers 16
+python scripts/train_rl.py --pretrained checkpoints/S3/best_model.pt --width 10 --height 10 --mines 40
 
 # 直接调 train.py（调试用）
 python scripts/train.py --data_dir data/S1 --epochs 5 --device cuda \
@@ -61,8 +69,9 @@ python scripts/evaluate.py checkpoints/S1/best_model.pt \
 
 ## 命名规范
 
-- **Checkpoint 目录**: `checkpoints/{stage}/` (如 `S1`, `S_mixed`, `rl`)
+- **Checkpoint 目录**: `checkpoints/{stage}/` (如 `S1`, `S3`, `rl`)
 - **数据目录**: `data/{stage}/` (如 `data/S1/`, `data/mixed/`)
+- **RL Pool**: `rl_boards_{W}x{H}_{M}.npz` (如 `rl_boards_10x10_40.npz`)
 - **并行生成数据**: `data/training/` (默认输出)
 - **gitignore**: `data/` 和 `checkpoints/` 均不入库
 
@@ -84,4 +93,4 @@ python scripts/evaluate.py checkpoints/S1/best_model.pt \
 
 ---
 
-*最后更新: 2026-05-30*
+*最后更新: 2026-05-31*

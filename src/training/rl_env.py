@@ -23,8 +23,8 @@ from data.self_validated import generate_self_validated_board
 @dataclass(frozen=True)
 class Rewards:
     reveal_safe: float = 1.0
-    hit_mine: float = -5.0
-    win: float = 100.0
+    floodfill_bonus: float = 0.05
+    hit_mine: float = -20.0
     step_penalty: float = 0.0
 
 
@@ -87,19 +87,17 @@ class RLEnv:
         if self.board_pool is not None:
             result = self.board_pool.sample(self.rng)
             if result is not None:
-                self.game, w, h = result
+                game, w, h = result
+                self.game = game
                 self.width = w
                 self.height = h
-                self.total_mines = int(self.game.get_mine_mask().sum())
-                # Track pre-revealed cells so we can credit them at win time.
-                # Without this, boards with more flood fill give lower max scores.
-                self._pre_revealed = (w * h - self.total_mines) - self.game._safe_covered
+                self.total_mines = int(game.get_mine_mask().sum())
                 return self.state
 
         # Mixed mode: random size + density each episode
         if self.mixed:
-            w = self.rng.integers(self.mixed_min_size, self.mixed_max_size + 1)
-            h = self.rng.integers(self.mixed_min_size, self.mixed_max_size + 1)
+            w = int(self.rng.integers(self.mixed_min_size, self.mixed_max_size + 1))
+            h = int(self.rng.integers(self.mixed_min_size, self.mixed_max_size + 1))
             density = self.rng.uniform(self.mixed_min_density, self.mixed_max_density)
             mines = max(1, int(w * h * density))
             self.width = w
@@ -146,13 +144,14 @@ class RLEnv:
         if is_mine:
             reward = self.rewards.hit_mine
         else:
-            reward = cells_revealed * self.rewards.reveal_safe + self.rewards.step_penalty
+            extra_revealed = max(0, cells_revealed - 1)
+            reward = (
+                self.rewards.reveal_safe
+                + extra_revealed * self.rewards.floodfill_bonus
+                + self.rewards.step_penalty
+            )
 
         if self.game.status == GameStatus.WON:
-            # Credit pre-revealed cells + win bonus.
-            # pre_revealed cells were already flipped before the model started,
-            # but they count toward the goal of clearing all 60 safe cells.
-            reward += self.rewards.win + self._pre_revealed * self.rewards.reveal_safe
             return self.state, reward, True
         elif self.game.status == GameStatus.LOST:
             self._hits += 1

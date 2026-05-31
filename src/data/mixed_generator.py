@@ -21,6 +21,7 @@ import numpy as np
 from minesweeper.game import MinesweeperGame
 from minesweeper.constants import CellState, MoveType, GameStatus
 from minesweeper.probability_solver import ProbabilitySolver
+from data.generator import save_trajectory_buffer
 
 
 def generate_mixed_data(
@@ -188,20 +189,4 @@ def _record_padded_trajectory(
 
 
 def _save_padded_buffer(buffer: list, output_dir: Path, file_idx: int) -> None:
-    all_channels, all_probs, all_masks = [], [], []
-
-    for traj in buffer:
-        for step in traj["trajectory"]:
-            all_channels.append(step["channels"])
-            all_probs.append(step["probs"])
-            all_masks.append(step["mask"])
-
-    filepath = output_dir / f"data_{file_idx:04d}.npz"
-    np.savez_compressed(
-        filepath,
-        channels=np.stack(all_channels),
-        probs=np.stack(all_probs),
-        masks=np.stack(all_masks),
-        n_games=len(buffer),
-        n_samples=len(all_channels),
-    )
+    save_trajectory_buffer(buffer, output_dir, file_idx, include_counts=True)

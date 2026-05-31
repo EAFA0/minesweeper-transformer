@@ -12,8 +12,8 @@
 ## 坑 #2: 单进程数据生成浪费 16 核
 
 - **症状**: 10K 样本生成耗时 ~180 秒
-- **原因**: `generate_data.py` 是单线程的，16 核机器利用率 6%
-- **正确做法**: 用 `generate_data_parallel.py --workers 16`，同样数据 ~18 秒（10× 加速）
+- **原因**: 忘记使用 `generate_data.py` 内置并行 worker
+- **正确做法**: 用 `python scripts/generate_data.py --workers 0` 自动使用可用核心；需要固定核心数时用 `--workers 16`
 - **记录日期**: 2026-05-30
 
 ## 坑 #3: SSH 远程操作时忘记 venv 路径
@@ -25,7 +25,7 @@
 
 ## 坑 #4: confidence 头被清零导致 RL 退化
 
-- **症状**: S_mixed 监督训练 94% → RL 微调后暴跌至 73%
+- **症状**: 旧混合 checkpoint 监督训练 94% → RL 微调后暴跌至 73%
 - **原因**: checkpoint 迁移时 `model.load_state_dict(checkpoint)` 与当前模型结构不匹配，confidence 头 (channel 1) 的权重被清零
 - **正确做法**: 严格匹配模型结构和 checkpoint 的 key 列表；训练前打印 `model.state_dict().keys()` 验证
 - **记录日期**: 2026-05-30
@@ -48,11 +48,12 @@
 
 - **症状**: ret 值忽高忽低（-220 ~ 152），baseline 不收敛，eval_wr 反复波动
 - **原因**: 多次修补奖励但未端到端验证：
-  - `hit_mine=-10` 太重 → ret 全负，baseline 无法上升
+  - 踩雷惩罚太轻 → 模型可能为 floodfill 奖励赌博
+  - 踩雷惩罚太重 → 梯度被负样本主导
   - `first_done=False` → 模型面对全覆棋盘 OOD，立刻崩溃
-  - `pre_revealed` 未计分 → 完美局 ret≠160，不同棋盘分数不一致
+  - 通关奖励/预揭开补分 → 最后一步获得与动作无关的巨额奖励
   - eval `mine_continue` 与训练不一致 → eval 指标不可比
-- **正确做法**: 改奖励前先模拟几局，确认完美游戏满分 = 理论值（160）
+- **正确做法**: 保持即时奖励设计：安全 +1、额外 floodfill 小权重、踩雷负分、无通关奖励、无预揭开补分
 - **记录日期**: 2026-05-31
 
 ## 坑 #7: eval 环境的 mine_continue 必须 False
@@ -66,9 +67,9 @@
 
 - **症状**: `first_done=False` → 模型见到全覆棋盘，P(mine) 输出不可靠，40% 首步踩雷
 - **原因**: S3 训练数据从 after-first-click 态开始，模型从未见过全覆状态
-- **正确做法**: `first_done=True`，用 `_pre_revealed` 补分保证满分一致
+- **正确做法**: RL pool 使用 `first_done=True`，让模型从 after-first-click 态接手；不要把预揭开格子补分归因给最后一步动作
 - **记录日期**: 2026-05-31
 
 ---
 
-*最后更新: 2026-05-30*
+*最后更新: 2026-05-31*

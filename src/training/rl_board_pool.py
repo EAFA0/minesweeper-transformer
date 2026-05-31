@@ -1,59 +1,49 @@
-"""Board pool for RL training — pre-generate boards to eliminate per-episode overhead.
+"""Read-only board pool for RL training.
 
-Supports both mixed-size and fixed-size pools.
+Build pools with ``scripts/generate_rl_pool.py`` before training.
 
 Fixed mode:
-  RLBoardPool("pool.npz", width=10, height=10, mines=40, target_size=200)
+  rl_boards_10x10_40.npz
 
 Mixed mode:
-  RLBoardPool("pool.npz", min_size=6, max_size=10, min_density=0.1, max_density=0.4)
+  rl_boards_mixed.npz
 """
 
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 
 from minesweeper.game import MinesweeperGame
-from minesweeper.constants import GameStatus
-from data.self_validated import generate_self_validated_board
+
+
+def default_pool_path(
+    width: Optional[int],
+    height: Optional[int],
+    mines: Optional[int],
+    mixed: bool = False,
+) -> str:
+    """Return the canonical RL board pool path for fixed or mixed mode."""
+    if mixed:
+        return "rl_boards_mixed.npz"
+    if width is None or height is None or mines is None:
+        raise ValueError("width, height, and mines are required for fixed RL pool paths.")
+    return f"rl_boards_{width}x{height}_{mines}.npz"
 
 
 class RLBoardPool:
-    """Pre-generated board cache for RL training.
+    """Pre-generated board cache for RL training, read-only during training.
 
     Usage:
-        pool = RLBoardPool("rl_boards.npz", width=10, height=10, mines=40, target_size=200)
+        pool = RLBoardPool("rl_boards_10x10_40.npz")
         game, w, h = pool.sample(rng)  # returns (game, width, height)
     """
 
-    def __init__(
-        self,
-        path: Path,
-        min_size: int = 6,
-        max_size: int = 10,
-        min_density: float = 0.10,
-        max_density: float = 0.40,
-        target_size: int = 5000,
-        width: Optional[int] = None,
-        height: Optional[int] = None,
-        mines: Optional[int] = None,
-        rng: Optional[np.random.Generator] = None,
-    ):
+    def __init__(self, path: Path):
         self.path = Path(path)
-        self.min_size = min_size
-        self.max_size = max_size
-        self.min_density = min_density
-        self.max_density = max_density
-        self.target_size = target_size
-        self.fixed_size = width is not None and height is not None and mines is not None
-        self.width = width
-        self.height = height
-        self.mines = mines
-        self.rng = rng or np.random.default_rng()
 
         # (mine_mask, visible, width, height) per board
-        self._boards: List[Tuple[np.ndarray, np.ndarray, int, int]] = []
+        self._boards: list[Tuple[np.ndarray, np.ndarray, int, int]] = []
         self._load()
 
     def _load(self) -> None:
@@ -69,76 +59,14 @@ class RLBoardPool:
                 int(data[f"h_{i}"]),
             ))
 
-    def _save(self) -> None:
-        save_dict = {}
-        for i, (mask, vis, w, h) in enumerate(self._boards):
-            save_dict[f"mask_{i}"] = mask
-            save_dict[f"vis_{i}"] = vis
-            save_dict[f"w_{i}"] = np.array(w)
-            save_dict[f"h_{i}"] = np.array(h)
-        np.savez_compressed(self.path, **save_dict)
-
-    def _generate_batch(self, n: int, save: bool = True) -> None:
-        """Generate n new boards and add to pool."""
-        for _ in range(n):
-            if self.fixed_size:
-                w, h, mines = self.width, self.height, self.mines
-            else:
-                w = self.rng.integers(self.min_size, self.max_size + 1)
-                h = self.rng.integers(self.min_size, self.max_size + 1)
-                density = self.rng.uniform(self.min_density, self.max_density)
-                mines = max(1, int(w * h * density))
-
-            game = generate_self_validated_board(
-                width=w, height=h, total_mines=mines,
-                rng=self.rng,
-            )
-            if game is None or game.status != GameStatus.PLAYING:
-                continue
-
-            self._boards.append((
-                game.get_mine_mask(),
-                game.visible.copy(),
-                w, h,
-            ))
-
-            if len(self._boards) >= self.target_size:
-                break
-
-        if save:
-            self._save()
-
     def sample(self, rng: np.random.Generator) -> Optional[Tuple[MinesweeperGame, int, int]]:
-        """Sample a random board from the pool. If pool is not full, generate on the fly."""
-        if len(self._boards) < self.target_size:
-            self._generate_batch(1, save=False)
-            
-            # Save periodically to avoid rewriting large files too often
-            self._unsaved = getattr(self, '_unsaved', 0) + 1
-            if self._unsaved >= min(50, self.target_size):
-                self._save()
-                self._unsaved = 0
-
+        """Sample a random board from the loaded pool."""
         if not self._boards:
             return None
 
         idx = rng.integers(0, len(self._boards))
         mask, vis, w, h = self._boards[idx]
         return MinesweeperGame.from_mine_mask(w, h, mask, first_done=True, visible=vis), w, h
-
-    def fill(self, n: Optional[int] = None) -> None:
-        """Ensure pool has target_size boards (or up to n additional boards)."""
-        needed = self.target_size - len(self._boards)
-        if n is not None:
-            needed = min(needed, n)
-        if needed > 0:
-            self._generate_batch(needed, save=True)
-
-    def save_pending(self) -> None:
-        """Save any pending generated boards to disk."""
-        if getattr(self, '_unsaved', 0) > 0:
-            self._save()
-            self._unsaved = 0
 
     @property
     def size(self) -> int:

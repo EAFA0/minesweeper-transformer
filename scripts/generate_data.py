@@ -1,3 +1,4 @@
+# pyright: reportMissingImports=false
 # Minesweeper Transformer — Training Data Generation (Probability Distillation)
 # Usage: python scripts/generate_data.py [--n_samples 1000] [--output data/training]
 #
@@ -18,14 +19,17 @@ import sys
 import time
 from functools import partial
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from data.generator import generate_training_data, record_game_trajectory
+from data.generator import (
+    generate_training_data,
+    record_game_trajectory,
+    save_trajectory_buffer,
+)
 from data.mixed_generator import generate_mixed_data
 
 
@@ -59,22 +63,6 @@ def data_exists(output_dir: Path, expected_n_samples: int) -> bool:
         return False
 
     return True
-
-
-def _save_buffer(buffer: list, output_dir: Path, file_idx: int) -> None:
-    all_channels, all_probs, all_masks = [], [], []
-    for traj in buffer:
-        for step in traj["trajectory"]:
-            all_channels.append(step["channels"])
-            all_probs.append(step["probs"])
-            all_masks.append(step["mask"])
-    filepath = output_dir / f"data_{file_idx:04d}.npz"
-    np.savez_compressed(
-        filepath,
-        channels=np.stack(all_channels),
-        probs=np.stack(all_probs),
-        masks=np.stack(all_masks),
-    )
 
 
 def _parallel_worker(seed, width, height, total_mines):
@@ -128,7 +116,9 @@ def generate_training_data_parallel(
                 if pbar:
                     pbar.update(1)
                 if len(buffer) >= samples_per_file:
-                    _save_buffer(buffer, output_dir, file_idx)
+                    save_trajectory_buffer(
+                        buffer, output_dir, file_idx, include_counts=False
+                    )
                     buffer = []
                     file_idx += 1
                 if total_generated >= n_samples:
@@ -136,7 +126,7 @@ def generate_training_data_parallel(
                     break
 
     if buffer:
-        _save_buffer(buffer, output_dir, file_idx)
+        save_trajectory_buffer(buffer, output_dir, file_idx, include_counts=False)
         file_idx += 1
 
     elapsed = time.time() - start

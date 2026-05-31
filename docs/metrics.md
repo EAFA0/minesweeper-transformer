@@ -35,9 +35,13 @@ Won / Total。最直观的最终指标。受样本量影响（10 局可能波动
 ## RL 训练时（train_rl.py）
 
 **ret（Return，总回报）**
-一局总分：+1 安全翻开，-10 踩雷，+20 通关。
-mine_continue 模式下 ret 通常为负（探索期踩雷多）。
-目标是 ret 从 -100 → -20 → +10+。
+一局总分来自即时奖励累加：
+- 安全动作：`+1.0`
+- 额外 floodfill：`+0.05 * (cells_revealed - 1)`
+- 踩雷：`-20.0`
+- 通关：无额外奖励
+
+mine_continue 模式下探索期 ret 通常为负；若从监督 checkpoint 微调，理想情况是 eval_wr 不明显回退，ret 缓慢上升。
 
 **loss（REINFORCE loss）**
 策略梯度损失。-log(π(action)) × advantage。
@@ -50,7 +54,7 @@ mine_continue 模式下 ret 通常为负（探索期踩雷多）。
 每 100 局评估一次，确定性推理。追踪 RL 是否真正提升了能力。
 
 **baseline（EMA 基线）**
-指数移动平均的 return。用于计算 advantage。应跟随 ret 趋势移动。
+指数移动平均的 return。当前实现中它是日志诊断指标，不参与 advantage 计算。应跟随 ret 趋势移动。
 
 ## 关键概念
 
@@ -61,7 +65,7 @@ mine_continue 模式下 ret 通常为负（探索期踩雷多）。
 **迭代 Refinement**
 模型输出回灌给自己，检测矛盾、修正推理。
 - 训练：随机步数 1-8 + ponder penalty
-- 推理：自适应早停（conf > 0.95），上限 12 步
+- 推理：收敛早停 `max|P_t - P_{t-1}| < 1e-3`，上限 16 步
 
 **置信度（confidence）**
 模型对当前输出的自信度。target_conf = 1 - 2×|target - 0.5|。

@@ -19,6 +19,38 @@ from minesweeper.constants import CellState, MoveType, GameStatus
 from minesweeper.probability_solver import ProbabilitySolver
 
 
+def save_trajectory_buffer(
+    buffer: List[dict],
+    output_dir: Path,
+    file_idx: int,
+    *,
+    include_counts: bool = True,
+) -> Path:
+    """Save trajectory steps to a compressed training data file."""
+    all_channels = []
+    all_probs = []
+    all_masks = []
+
+    for traj in buffer:
+        for step in traj["trajectory"]:
+            all_channels.append(step["channels"])
+            all_probs.append(step["probs"])
+            all_masks.append(step["mask"])
+
+    save_dict = {
+        "channels": np.stack(all_channels),
+        "probs": np.stack(all_probs),
+        "masks": np.stack(all_masks),
+    }
+    if include_counts:
+        save_dict["n_games"] = np.array(len(buffer))
+        save_dict["n_samples"] = np.array(len(all_channels))
+
+    filepath = output_dir / f"data_{file_idx:04d}.npz"
+    np.savez_compressed(filepath, **save_dict)
+    return filepath
+
+
 def record_game_trajectory(
     width: int = 8,
     height: int = 8,
@@ -203,25 +235,7 @@ def generate_training_data(
 
 def _save_buffer(buffer: List[dict], output_dir: Path, file_idx: int) -> None:
     """Save a batch of trajectories to a compressed .npz file."""
-    all_channels = []
-    all_probs = []
-    all_masks = []
-
-    for traj in buffer:
-        for step in traj["trajectory"]:
-            all_channels.append(step["channels"])
-            all_probs.append(step["probs"])
-            all_masks.append(step["mask"])
-
-    filepath = output_dir / f"data_{file_idx:04d}.npz"
-    np.savez_compressed(
-        filepath,
-        channels=np.stack(all_channels),
-        probs=np.stack(all_probs),
-        masks=np.stack(all_masks),
-        n_games=len(buffer),
-        n_samples=len(all_channels),
-    )
+    save_trajectory_buffer(buffer, output_dir, file_idx, include_counts=True)
 
     # Also save mine masks for reference
     mine_masks = np.stack([t["mine_mask"] for t in buffer])

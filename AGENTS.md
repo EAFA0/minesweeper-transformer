@@ -27,8 +27,8 @@
 
 ## 🚦 项目现状
 
-- **当前路线**: 三阶段密度课程 — S1(规则) → S2(密度) → S_mixed(泛化) → RL 微调
-- **最新结果**: S1 (8×8/10雷) Val Acc 97.5% (2026-05-30，4070 SUPER)
+- **当前路线**: 三阶段监督预训练 — S1(规则) → S2(密度) → S3(高密度泛化) → RL 微调
+- **最新结果**: S3 (8×8/25雷) 零样本 10×10/40 曾达 74%；后续目标为 S3 预训练 + 保守 RL 推近 100%
 - **训练设备**: RTX 4070 SUPER (CUDA)，ssh ubuntu@FAEX1.local
 - **开发环境**: 本机 Linux + uv 包管理
 
@@ -53,9 +53,10 @@
 | 数据集 | `src/training/dataset.py` | PyTorch Dataset + D4 增强 |
 | 监督训练 | `src/training/train.py` | 训练循环 + 自适应 refine |
 | RL 环境 | `src/training/rl_env.py` | REINFORCE 环境 |
+| RL Pool | `scripts/generate_rl_pool.py` | 预生成 self-validated RL 棋盘池 |
 | RL 训练 | `src/training/rl_train.py` | 策略梯度训练 |
 | 评估 | `scripts/evaluate.py` | 模型胜率评估 + BoardPool 缓存 |
-| **分阶段训练** | `scripts/train_stage.py` | **统一入口: S1→S2→S_mixed** |
+| **分阶段训练** | `scripts/train_stage.py` | **统一入口: S1→S2→S3** |
 
 ## 🎯 Agent 开发约束
 
