@@ -2,6 +2,8 @@
 
 当前主线: 三阶段监督预训练 — S1(规则) → S2(密度) → S3(高密度泛化) → RL 微调
 
+全局策略: refine 默认统一来自 `src/config/training_policy.py`。监督训练随机采样 `k ∈ [1, 16]`，评估/推理上限 16 且收敛早停，RL 固定 16 步保持 rollout 与梯度重算一致。
+
 ## 日志格式
 
 | 日期 | 阶段 | 设备 | 超参 | Val Loss | Val Acc | 胜率 | Checkpoint | 备注 |
@@ -19,7 +21,7 @@
 | 棋盘 | 8×8, 10 雷 (15.6%) |
 | 设备 | RTX 4070 SUPER |
 | 数据 | 10000 局 (并行 16 进程) |
-| 超参 | lr=1e-3, wd=3e-4, batch=64, epochs=2, refine=4 |
+| 超参 | lr=1e-3, wd=3e-4, batch=64, epochs=2, refine=global 1-16 |
 | Val Acc | — (待跑) |
 | 胜率 | — (待评估) |
 | Checkpoint | `checkpoints/S1/` |
@@ -33,7 +35,7 @@
 | 棋盘 | 8×8, 20 雷 (31.2%) |
 | 设备 | RTX 4070 SUPER |
 | 数据 | 10000 局 |
-| 超参 | lr=3e-4, wd=3e-4, batch=64, epochs=2, refine=4 |
+| 超参 | lr=3e-4, wd=3e-4, batch=64, epochs=2, refine=global 1-16 |
 | 继承 | `checkpoints/S1/best_model.pt` |
 | Checkpoint | `checkpoints/S2/` |
 
@@ -45,7 +47,7 @@
 | 棋盘 | 8×8, 25 雷 (39.1%) |
 | 设备 | RTX 4070 SUPER |
 | 数据 | 10000 局 |
-| 超参 | lr=3e-4, wd=3e-4, batch=64, epochs=5, refine=4 |
+| 超参 | lr=3e-4, wd=3e-4, batch=64, epochs=5, refine=global 1-16 |
 | 继承 | `checkpoints/S2/best_model.pt` |
 | 评估目标 | 10×10/40雷 零样本 |
 | 已知结果 | 74% 胜率 (1000 局, 0 stuck) |
@@ -60,6 +62,7 @@
 | 预训练 | `checkpoints/S3/best_model.pt` |
 | 棋盘 | 10×10, 40 雷 |
 | Reward | safe=+1, extra floodfill=+0.05/cell, mine=-20, no win bonus |
+| Refine | global 16 steps |
 | 备注 | 纯 RL from scratch 20k 局可学到正 return，但样本效率低；主线仍为 S3 预训练 + 保守 RL |
 
 ---

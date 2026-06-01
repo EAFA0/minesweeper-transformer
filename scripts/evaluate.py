@@ -1,3 +1,4 @@
+# pyright: reportMissingImports=false
 """Model evaluation — play full minesweeper games and measure win rate + action accuracy.
 
 Always uses no-guess boards (ms-toollib or board pool).
@@ -15,12 +16,13 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from config import POLICY
 from minesweeper.game import MinesweeperGame
-from minesweeper.constants import CellState, MoveType, GameStatus
+from minesweeper.constants import MoveType, GameStatus
 from model.architecture import MinesweeperTransformer, ModelConfig
 
 
-def load_model(checkpoint_path: str, device: str) -> MinesweeperTransformer:
+def load_model(checkpoint_path: str, device: str | torch.device) -> MinesweeperTransformer:
     """Load a trained model from checkpoint."""
     model = MinesweeperTransformer(ModelConfig()).to(device)
     model.load_pretrained(checkpoint_path, device)
@@ -111,17 +113,18 @@ class BoardPool:
 def pick_action(
     model: MinesweeperTransformer,
     game: MinesweeperGame,
-    device: str,
+    device: str | torch.device,
 ) -> Optional[Tuple[MoveType, int, int]]:
     """Choose the next move: reveal the covered cell with lowest P(mine).
 
-    Uses model.predict() which automatically iterates with refinement
-    when the model was trained for it (confidence-based early stopping).
+    Uses the project-wide refinement policy and convergence-based early stop.
     """
     channels = game.board_to_channels()
     with torch.no_grad():
         x = torch.from_numpy(channels).unsqueeze(0).to(device)
-        probs = model.predict(x).squeeze(0).squeeze(0).cpu().numpy()
+        probs = model.predict(
+            x, max_refine_steps=POLICY.refinement.eval_max_steps
+        ).squeeze(0).squeeze(0).cpu().numpy()
 
     covered = game.covered_cells
     if not covered.any():
@@ -135,7 +138,7 @@ def pick_action(
 
 def play_one_game(
     model: MinesweeperTransformer,
-    device: str,
+    device: str | torch.device,
     width: int = 8,
     height: int = 8,
     total_mines: int = 10,
@@ -203,10 +206,10 @@ def evaluate(
     board_pool: Optional[Path] = None,
 ) -> dict:
     """Run evaluation on no-guess boards. Returns statistics dict."""
-    device = torch.device(device)
-    model = load_model(checkpoint_path, device)
+    device_t = torch.device(device)
+    model = load_model(checkpoint_path, device_t)
     print(f"Model: {model.num_parameters:,} parameters")
-    print(f"Device: {device}")
+    print(f"Device: {device_t}")
     print(f"Games: {n_games} ({width}×{height}, {total_mines} mines)")
     print()
 
@@ -231,7 +234,7 @@ def evaluate(
     for i in range(n_games):
         prebuilt = pool.get(i, rng) if pool else None
         game_stats = play_one_game(
-            model, device, width, height, total_mines,
+            model, device_t, width, height, total_mines,
             rng=rng, prebuilt_game=prebuilt,
         )
 

@@ -70,6 +70,13 @@
 - **正确做法**: RL pool 使用 `first_done=True`，让模型从 after-first-click 态接手；不要把预揭开格子补分归因给最后一步动作
 - **记录日期**: 2026-05-31
 
+## 坑 #9: refine 默认值不能分散定义
+
+- **症状**: 监督训练、RL、评估胜率不一致，复现实验时需要到处查默认参数
+- **原因**: `scripts/train.py`、`scripts/train_rl.py`、`model.predict()` 各自维护 refine 默认值
+- **正确做法**: 统一从 `src/config/training_policy.py` 读取；CLI 不支持 `--refine`
+- **记录日期**: 2026-06-01
+
 ---
 
-*最后更新: 2026-05-31*
+*最后更新: 2026-06-01*

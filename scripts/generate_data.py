@@ -19,6 +19,7 @@ import sys
 import time
 from functools import partial
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 
@@ -33,38 +34,6 @@ from data.generator import (
 from data.mixed_generator import generate_mixed_data
 
 
-def data_exists(output_dir: Path, expected_n_samples: int) -> bool:
-    """Check if valid probability-distilled data already exists."""
-    stats_file = output_dir / "stats.json"
-    if not stats_file.exists():
-        return False
-
-    data_files = sorted(output_dir.glob("data_*.npz"))
-    if not data_files:
-        return False
-
-    # Verify format: check first file has 'probs' key (not old 'labels')
-    try:
-        d = np.load(data_files[0])
-        if "probs" not in d:
-            return False
-    except Exception:
-        return False
-
-    # Check sample count
-    try:
-        with open(stats_file) as f:
-            stats = json.load(f)
-        n_generated = stats.get("generated", 0)
-        if n_generated < expected_n_samples:
-            print(f"⚠ Existing data has {n_generated} games, need {expected_n_samples}. Regenerating...")
-            return False
-    except Exception:
-        return False
-
-    return True
-
-
 def _parallel_worker(seed, width, height, total_mines):
     """Wrapper for multiprocessing: seed → record_game_trajectory."""
     rng = np.random.default_rng(seed)
@@ -77,6 +46,7 @@ def generate_training_data_parallel(
     n_samples: int = 10000,
     width: int = 8, height: int = 8, total_mines: int = 10,
     seed: int = 42, samples_per_file: int = 100, workers: int = 16,
+    start_file_idx: int = 0, existing_stats: Optional[dict] = None,
 ) -> dict:
     """Multi-process training data generation for fixed-size boards."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -97,7 +67,7 @@ def generate_training_data_parallel(
         pbar = None
 
     buffer = []
-    file_idx = 0
+    file_idx = start_file_idx
     total_attempts = 0
     total_generated = 0
     total_steps = 0
@@ -132,6 +102,13 @@ def generate_training_data_parallel(
     elapsed = time.time() - start
     if pbar:
         pbar.close()
+
+    if existing_stats:
+        total_attempts += existing_stats.get("attempts", 0)
+        total_generated += existing_stats.get("generated", 0)
+        total_steps += existing_stats.get("total_steps", 0)
+        total_ambiguous += existing_stats.get("total_ambiguous_cells", 0)
+        elapsed += existing_stats.get("elapsed_seconds", 0.0)
 
     stats = {
         "params": {
@@ -190,13 +167,35 @@ def main():
 
     output_dir = Path(args.output)
 
-    if not args.force and data_exists(output_dir, args.n_samples):
-        print(f"📦 Data already exists: {output_dir}")
-        data_files = sorted(output_dir.glob("data_*.npz"))
-        total = sum(1 for _ in data_files)
-        print(f"   {total} files, target={args.n_samples} games")
-        print(f"   Use --force to regenerate")
-        return
+    start_file_idx = 0
+    existing_stats = None
+
+    if output_dir.exists() and not args.force:
+        stats_file = output_dir / "stats.json"
+        if stats_file.exists():
+            try:
+                with open(stats_file) as f:
+                    existing_stats = json.load(f)
+                data_files = list(output_dir.glob("data_*.npz"))
+                if data_files:
+                    indices = [int(p.stem.split('_')[1]) for p in data_files]
+                    start_file_idx = max(indices) + 1
+                
+                already_generated = existing_stats.get("generated", 0)
+                print(f"📦 Found existing data: {already_generated} games.")
+                
+                if already_generated >= args.n_samples:
+                    print(f"   Target of {args.n_samples} games already reached. Skipping generation.")
+                    print(f"   (Use --force to regenerate, or specify a larger --n_samples to append more)")
+                    return
+                
+                # Calculate how many MORE we need to reach the target
+                needed_samples = args.n_samples - already_generated
+                print(f"   Appending {needed_samples} new games starting from file index {start_file_idx}...")
+                args.n_samples = needed_samples
+                
+            except Exception as e:
+                print(f"⚠ Could not read existing stats: {e}. Starting fresh...")
 
     if args.mixed:
         stats = generate_mixed_data(
@@ -209,6 +208,8 @@ def main():
             seed=args.seed,
             samples_per_file=args.samples_per_file,
             show_progress=not args.no_progress,
+            start_file_idx=start_file_idx,
+            existing_stats=existing_stats,
         )
         print(f"\n📊 Mixed generation complete!")
         print(f"   Generated: {stats['generated']} games from {stats['attempts']} attempts")
@@ -230,6 +231,8 @@ def main():
             seed=args.seed,
             samples_per_file=args.samples_per_file,
             show_progress=not args.no_progress,
+            start_file_idx=start_file_idx,
+            existing_stats=existing_stats,
         )
     else:
         stats = generate_training_data_parallel(
@@ -241,6 +244,8 @@ def main():
             seed=args.seed,
             samples_per_file=args.samples_per_file,
             workers=workers,
+            start_file_idx=start_file_idx,
+            existing_stats=existing_stats,
         )
 
     print(f"\n📊 Generation complete!")

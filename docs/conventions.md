@@ -21,6 +21,12 @@
 
 ## 命令行约定
 
+### 全局策略
+
+- 跨训练、RL、评估共享的默认策略统一在 `src/config/training_policy.py`
+- refine 不再从 CLI 传参；监督训练随机 `k ∈ [1, 16]`，评估上限 16 且收敛早停，RL 固定 16 步保持 rollout/loss 一致
+- 如需调整 refine/reward 默认策略，先修改全局策略文件，再同步本文档和 `CHANGELOG.md`
+
 ### 数据生成
 ```bash
 # 推荐：固定尺寸并行生成 (auto workers)
@@ -89,8 +95,9 @@ python scripts/evaluate.py checkpoints/S1/best_model.pt \
 | 直接在训练机上改代码 | 在开发机改，git push，训练机 pull |
 | 忘记 `source .venv/bin/activate` | 训练机的 venv 必须手动激活 |
 | 多个 train.py 同时跑 | tmux 中检查 `nvidia-smi` 确认无残留 |
-| 跑旧版 S1 (非三阶段路线) | 用 `train_stage.py --stage S1` (2 epochs, refine=4) |
+| 跑旧版 S1 (非三阶段路线) | 用 `train_stage.py --stage S1`，refine 走全局策略 |
+| 在 CLI 里加 `--refine` | 不支持；修改 `src/config/training_policy.py` |
 
 ---
 
-*最后更新: 2026-05-31*
+*最后更新: 2026-06-01*

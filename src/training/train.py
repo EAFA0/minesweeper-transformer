@@ -14,12 +14,12 @@ import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
+from config import POLICY
 from model.architecture import MinesweeperTransformer, ModelConfig
 from training.dataset import MinesweeperDataset
 
@@ -41,7 +41,8 @@ class TrainingConfig:
     grad_clip_norm: float = 1.0
 
     # Iterative refinement
-    refinement_steps: int = 8    # max refinement iterations (1 = single-pass)
+    refinement_steps: int = POLICY.refinement.train_max_steps
+    # Training samples k in [1, refinement_steps] for adaptive refinement.
 
     # Logging
     log_interval: int = 50
@@ -138,10 +139,10 @@ def train_epoch(
     model: MinesweeperTransformer,
     dataloader: DataLoader,
     optimizer: torch.optim.Optimizer,
-    device: str,
+    device: str | torch.device,
     log_interval: int,
     grad_clip_norm: float = 1.0,
-    refinement_steps: int = 1,
+    refinement_steps: int = POLICY.refinement.train_max_steps,
     tau_stop: float = 0.95,
 ) -> float:
     """Train one epoch. Returns average loss.
@@ -184,7 +185,7 @@ def train_epoch(
             conf_loss = compute_masked_mse(conf, conf_target.squeeze(1), mask)
 
             # Ponder penalty: punish running deep without confidence
-            confidence_gap = torch.clamp(tau_stop - conf, min=0.0)
+            confidence_gap = torch.clamp(conf.new_tensor(tau_stop) - conf, min=0.0)
             ponder_penalty = (k - 1) * (confidence_gap * conf_target).mean()
 
             loss = prob_loss + 0.3 * conf_loss + 0.1 * ponder_penalty
@@ -216,8 +217,8 @@ def train_epoch(
 def validate(
     model: MinesweeperTransformer,
     dataloader: DataLoader,
-    device: str,
-    refinement_steps: int = 1,
+    device: str | torch.device,
+    refinement_steps: int = POLICY.refinement.train_max_steps,
 ) -> tuple[float, float, float]:
     """Validate. Returns (avg_loss, accuracy, action_accuracy).
 
@@ -271,6 +272,7 @@ def train(config: TrainingConfig) -> TrainingMetrics:
     """
     device = torch.device(config.device)
     print(f"Training on: {device}")
+    print(f"Refinement policy: train k=1-{config.refinement_steps}")
 
     # ── Data ──────────────────────────────────────────────────────────
     train_dataset = MinesweeperDataset(
@@ -393,9 +395,9 @@ def train(config: TrainingConfig) -> TrainingMetrics:
         metrics.val_action_accuracy.append(val_act_acc)
 
         # Scheduler step
-        if config.lr_scheduler == "plateau" and scheduler:
+        if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
             scheduler.step(val_loss)
-        elif config.lr_scheduler == "cosine" and scheduler:
+        elif scheduler is not None:
             scheduler.step()
 
         lr = optimizer.param_groups[0]["lr"]

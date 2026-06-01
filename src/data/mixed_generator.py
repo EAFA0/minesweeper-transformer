@@ -34,6 +34,8 @@ def generate_mixed_data(
     seed: int = 42,
     samples_per_file: int = 100,
     show_progress: bool = True,
+    start_file_idx: int = 0,
+    existing_stats: Optional[dict] = None,
 ) -> dict:
     """Generate mixed training data with variable boards and densities.
 
@@ -58,7 +60,7 @@ def generate_mixed_data(
     }
 
     buffer: list = []
-    file_idx = 0
+    file_idx = start_file_idx
     pbar = None
     if show_progress:
         try:
@@ -109,6 +111,14 @@ def generate_mixed_data(
 
     stats["end_time"] = time.time()
     stats["elapsed_seconds"] = stats["end_time"] - stats["start_time"]
+
+    if existing_stats:
+        stats["attempts"] += existing_stats.get("attempts", 0)
+        stats["generated"] += existing_stats.get("generated", 0)
+        stats["total_steps"] += existing_stats.get("total_steps", 0)
+        stats["total_ambiguous_cells"] += existing_stats.get("total_ambiguous_cells", 0)
+        stats["elapsed_seconds"] += existing_stats.get("elapsed_seconds", 0.0)
+
     stats["avg_steps_per_game"] = stats["total_steps"] / max(1, stats["generated"])
     stats["output_files"] = file_idx
 

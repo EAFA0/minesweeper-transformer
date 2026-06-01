@@ -32,6 +32,19 @@ python scripts/train_rl.py \
 
 默认 RL pool 路径会按棋盘自动推导为 `rl_boards_10x10_40.npz`。
 
+## 全局策略配置
+
+跨训练、RL、评估必须一致的项目参数统一维护在 `src/config/training_policy.py`：
+
+```text
+refinement.train_max_steps = 16  # 监督训练随机采样 k ∈ [1, 16]
+refinement.eval_max_steps  = 16  # 评估/推理上限，收敛后提前停止
+refinement.rl_steps        = 16  # RL rollout 与梯度重算固定一致
+refinement.convergence_eps = 1e-3
+```
+
+`scripts/train.py` 和 `scripts/train_rl.py` 不再提供 `--refine` 参数，避免训练、RL、评估之间出现局部默认值漂移。
+
 ## 训练 Pipeline
 
 ### Phase 1: 概率蒸馏
@@ -97,6 +110,7 @@ python scripts/train_rl.py --pretrained checkpoints/S3/best_model.pt --width 10 
 
 ```text
 src/minesweeper/       扫雷引擎、约束求解器、概率求解器
+src/config/            项目级训练/评估策略配置
 src/data/              监督数据和自验证棋盘生成
 src/model/             CNN + Transformer + iterative refinement
 src/training/          监督训练、RL 环境、RL 训练、RL board pool

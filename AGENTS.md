@@ -31,13 +31,14 @@
 - **最新结果**: S3 (8×8/25雷) 零样本 10×10/40 曾达 74%；后续目标为 S3 预训练 + 保守 RL 推近 100%
 - **训练设备**: RTX 4070 SUPER (CUDA)，ssh ubuntu@FAEX1.local
 - **开发环境**: 本机 Linux + uv 包管理
+- **全局策略**: `src/config/training_policy.py` 统一训练/RL/评估 refine 与 reward 默认值
 
 ## 📖 核心文档索引
 
 1. **[README.md](README.md)**: 项目概述、快速开始、架构图
 2. **[CHANGELOG.md](CHANGELOG.md)**: 变更日志（每次改动必读）
 3. **[docs/training-log.md](docs/training-log.md)**: **[必读]** 每次训练的完整记录 — 超参、结果、checkpoint
-4. **[docs/architecture.md](docs/architecture.md)**: **[必读]** 架构决策（为什么用 MSE 不用 BCE？为什么 refine=4？）
+4. **[docs/architecture.md](docs/architecture.md)**: **[必读]** 架构决策（为什么用 MSE 不用 BCE？refine 全局策略是什么？）
 5. **[docs/conventions.md](docs/conventions.md)**: 项目约定（SSH、tmux、venv、命令行）
 6. **[docs/metrics.md](docs/metrics.md)**: 指标速查（loss/acc/胜率含义）
 7. **[agents/pitfalls.md](agents/pitfalls.md)**: Agent 避坑指南（常见错误与反模式）
@@ -48,6 +49,7 @@
 | 模块 | 路径 | 说明 |
 |------|------|------|
 | 模型架构 | `src/model/architecture.py` | CNN + Transformer + Refinement |
+| 全局策略 | `src/config/training_policy.py` | 统一 refine/reward 默认策略 |
 | 数据生成 | `src/data/generator.py` | 概率蒸馏数据 (--workers 0 并行) |
 | 混合数据 | `src/data/mixed_generator.py` | 可变尺寸+密度 padded 数据 |
 | 数据集 | `src/training/dataset.py` | PyTorch Dataset + D4 增强 |

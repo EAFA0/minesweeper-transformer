@@ -32,8 +32,6 @@ def main() -> None:
                         help="Total games for RL training")
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--save_dir", default="checkpoints/rl")
-    parser.add_argument("--refine", type=int, default=4, dest="refine_steps",
-                        help="Iterative refinement steps (default: 4)")
     parser.add_argument("--temperature", type=float, default=1.0,
                         help="Action selection temperature (default: 1.0)")
     parser.add_argument("--board_pool", default="",
@@ -72,7 +70,6 @@ def main() -> None:
         total_games=args.total_games,
         lr=args.lr,
         save_dir=args.save_dir,
-        refine_steps=args.refine_steps,
         temperature=args.temperature,
         mixed_env=args.mixed,
         device=dev,

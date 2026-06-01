@@ -32,6 +32,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from config import POLICY
+
 
 @dataclass
 class ModelConfig:
@@ -56,7 +58,7 @@ class ModelConfig:
     pe_grid_size: int = 16      # PE is learned at 16×16, bilinear-interpolated to any H×W
 
     # Iterative refinement
-    refinement_steps: int = 8   # max refinement iterations
+    refinement_steps: int = POLICY.refinement.train_max_steps
 
     # Output
     num_classes: int = 2        # [0]=P(mine) logit, [1]=confidence logit
@@ -226,9 +228,9 @@ class MinesweeperTransformer(nn.Module):
         prev = torch.full((B, 1, H, W), 0.5, device=x.device)
         return self._single_pass(x, prev)
 
-    def refine(self, board: torch.Tensor, num_steps: int = 5,
+    def refine(self, board: torch.Tensor, num_steps: int = POLICY.refinement.eval_max_steps,
                confidence_threshold: float = 0.95,
-               convergence_eps: float = 1e-3) -> List[torch.Tensor]:
+               convergence_eps: float = POLICY.refinement.convergence_eps) -> List[torch.Tensor]:
         """Iterative refinement: run model N times with self-feedback.
 
         Step 0: prev = uniform(0.5)
@@ -280,11 +282,12 @@ class MinesweeperTransformer(nn.Module):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
     @torch.no_grad()
-    def predict(self, x: torch.Tensor, max_refine_steps: int = 16) -> torch.Tensor:
+    def predict(self, x: torch.Tensor, max_refine_steps: int = POLICY.refinement.eval_max_steps) -> torch.Tensor:
         """Return P(mine) probabilities with adaptive refinement.
 
-        Inference uses more steps than training (default 12 vs train's random 1-8).
-        Model stops early when confident, so 12 is just an upper bound.
+        Uses the project-wide evaluation refinement cap from config.POLICY.
+        Inference stops early when P(mine) predictions converge, so the cap is
+        an upper bound rather than a fixed compute cost.
 
         For models trained without refinement (confidence head zero):
         skips iteration — single pass only.
@@ -296,8 +299,8 @@ class MinesweeperTransformer(nn.Module):
         return results[-1][:, 0:1]
 
     @torch.no_grad()
-    def diagnose_refinement(self, x: torch.Tensor, max_refine_steps: int = 8,
-                            convergence_eps: float = 1e-3) -> dict:
+    def diagnose_refinement(self, x: torch.Tensor, max_refine_steps: int = POLICY.refinement.eval_max_steps,
+                            convergence_eps: float = POLICY.refinement.convergence_eps) -> dict:
         """Run refinement and report per-sample step statistics.
 
         Uses convergence-based early stop (same as refine()):

@@ -21,6 +21,7 @@ from typing import Any, List, Tuple
 import numpy as np
 import torch
 
+from config import POLICY
 from model.architecture import MinesweeperTransformer, ModelConfig
 from training.rl_env import RLEnv, Rewards
 from training.rl_board_pool import RLBoardPool
@@ -45,10 +46,10 @@ class RLConfig:
     board_pool_path: str = ""  # pre-generate boards for faster RL (recommended)
 
     # Reward shaping
-    reward_reveal_safe: float = 1.0
-    reward_floodfill_bonus: float = 0.05
-    reward_hit_mine: float = -20.0
-    reward_step_penalty: float = 0.0
+    reward_reveal_safe: float = POLICY.rl_rewards.reveal_safe
+    reward_floodfill_bonus: float = POLICY.rl_rewards.floodfill_bonus
+    reward_hit_mine: float = POLICY.rl_rewards.hit_mine
+    reward_step_penalty: float = POLICY.rl_rewards.step_penalty
 
     # RL hyperparameters
     temperature: float = 1.0
@@ -65,7 +66,8 @@ class RLConfig:
     grad_clip_norm: float = 1.0
 
     # Iterative refinement (uses refine() during inference)
-    refine_steps: int = 4  # iterative refinement for action selection + gradient
+    refine_steps: int = POLICY.refinement.rl_steps
+    # Rollout and gradient recomputation must use the same refinement count.
 
     # Checkpoint
     pretrained_path: str = ""
@@ -111,7 +113,7 @@ def get_logits(
     model: MinesweeperTransformer,
     state: np.ndarray,
     device: str | torch.device,
-    refine_steps: int = 1,
+    refine_steps: int = POLICY.refinement.rl_steps,
 ) -> torch.Tensor:
     """Get per-cell mine logits for action selection.
 
@@ -142,7 +144,7 @@ def play_game(
     temperature: float,
     device: str | torch.device,
     deterministic: bool = False,
-    refine_steps: int = 1,
+    refine_steps: int = POLICY.refinement.rl_steps,
     max_steps: int = 200,
 ) -> Tuple[float, int, int, int]:
     """Play one game. Returns (total_return, n_steps, win_flag, mine_hits)."""
@@ -184,7 +186,7 @@ def collect_eval(
     model: MinesweeperTransformer,
     device: str | torch.device,
     n_games: int,
-    refine_steps: int = 1,
+    refine_steps: int = POLICY.refinement.rl_steps,
 ) -> Tuple[float, float, float]:
     """Evaluation: deterministic play. Returns (win_rate, avg_return, avg_steps)."""
     model.eval()  # defense-in-depth: ensure BatchNorm uses running stats
@@ -215,7 +217,7 @@ def reinforce_step(
     baseline: float,
     device: str | torch.device,
     n_games: int = 8,
-    refine_steps: int = 4,
+    refine_steps: int = POLICY.refinement.rl_steps,
 ) -> Tuple[float, float, float]:
     """One REINFORCE update. Returns (loss, avg_return, new_baseline).
 

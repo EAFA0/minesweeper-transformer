@@ -106,14 +106,32 @@ def main():
 
     print(f"Saving to {output}...")
     save_dict = {}
+    existing_count = 0
+
+    if Path(output).exists():
+        print(f"Found existing file at {output}, loading to append...")
+        try:
+            with np.load(output) as data:
+                for k in data.files:
+                    save_dict[k] = data[k]
+            indices = [int(k.split('_')[1]) for k in save_dict.keys() if k.startswith('mask_')]
+            if indices:
+                existing_count = max(indices) + 1
+            print(f"Loaded {existing_count} existing boards.")
+        except Exception as e:
+            print(f"Warning: Could not load existing file to append: {e}")
+            existing_count = 0
+
     for i, (mask, vis, w, h) in enumerate(results):
-        save_dict[f"mask_{i}"] = mask
-        save_dict[f"vis_{i}"] = vis
-        save_dict[f"w_{i}"] = np.array(w)
-        save_dict[f"h_{i}"] = np.array(h)
+        idx = existing_count + i
+        save_dict[f"mask_{idx}"] = mask
+        save_dict[f"vis_{idx}"] = vis
+        save_dict[f"w_{idx}"] = np.array(w)
+        save_dict[f"h_{idx}"] = np.array(h)
 
     np.savez_compressed(output, **save_dict)
-    print(f"Done! RL pool saved with {len(results)} boards.")
+    total_boards = existing_count + len(results)
+    print(f"Done! RL pool saved with {total_boards} boards ({len(results)} new, {existing_count} existing).")
 
 
 if __name__ == "__main__":
