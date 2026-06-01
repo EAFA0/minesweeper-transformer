@@ -91,4 +91,25 @@
 
 ---
 
-*最后更新: 2026-05-31*
+## 2026-06-01: Refinement 有效性交叉验证
+
+> **实验目的**: 验证 refinement 训练是否对监督学习有效，分离训练与推理的贡献。
+> **环境**: 开发机 CPU，S1 (8×8/10雷)，1K 样本，2 epoch，batch_size=64，lr=1e-3，weight_decay=3e-4。
+
+| Exp | 训练配置 | 评估配置 | 胜率 | Act Acc | 备注 |
+|-----|---------|---------|------|---------|------|
+| A | refine=1 (单步) | max_steps=1 | 55.5% | 97.2% | 纯单步 baseline |
+| C | refine=1 (单步) | max_steps=16 | 29.5% | 94.8% | 单步模型 + refinement 推理 = OOD 崩溃 |
+| D | refine=8 | max_steps=1 | 48.0% | 96.2% | refinement 训练 + 单步推理 |
+| B | refine=8 | max_steps=16 | **81.0%** | **98.9%** | 匹配组合，最优 |
+
+**结论**:
+- Refinement 训练 + refinement 推理是黄金组合，必须匹配使用
+- 混用导致 OOD（单步模型只见过 prev=0.5，refinement 推理时 prev 为模型输出）
+- 纯单步 55.5% → refinement 组合 81.0%，+25.5pp，refinement 明确有效
+- S2.5 旧模型 99.6% 的"refine 5"实为 no-op（prev_probs 权重被 zero-pad），纯单步质量达到的
+- S3 当前 74% 瓶颈不在 refinement 机制本身，需排查 refinement 实现细节（信息传递正确性）
+
+---
+
+*最后更新: 2026-06-01*

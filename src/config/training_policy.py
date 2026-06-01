@@ -14,7 +14,7 @@ class RefinementPolicy:
     train_max_steps: int = 16
     eval_max_steps: int = 16
     rl_steps: int = 16
-    convergence_eps: float = 1e-3
+    convergence_eps: float = 0.05  # stop when max|ΔP| < 5%
 
 
 @dataclass(frozen=True)

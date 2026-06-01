@@ -61,7 +61,7 @@ class ModelConfig:
     refinement_steps: int = POLICY.refinement.train_max_steps
 
     # Output
-    num_classes: int = 2        # [0]=P(mine) logit, [1]=confidence logit
+    num_classes: int = 1        # P(mine) logit
 
     def __post_init__(self):
         if self.cnn_channels != self.d_model:
@@ -191,7 +191,7 @@ class MinesweeperTransformer(nn.Module):
             prev_probs: (B, 1, H, W) previous probability estimate
 
         Returns:
-            (B, 2, H, W) raw outputs — [0]=P(mine) logit, [1]=confidence logit
+            (B, 1, H, W) raw logits — P(mine)
         """
         B, C, H, W = board.shape
         x = torch.cat([board, prev_probs], dim=1)  # (B, 11, H, W)
@@ -222,35 +222,29 @@ class MinesweeperTransformer(nn.Module):
             x: (B, 10, H, W) board channels
 
         Returns:
-            (B, 2, H, W) raw outputs — [0]=P(mine) logit, [1]=confidence logit
+            (B, 1, H, W) raw logits — P(mine)
         """
         B, _, H, W = x.shape
         prev = torch.full((B, 1, H, W), 0.5, device=x.device)
         return self._single_pass(x, prev)
 
     def refine(self, board: torch.Tensor, num_steps: int = POLICY.refinement.eval_max_steps,
-               confidence_threshold: float = 0.95,
                convergence_eps: float = POLICY.refinement.convergence_eps) -> List[torch.Tensor]:
         """Iterative refinement: run model N times with self-feedback.
 
         Step 0: prev = uniform(0.5)
-        Step k: probs_k, conf_k = model(board, probs_{k-1})
+        Step k: probs_k = model(board, probs_{k-1})
 
-        During inference, stops early when P(mine) predictions have converged
-        (max absolute change between steps < convergence_eps).  This is more
-        reliable than confidence-based stopping because the confidence head
-        has no explicit supervision.
-
-        During training, always runs num_steps for consistent loss.
+        Stops early when P(mine) predictions have converged
+        (max absolute change between steps < convergence_eps).
 
         Args:
-            board:                (B, 10, H, W) board channels
-            num_steps:            max refinement iterations
-            confidence_threshold: (deprecated, kept for API compat)
-            convergence_eps:      stop when max|P_t - P_{t-1}| < this
+            board:           (B, 10, H, W) board channels
+            num_steps:       max refinement iterations
+            convergence_eps: stop when max|P_t - P_{t-1}| < this
 
         Returns:
-            List of (B, 2, H, W) tensors — [probs_sigmoid, conf_sigmoid] per step
+            List of (B, 1, H, W) tensors — sigmoid(P(mine)) per step.
             Last element is the final output.
         """
         B, _, H, W = board.shape
@@ -259,10 +253,9 @@ class MinesweeperTransformer(nn.Module):
         results = []
 
         for step in range(num_steps):
-            raw = self._single_pass(board, probs)  # (B, 2, H, W)
-            probs = torch.sigmoid(raw[:, 0:1])      # P(mine)
-            conf = torch.sigmoid(raw[:, 1:2])       # confidence
-            results.append(torch.cat([probs, conf], dim=1))
+            raw = self._single_pass(board, probs)  # (B, 1, H, W)
+            probs = torch.sigmoid(raw)
+            results.append(probs)
 
             # Early stop (inference only): has P(mine) converged?
             if not self.training and step > 0:
@@ -270,7 +263,6 @@ class MinesweeperTransformer(nn.Module):
                 if max_change < convergence_eps:
                     break
 
-            # Detach and save for convergence check
             prev_probs = probs.detach()
             probs = prev_probs.clone()
 
@@ -286,17 +278,10 @@ class MinesweeperTransformer(nn.Module):
         """Return P(mine) probabilities with adaptive refinement.
 
         Uses the project-wide evaluation refinement cap from config.POLICY.
-        Inference stops early when P(mine) predictions converge, so the cap is
-        an upper bound rather than a fixed compute cost.
-
-        For models trained without refinement (confidence head zero):
-        skips iteration — single pass only.
+        Inference stops early when P(mine) predictions converge.
         """
-        # Quick check: if confidence head was never trained, skip refinement
-        if self.output_head.bias[1].abs().max() < 1e-8:
-            return torch.sigmoid(self.forward(x)[:, 0:1])
         results = self.refine(x, num_steps=max_refine_steps)
-        return results[-1][:, 0:1]
+        return results[-1]
 
     @torch.no_grad()
     def diagnose_refinement(self, x: torch.Tensor, max_refine_steps: int = POLICY.refinement.eval_max_steps,
@@ -323,7 +308,7 @@ class MinesweeperTransformer(nn.Module):
 
         for step in range(max_refine_steps):
             raw = self._single_pass(x, probs)
-            probs_new = torch.sigmoid(raw[:, 0:1])
+            probs_new = torch.sigmoid(raw)
 
             # Per-sample convergence: max |P_t - P_{t-1}| < eps
             if step > 0:
@@ -371,25 +356,6 @@ class MinesweeperTransformer(nn.Module):
                 padded[:, :10] = old_w
                 state_dict[cnn_key] = padded
                 print("  (Migrated CNN: 10→11 channels, extra channel zero-padded)")
-
-        # Migrate old 1-channel output to 2-channel (prob + confidence)
-        out_w_key = "output_head.weight"
-        out_b_key = "output_head.bias"
-        if out_w_key in state_dict:
-            old_w = state_dict[out_w_key]
-            new_w = self.output_head.weight.data
-            if old_w.shape[0] == 1 and new_w.shape[0] == 2:
-                padded_w = torch.zeros_like(new_w)
-                padded_w[0:1] = old_w  # copy prob channel, confidence stays zero
-                state_dict[out_w_key] = padded_w
-            if out_b_key in state_dict:
-                old_b = state_dict[out_b_key]
-                new_b = self.output_head.bias.data
-                if old_b.shape[0] == 1 and new_b.shape[0] == 2:
-                    padded_b = torch.zeros_like(new_b)
-                    padded_b[0:1] = old_b
-                    state_dict[out_b_key] = padded_b
-                    print("  (Migrated output head: 1→2 channels, confidence initialized to zero)")
 
         # Filter old positional encoding keys
         migrated = {}

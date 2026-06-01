@@ -143,14 +143,12 @@ def train_epoch(
     log_interval: int,
     grad_clip_norm: float = 1.0,
     refinement_steps: int = POLICY.refinement.train_max_steps,
-    tau_stop: float = 0.95,
 ) -> float:
     """Train one epoch. Returns average loss.
 
     When refinement_steps > 1: adaptive training with random step sampling.
     Each batch randomly chooses k ∈ [1, refinement_steps], runs k iterations,
-    then computes loss ONLY on step k. A ponder penalty punishes the model
-    for running many steps without reaching high confidence.
+    then computes loss ONLY on step k.
     """
     model.train()
     total_loss = 0.0
@@ -175,25 +173,16 @@ def train_epoch(
             # Run k iterations with detach — no BPTT through refinement chain
             for _ in range(k):
                 raw = model._single_pass(channels, prev)
-                pred = torch.sigmoid(raw[:, 0:1])
-                conf = torch.sigmoid(raw[:, 1:2])
+                pred = torch.sigmoid(raw)
                 prev = pred.detach()  # cut gradient, save memory
 
-            # Loss on step k only
-            prob_loss = compute_masked_mse(pred, probs, mask)
-            conf_target = 1.0 - 2.0 * torch.abs(probs.unsqueeze(1) - 0.5)
-            conf_loss = compute_masked_mse(conf, conf_target.squeeze(1), mask)
-
-            # Ponder penalty: punish running deep without confidence
-            confidence_gap = torch.clamp(conf.new_tensor(tau_stop) - conf, min=0.0)
-            ponder_penalty = (k - 1) * (confidence_gap * conf_target).mean()
-
-            loss = prob_loss + 0.3 * conf_loss + 0.1 * ponder_penalty
+            # MSE loss on step k only
+            loss = compute_masked_mse(pred, probs, mask)
             pred_probs = pred
 
         else:
             raw = model(channels)
-            pred_probs = torch.sigmoid(raw[:, 0:1])
+            pred_probs = torch.sigmoid(raw)
             loss = compute_masked_mse(pred_probs, probs, mask)
 
         loss.backward()
@@ -238,11 +227,11 @@ def validate(
 
         if refinement_steps > 1:
             all_outputs = model.refine(channels, num_steps=refinement_steps)
-            pred_probs = all_outputs[-1][:, 0:1]
+            pred_probs = all_outputs[-1]
             loss = compute_masked_mse(pred_probs, probs, mask)
         else:
             raw = model(channels)
-            pred_probs = torch.sigmoid(raw[:, 0:1])
+            pred_probs = torch.sigmoid(raw)
             loss = compute_masked_mse(pred_probs, probs, mask)
 
         total_loss += loss.item()
