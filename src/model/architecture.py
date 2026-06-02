@@ -1,32 +1,20 @@
-"""CNN + Transformer hybrid architecture for Minesweeper.
+"""Hidden State Refinement Architecture (V2) for Minesweeper.
 
 Architecture:
     Input: (B, 10, H, W) — covered, flagged, numbers 1-8 one-hot
-    → CNN frontend (3× Conv3×3, BN, ReLU) → (B, d_model, H, W)
-    → 2D learnable positional encoding (interpolatable)
-    → Flatten to sequence → (B, H*W, d_model)
-    → Transformer encoder (N layers, multi-head self-attention)
-    → Reshape to spatial → (B, d_model, H, W)
-    → Output head (Conv1×1) → (B, 1, H, W)
-    → Sigmoid → P(mine) per cell
-
-Iterative Refinement mode:
-    The model can be called multiple times, feeding its own output back
-    as an additional input channel (prev_probs). This allows the model
-    to "rethink" its predictions — detecting contradictions and refining.
     
-    Step 0: prev_probs = 0.5 (uniform)
-    Step 1: probs = model(board, prev_probs)
-    Step 2: probs = model(board, probs)     ← sees previous guess
-    Step 3: probs = model(board, probs)     ← further refinement
-    
-    Shared weights across all steps — the model learns a "refinement operator".
-
-Supports variable board sizes via bilinear PE interpolation (ViT-style).
+    Iterative Refinement (Hidden State Loop):
+        Step 0: mem_state = zeros(B, d_model, H, W)
+        Step k: 
+            concat(board, mem_state) -> CNN -> PE -> Transformer -> mem_state_{k}
+            
+    Decoder (Translation):
+        At any step k, the hidden mem_state can be translated to probabilities:
+        mem_state_{k} -> 1x1 Conv (Decoder) -> (B, 1, H, W) -> Sigmoid -> P(mine)
 """
 
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -34,17 +22,17 @@ import torch.nn.functional as F
 
 from config import POLICY
 
-
 @dataclass
 class ModelConfig:
     """Configuration for MinesweeperTransformer."""
     # Input
     in_channels: int = 10       # covered + flagged + 8 number channels
-    # Internal: +1 channel for prev_probs during iterative refinement
-    # (the extra channel is handled automatically)
+    
+    # Hidden State Memory
+    hidden_channels: int = 64   # Channels for the recurrent mem_state
 
     # CNN frontend
-    cnn_channels: int = 64      # output channels of CNN
+    cnn_channels: int = 64      # output channels of CNN (should match hidden_channels)
     cnn_layers: int = 3         # number of Conv layers
 
     # Transformer
@@ -54,7 +42,7 @@ class ModelConfig:
     dim_feedforward: int = 256  # FFN hidden dim
     dropout: float = 0.2
 
-    # Positional encoding — reference grid size for interpolation
+    # Positional encoding
     pe_grid_size: int = 16      # PE is learned at 16×16, bilinear-interpolated to any H×W
 
     # Iterative refinement
@@ -68,12 +56,16 @@ class ModelConfig:
             raise ValueError(
                 f"cnn_channels ({self.cnn_channels}) must match d_model ({self.d_model})"
             )
+        if self.hidden_channels != self.d_model:
+            raise ValueError(
+                f"hidden_channels ({self.hidden_channels}) must match d_model ({self.d_model})"
+            )
 
-
-# ─── Building Blocks ───────────────────────────────────────────────────────
 
 class CNNEncoder(nn.Module):
-    """Convolutional frontend that preserves spatial resolution."""
+    """Convolutional frontend that preserves spatial resolution.
+    Takes concatenated [board, prev_probs] as input.
+    """
 
     def __init__(self, in_channels: int, out_channels: int, num_layers: int = 3):
         super().__init__()
@@ -138,19 +130,24 @@ class TransformerEncoder(nn.Module):
         return self.norm(x)
 
 
-# ─── Full Model ────────────────────────────────────────────────────────────
+class DecoderHead(nn.Module):
+    """Translates high-dimensional memory state to probability map using 1x1 Conv."""
+    
+    def __init__(self, in_channels: int, num_classes: int):
+        super().__init__()
+        # bias=True is critical here. It provides a global prior (e.g. board mine density).
+        # When mem_state is 0, sigmoid(bias) gives the base probability of a cell being a mine.
+        self.net = nn.Conv2d(in_channels, num_classes, kernel_size=1, bias=True)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)
+
 
 class MinesweeperTransformer(nn.Module):
-    """CNN + Transformer model for minesweeper.
-
-    Single-pass (refinement_steps=1):
-        Input:  (B, 10, H, W)
-        Output: (B, 1, H, W) — logits for P(mine)
-
-    Iterative refinement (refinement_steps=N):
-        Internally feeds own output back as an 11th channel,
-        running N passes with shared weights. Returns list of
-        N probability tensors for progressive-loss training.
+    """CNN + Transformer model with Hidden State Refinement.
+    
+    Maintains a high-dimensional memory state across refinement steps,
+    translating it to probability distributions only at the output via a Decoder.
     """
 
     def __init__(self, config: Optional[ModelConfig] = None):
@@ -159,14 +156,14 @@ class MinesweeperTransformer(nn.Module):
             config = ModelConfig()
         self.config = config
 
-        # CNN: 11 input channels = 10 board + 1 prev_probs
+        # CNN: board input (10) + prev_probs (1)
         self.cnn = CNNEncoder(
-            in_channels=config.in_channels + 1,
+            in_channels=config.in_channels + config.num_classes,
             out_channels=config.d_model,
             num_layers=config.cnn_layers,
         )
 
-        # Positional encoding (interpolatable)
+        # Positional encoding
         self.pos_encoding = InterpolatablePositionalEncoding(
             d_model=config.d_model, ref_grid=config.pe_grid_size,
         )
@@ -180,63 +177,67 @@ class MinesweeperTransformer(nn.Module):
             dropout=config.dropout,
         )
 
-        # Output head
-        self.output_head = nn.Conv2d(config.d_model, config.num_classes, kernel_size=1)
+        # Decoder: translates hidden memory state to probability map
+        self.decoder = DecoderHead(config.d_model, num_classes=1)
 
-    def _single_pass(self, board: torch.Tensor, prev_probs: torch.Tensor) -> torch.Tensor:
-        """Internal: one forward pass with board + prev_probs concatenated.
+    def load_pretrained(self, checkpoint_path: str, device: str | torch.device):
+        """Load pretrained weights from a checkpoint.
+        Strict matching is enforced to ensure architecture consistency.
+        """
+        ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
+        state_dict = ckpt["model_state_dict"] if "model_state_dict" in ckpt else ckpt
+        self.load_state_dict(state_dict, strict=True)
+
+    def _single_pass(self, board: torch.Tensor, prev_probs: torch.Tensor, mem_state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Internal: one forward pass updating BOTH the high-dimensional memory AND the probabilities.
 
         Args:
-            board:      (B, 10, H, W) board channels
-            prev_probs: (B, 1, H, W) previous probability estimate
+            board:      (B, 10, H, W) static board channels
+            prev_probs: (B, 1, H, W)  probabilities from previous step
+            mem_state:  (B, d_model, H, W) high-dimensional hidden memory from previous step
 
         Returns:
-            (B, 1, H, W) raw logits — P(mine)
+            new_probs:     (B, 1, H, W) updated probabilities
+            new_mem_state: (B, d_model, H, W) updated high-dimensional memory
         """
         B, C, H, W = board.shape
+        
+        # 1. Local Interaction (CNN): Combine board with explicit 1D probabilities
         x = torch.cat([board, prev_probs], dim=1)  # (B, 11, H, W)
+        local_features = self.cnn(x)
+        local_features = self.pos_encoding(local_features)
 
-        # CNN
-        features = self.cnn(x)
+        # 2. Memory Injection: Combine CNN's new insights with Transformer's old high-dimensional memory
+        combined_features = local_features + mem_state
 
-        # PE
-        features = self.pos_encoding(features)
-
-        # Sequence → Transformer
-        seq = features.flatten(2).transpose(1, 2)
+        # 3. Global Reasoning (Transformer)
+        seq = combined_features.flatten(2).transpose(1, 2)
         seq = self.transformer(seq)
 
-        # Back to spatial
-        features = seq.transpose(1, 2).reshape(B, self.config.d_model, H, W)
+        # 4. Extract new states
+        new_mem_state = seq.transpose(1, 2).reshape(B, self.config.d_model, H, W)
+        
+        # 5. Translate memory to probabilities
+        raw_logits = self.decoder(new_mem_state)
+        new_probs = torch.sigmoid(raw_logits)
+        
+        return new_probs, new_mem_state
 
-        # Output
-        return self.output_head(features)  # (B, 1, H, W)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Single-pass forward (matches refinement step 1).
-
-        Uses prev_probs=0.5 so the model sees the same initial state
-        as the first step of iterative refinement.
-
-        Args:
-            x: (B, 10, H, W) board channels
-
-        Returns:
-            (B, 1, H, W) raw logits — P(mine)
-        """
-        B, _, H, W = x.shape
-        prev = torch.full((B, 1, H, W), 0.5, device=x.device)
-        return self._single_pass(x, prev)
+    def forward(self, board: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Single-pass forward (matches refinement step 1)."""
+        B, _, H, W = board.shape
+        
+        mem_state = torch.zeros((B, self.config.hidden_channels, H, W), device=board.device)
+        prev_probs = torch.full((B, 1, H, W), 0.5, device=board.device)
+        
+        # Single forward pass generating initial probabilities and initial memory
+        probs, mem_state = self._single_pass(board, prev_probs, mem_state)
+        
+        return probs, mem_state
 
     def refine(self, board: torch.Tensor, num_steps: int = POLICY.refinement.eval_max_steps,
                convergence_eps: float = POLICY.refinement.convergence_eps) -> List[torch.Tensor]:
-        """Iterative refinement: run model N times with self-feedback.
-
-        Step 0: prev = uniform(0.5)
-        Step k: probs_k = model(board, probs_{k-1})
-
-        Stops early when P(mine) predictions have converged
-        (max absolute change between steps < convergence_eps).
+        """Iterative refinement maintaining high-dimensional hidden state.
 
         Args:
             board:           (B, 10, H, W) board channels
@@ -244,90 +245,76 @@ class MinesweeperTransformer(nn.Module):
             convergence_eps: stop when max|P_t - P_{t-1}| < this
 
         Returns:
-            List of (B, 1, H, W) tensors — sigmoid(P(mine)) per step.
-            Last element is the final output.
+            List of (B, 1, H, W) tensors — sigmoid(P(mine)) translated at each step.
         """
         B, _, H, W = board.shape
-        probs = torch.full((B, 1, H, W), 0.5, device=board.device)
-        prev_probs = probs.clone()
+        
+        # Initialize empty memory state
+        mem_state = torch.zeros((B, self.config.hidden_channels, H, W), device=board.device)
+        
+        # We need to track the previous probability map to check for convergence
+        prev_probs = torch.full((B, 1, H, W), 0.5, device=board.device)
         results = []
 
         for step in range(num_steps):
-            raw = self._single_pass(board, probs)  # (B, 1, H, W)
-            probs = torch.sigmoid(raw)
+            # Run one step of combined memory + probability inference
+            probs, mem_state = self._single_pass(board, prev_probs, mem_state)
             results.append(probs)
 
-            # Early stop (inference only): has P(mine) converged?
+            # Early stop based on probability convergence
             if not self.training and step > 0:
+                # Compare max absolute difference in probabilities
                 max_change = (probs - prev_probs).abs().max().item()
                 if max_change < convergence_eps:
                     break
 
             prev_probs = probs.detach()
-            probs = prev_probs.clone()
 
         return results
 
-    @property
-    def num_parameters(self) -> int:
-        """Total number of trainable parameters."""
-        return sum(p.numel() for p in self.parameters() if p.requires_grad)
-
     @torch.no_grad()
     def predict(self, x: torch.Tensor, max_refine_steps: int = POLICY.refinement.eval_max_steps) -> torch.Tensor:
-        """Return P(mine) probabilities with adaptive refinement.
-
-        Uses the project-wide evaluation refinement cap from config.POLICY.
-        Inference stops early when P(mine) predictions converge.
-        """
+        """Return P(mine) probabilities with adaptive refinement."""
         results = self.refine(x, num_steps=max_refine_steps)
         return results[-1]
 
     @torch.no_grad()
     def diagnose_refinement(self, x: torch.Tensor, max_refine_steps: int = POLICY.refinement.eval_max_steps,
                             convergence_eps: float = POLICY.refinement.convergence_eps) -> dict:
-        """Run refinement and report per-sample step statistics.
-
-        Uses convergence-based early stop (same as refine()):
-        stops when max |P_t - P_{t-1}| < convergence_eps.
-
-        Returns dict with:
-            probs:            (B, 1, H, W) final P(mine) probs
-            n_steps:          tensor of shape (B,) — steps taken per sample
-            mean_steps:       average steps across batch
-            max_steps:        max steps in batch
-            min_steps:        min steps in batch
-            early_stop_rate:  fraction that stopped early (< max_steps)
-            step_distribution: count per step bucket
-        """
-        B = x.shape[0]
-        probs = torch.full((B, 1, x.shape[2], x.shape[3]), 0.5, device=x.device)
-        prev_probs = probs.clone()
+        """Run refinement and report per-sample step statistics."""
+        B, _, H, W = x.shape
+        
+        mem_state = torch.zeros((B, self.config.hidden_channels, H, W), device=x.device)
+        prev_probs = torch.full((B, 1, H, W), 0.5, device=x.device)
+        
         n_steps = torch.zeros(B, dtype=torch.long, device=x.device)
         done = torch.zeros(B, dtype=torch.bool, device=x.device)
+        
+        final_probs = prev_probs.clone()
 
         for step in range(max_refine_steps):
-            raw = self._single_pass(x, probs)
-            probs_new = torch.sigmoid(raw)
+            probs_new, mem_state = self._single_pass(x, prev_probs, mem_state)
 
-            # Per-sample convergence: max |P_t - P_{t-1}| < eps
             if step > 0:
                 max_change = (probs_new - prev_probs).abs().view(B, -1).max(dim=1).values
                 converged_now = ~done & (max_change < convergence_eps)
                 done = done | converged_now
                 n_steps = torch.where(converged_now, step + 1, n_steps)
+                
+                # Capture final probs for newly converged samples
+                final_probs = torch.where(converged_now.view(B, 1, 1, 1), probs_new, final_probs)
 
                 if done.all():
-                    probs = probs_new
                     break
-
+                    
             prev_probs = probs_new.clone()
-            probs = probs_new
 
+        # Handle samples that hit max_refine_steps without converging
         n_steps = torch.where(~done, max_refine_steps, n_steps)
+        final_probs = torch.where(~done.view(B, 1, 1, 1), probs_new, final_probs)
 
         return {
-            "probs": probs,
+            "probs": final_probs,
             "n_steps": n_steps,
             "mean_steps": n_steps.float().mean().item(),
             "max_steps": n_steps.max().item(),
@@ -336,36 +323,6 @@ class MinesweeperTransformer(nn.Module):
             "step_distribution": torch.bincount(n_steps, minlength=max_refine_steps + 1).tolist(),
         }
 
-    def load_pretrained(self, checkpoint_path: str, device: str = "cpu") -> None:
-        """Load weights from a checkpoint, with automatic format migration.
-
-        Handles:
-        - Old 10-channel CNN → new 11-channel: extra channel zero-padded
-        - Old positional encoding formats
-        """
-        ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
-        state_dict = ckpt.get("model_state_dict", ckpt)
-
-        # Migrate old 10-channel CNN to 11-channel
-        cnn_key = "cnn.net.0.weight"
-        if cnn_key in state_dict:
-            old_w = state_dict[cnn_key]
-            new_w = self.cnn.net[0].weight.data
-            if old_w.shape[1] == 10 and new_w.shape[1] == 11:
-                padded = torch.zeros_like(new_w)
-                padded[:, :10] = old_w
-                state_dict[cnn_key] = padded
-                print("  (Migrated CNN: 10→11 channels, extra channel zero-padded)")
-
-        # Filter old positional encoding keys
-        migrated = {}
-        for key, value in state_dict.items():
-            if key.startswith("pos_encoding.row_embed") or key.startswith("pos_encoding.col_embed"):
-                continue
-            migrated[key] = value
-
-        missing, unexpected = self.load_state_dict(migrated, strict=False)
-        if missing:
-            print(f"  (PE reinitialized — {len(missing)} new keys)")
-        if unexpected:
-            print(f"  (ignored {len(unexpected)} old-format keys)")
+    @property
+    def num_parameters(self) -> int:
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)

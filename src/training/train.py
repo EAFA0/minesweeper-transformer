@@ -146,39 +146,38 @@ def train_epoch(
 ) -> float:
     """Train one epoch. Returns average loss.
 
-    When refinement_steps > 1: adaptive training with random step sampling.
-    Each batch randomly chooses k ∈ [1, refinement_steps], runs k iterations,
-    then computes loss ONLY on step k.
+    When refinement_steps > 1: Fixed unrolling for `refinement_steps`.
+    Only the final step's prediction is used for MSE loss calculation.
     """
     model.train()
     total_loss = 0.0
     n_batches = len(dataloader)
-    import random
 
     for batch_idx, (channels, probs, mask) in enumerate(dataloader):
         channels = channels.to(device)
         probs = probs.to(device)
         mask = mask.to(device)
+        
         B = channels.shape[0]
 
         optimizer.zero_grad()
-
+        
         if refinement_steps > 1:
-            # Random step count for this batch
-            k = random.randint(1, refinement_steps)
 
-            # Initial prior
-            prev = torch.full((B, 1, channels.shape[2], channels.shape[3]), 0.5, device=device)
+            # Initial prior (Hidden State Memory + Probs)
+            mem_state = torch.zeros((B, model.config.hidden_channels, channels.shape[2], channels.shape[3]), device=device)
+            prev_probs = torch.full((B, 1, channels.shape[2], channels.shape[3]), 0.5, device=device)
 
-            # Run k iterations with detach — no BPTT through refinement chain
-            for _ in range(k):
-                raw = model._single_pass(channels, prev)
-                pred = torch.sigmoid(raw)
-                prev = pred.detach()  # cut gradient, save memory
-
-            # MSE loss on step k only
-            loss = compute_masked_mse(pred, probs, mask)
-            pred_probs = pred
+            # Fixed Refinement loop (BPTT)
+            for step in range(refinement_steps):
+                prev_probs, mem_state = model._single_pass(channels, prev_probs, mem_state)
+                # Detach for intermediate steps to prevent BPTT OOM, only the last step tracks gradient
+                if step < refinement_steps - 1:
+                    prev_probs = prev_probs.detach()
+                    mem_state = mem_state.detach()
+                
+            loss = compute_masked_mse(prev_probs, probs, mask)
+            pred_probs = prev_probs
 
         else:
             raw = model(channels)

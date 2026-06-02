@@ -31,7 +31,7 @@ STAGES = {
         "lr": 1e-3, "weight_decay": 3e-4,
         "pretrained": None,
         "eval": {"width": 8, "height": 8, "mines": 10},
-        "desc": "规则学习 — 8×8/10雷 (16%密度)",
+        "desc": "规则学习 — 8×8/10雷",
     },
     "S2": {
         "width": 8, "height": 8, "mines": 20,
@@ -40,16 +40,16 @@ STAGES = {
         "lr": 3e-4, "weight_decay": 3e-4,
         "pretrained": "checkpoints/S1/best_model.pt",
         "eval": {"width": 8, "height": 8, "mines": 20},
-        "desc": "密度变化 — 8×8/20雷 (31%密度)",
+        "desc": "中等密度 — 8×8/20雷",
     },
     "S3": {
-        "width": 8, "height": 8, "mines": 25,
+        "width": 8, "height": 8, "mines": 32,
         "n_samples": 10000, "epochs": 5,
         "data_dir": "data/S3", "save_dir": "checkpoints/S3",
         "lr": 3e-4, "weight_decay": 3e-4,
         "pretrained": "checkpoints/S2/best_model.pt",
-        "eval": {"width": 10, "height": 10, "mines": 40},  # 零样本评估目标
-        "desc": "高密度泛化 — 8×8/25雷 (39%密度, 接近目标 10×10/40)",
+        "eval": {"width": 8, "height": 8, "mines": 32},
+        "desc": "高密度挑战 — 8×8/32雷 (50%密度)",
     },
 }
 
@@ -219,7 +219,7 @@ def run_stage(stage_name, args):
             "--height", str(eval_h),
             "--mines", str(eval_m),
             "--n_games", str(args.n_games),
-            "--device", args.device,
+            "--device", str(args.device),
         ]
         run(eval_cmd, f"Evaluate {eval_w}×{eval_h}/{eval_m}")
     else:
@@ -281,9 +281,10 @@ def main():
                    help="强制重新生成训练数据")
     p.add_argument("--resume", action="store_true",
                    help="从已有 checkpoint 续训")
-    p.add_argument("--device", default="auto")
-    p.add_argument("--n_games", type=int, default=1000,
-                   help="评估时玩的游戏数 (default: 1000)")
+    p.add_argument("--device", type=str, default="auto", choices=["cpu", "cuda", "mps", "auto"],
+                   help="Device to run on (auto will detect CUDA/MPS/CPU)")
+    p.add_argument("--n_games", type=int, default=200,
+                   help="评估时玩的游戏数 (default: 200)")
     p.add_argument("--n_samples", type=int, default=None,
                    help="覆盖默认训练游戏数")
     p.add_argument("--eval", nargs=3, type=int, metavar=("W", "H", "M"), default=None,
@@ -314,8 +315,12 @@ def main():
     # Device detection (do once)
     if args.device == "auto":
         import torch
-        args.device = "mps" if torch.backends.mps.is_available() else \
-                      "cuda" if torch.cuda.is_available() else "cpu"
+        if torch.cuda.is_available():
+            args.device = "cuda"
+        elif torch.backends.mps.is_available():
+            args.device = "mps"
+        else:
+            args.device = "cpu"
 
     # Run stages
     for stage in stages_to_run:

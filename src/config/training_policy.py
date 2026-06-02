@@ -9,10 +9,15 @@ from dataclasses import dataclass, field
 
 @dataclass(frozen=True)
 class RefinementPolicy:
-    """Iterative refinement policy shared by all training/evaluation loops."""
+    """Global policy for refinement iterations.
+    
+    Training: Fixed unfolding (BPTT) for a small number of steps to learn core logic 
+              while preventing gradient explosion and saving compute.
+    Inference: Can run much longer to solve hard edge cases using early stop.
+    """
 
-    train_max_steps: int = 16
-    eval_max_steps: int = 16
+    train_max_steps: int = 4     # Reduced to 4 to save compute during BPTT training
+    eval_max_steps: int = 16     # Allow deep reasoning during inference
     rl_steps: int = 16
     convergence_eps: float = 0.05  # stop when max|ΔP| < 5%
 
