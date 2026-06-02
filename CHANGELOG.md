@@ -1,3 +1,18 @@
+## [未发布] - 2026-06-02
+
+### 架构重构 (V3/V4 Dual-Track Architecture)
+- **隐式记忆 (Hidden State)**: 引入 64 维 `mem_state`，与 CNN 提取的 1 通道局部概率解耦，大幅提升模型在长程逻辑推导（如反证法）时的"草稿本"容量。
+- **双轨推演**: CNN 负责处理 `[board, prev_probs]` 提取局部空间特征，Transformer 负责处理 CNN 特征并维护 `mem_state`。
+- **Decoder Head**: 引入 1x1 Conv 并在其中设置 `bias=True`，利用偏置项为高密度棋盘提供全局雷概率先验。
+
+### 训练策略变更
+- **废弃 PonderNet**: 彻底移除 Halt Loss 和 Ponder Penalty，因为其会导致梯度冲突与模型"懒惰"。
+- **固定步长 BPTT**: 训练阶段改为固定步长 (`train_max_steps=4`) 的 BPTT 展开；推理阶段放开限制 (`eval_max_steps=16`) 并通过物理概率差值判断收敛。
+- **设备适配**: `--device` 默认值硬编码为 `auto`，无缝兼容 Mac MPS 与 Windows CUDA。
+
+### 已知问题与待办
+- **S3 评估阶段胜率劣化**: 模型在 8x8/32 (50% 密度) 难度下，验证集准确率达 98.6% (Val Loss 0.0012)，但实际评估胜率暴跌至 36.7%。当前正在排查数据分布同源性与单步高精度累计误差 (Action Acc 95.9% ^ N) 导致的问题。
+
 # 更新日志
 
 本项目的所有重要变更都将记录在此文件中。
