@@ -40,6 +40,12 @@ def main() -> None:
                         help="Use mixed-size/mixed-density board pool")
     parser.add_argument("--no_board_pool", action="store_true",
                         help="Disable board pool and generate boards online (slow; debug only)")
+    parser.add_argument("--conservative", action="store_true",
+                        help="Enable conservative RL: MSE anchoring + α annealing")
+    parser.add_argument("--alpha", type=float, default=0.5,
+                        help="Initial α for conservative RL (1.0 = pure supervised)")
+    parser.add_argument("--alpha_decay", type=float, default=0.9995,
+                        help="Per-batch decay for α annealing")
     parser.add_argument("--device", default="auto")
 
     args = parser.parse_args()
@@ -72,6 +78,8 @@ def main() -> None:
         save_dir=args.save_dir,
         temperature=args.temperature,
         mixed_env=args.mixed,
+        conservative_alpha=args.alpha if args.conservative else 0.0,
+        alpha_decay=args.alpha_decay,
         device=dev,
     )
     train_rl(config)

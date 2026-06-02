@@ -26,6 +26,7 @@ from model.architecture import MinesweeperTransformer, ModelConfig
 from training.rl_env import RLEnv, Rewards
 from training.rl_board_pool import RLBoardPool
 from minesweeper.constants import GameStatus
+from minesweeper.probability_solver import ProbabilitySolver
 
 
 # ─── Config ─────────────────────────────────────────────────────────────────
@@ -54,6 +55,10 @@ class RLConfig:
     # RL hyperparameters
     temperature: float = 1.0
     entropy_coef: float = 0.0  # pretrained RL fine-tuning does not need forced exploration
+
+    # Conservative RL: MSE anchoring prevents catastrophic forgetting
+    conservative_alpha: float = 0.5   # initial weight for MSE loss (1.0 = pure supervised)
+    alpha_decay: float = 0.9995       # per-batch decay: α ← α × decay
 
     # Architecture overrides (RL-specific)
     dropout: float = 0.0  # RL doesn't need dropout — pretrained weights are already converged
@@ -131,8 +136,11 @@ def get_logits(
             logits = torch.log(probs / (1 - probs))
             return logits.squeeze(0)[0]
         else:
-            raw = model(x)
-            return raw.squeeze(0)[0]  # (H, W) — channel 0 raw logits
+            probs, _ = model(x)                # V3 returns (probs, mem_state)
+            eps = 1e-7
+            probs = probs.clamp(eps, 1 - eps)
+            logits = torch.log(probs / (1 - probs))
+            return logits.squeeze(0)[0]         # (H, W) logits
 
 
 # ─── Game Simulation ────────────────────────────────────────────────────────
@@ -206,6 +214,34 @@ def collect_eval(
     return wins / n_games, total_return / n_games, total_steps / n_games
 
 
+# ─── MSE Anchoring (Conservative RL) ──────────────────────────────────────
+
+@torch.no_grad()
+def compute_solver_targets(
+    states: torch.Tensor,  # (N, C, H, W) channel tensors
+    game: object,           # MinesweeperGame (current state)
+) -> torch.Tensor:
+    """Run ProbabilitySolver to get ground-truth P(mine) for each state.
+
+    Works with self-validated boards where solver provides accurate labels.
+    Returns (N, H, W) target probability tensor.
+    """
+    import numpy as np
+    N, _, H, W = states.shape
+    targets = torch.zeros(N, H, W)
+
+    for i in range(N):
+        ch = states[i].cpu().numpy()
+        solver = ProbabilitySolver(game)
+        try:
+            probs = solver.compute_probabilities()
+            targets[i] = torch.from_numpy(probs.astype(np.float32))
+        except Exception:
+            targets[i] = 0.5  # fallback for solver errors
+
+    return targets
+
+
 # ─── REINFORCE Update ──────────────────────────────────────────────────────
 
 def reinforce_step(
@@ -218,31 +254,24 @@ def reinforce_step(
     device: str | torch.device,
     n_games: int = 8,
     refine_steps: int = POLICY.refinement.rl_steps,
-) -> Tuple[float, float, float]:
-    """One REINFORCE update. Returns (loss, avg_return, new_baseline).
+    conservative_alpha: float = 0.0,  # 0=pure RL, 1=pure supervised
+) -> Tuple[float, float, float, float]:
+    """One REINFORCE update with optional MSE anchoring.
 
-    Collects n_games of trajectories, computes policy gradient,
-    updates model parameters.
+    Returns (total_loss, rl_loss, mse_loss, avg_return, new_baseline).
 
-    Uses the SAME refinement steps for both rollout and gradient
-    computation — this is required for on-policy REINFORCE.
+    When conservative_alpha > 0, adds MSE loss against solver labels
+    to prevent catastrophic forgetting.
     """
-    # Use eval mode for both rollout and gradient computation.
-    # CRITICAL: BatchNorm in train mode uses per-batch statistics.
-    # Rollout has B=1 (single state) while gradient has B=chunk_size.
-    # These produce different normalizations → off-policy REINFORCE gradients.
-    # Eval mode uses consistent running stats from supervised pretraining.
     model.eval()
 
-    # Pre-determine refinement steps for this batch.
-    # Rollout and loss MUST use the same number of steps
-    # for the sampled action probability π(a|s) to match.
     actual_refine = refine_steps if refine_steps > 1 else 1
 
     states: List[torch.Tensor] = []
     covered_masks: List[torch.Tensor] = []
     action_coords: List[Tuple[int, int]] = []
     advantages: List[float] = []
+    solver_targets: List[torch.Tensor] = []  # for MSE anchoring
     total_return = 0.0
     n_steps_total = 0
 
@@ -264,13 +293,18 @@ def reinforce_step(
             idx = int(torch.multinomial(probs, 1).item())
             r, c = divmod(idx, covered.shape[1])
 
+            # Collect solver labels BEFORE the move (current state)
+            if conservative_alpha > 0 and env.game is not None:
+                target = env.solver_probs()
+                solver_targets.append(torch.from_numpy(target))
+
             next_state, reward, done = env.step(r, c)
             game_return += reward
 
             states.append(torch.from_numpy(state))
             covered_masks.append(covered_t)
             action_coords.append((r, c))
-            advantages.append(reward)  # immediate reward = contextual bandit advantage
+            advantages.append(reward)
             n_steps_total += 1
 
             state = next_state
@@ -280,10 +314,9 @@ def reinforce_step(
         total_return += game_return
 
     if n_steps_total == 0:
-        return 0.0, 0.0, baseline
+        return 0.0, 0.0, 0.0, 0.0, baseline
 
-    # Advantage Normalization (Crucial for variance reduction)
-    # Advantage = (Reward - mean(Reward)) / (std(Reward) + 1e-8)
+    # Advantage Normalization
     adv_tensor = torch.tensor(advantages, dtype=torch.float32, device=device)
     if len(adv_tensor) > 1:
         adv_mean = adv_tensor.mean()
@@ -298,9 +331,9 @@ def reinforce_step(
     r_coords = torch.tensor([r for r, c in action_coords], device=device)
     c_coords = torch.tensor([c for r, c in action_coords], device=device)
 
-    # Process in chunks to allow full BPTT without OOM
+    # ── REINFORCE loss ──
     chunk_size = 64
-    total_loss = 0.0
+    total_rl_loss = 0.0
 
     for i in range(0, n_steps_total, chunk_size):
         chunk_states = batch_states[i:i+chunk_size]
@@ -313,17 +346,18 @@ def reinforce_step(
 
         if actual_refine > 1:
             prev = torch.full((B, 1, H, W), 0.5, device=device)
+            mem = torch.zeros(B, model.config.hidden_channels, H, W, device=device)
             for _ in range(actual_refine):
-                raw = model._single_pass(chunk_states, prev)
-                pred = torch.sigmoid(raw[:, 0:1])
-                prev = pred  # NO DETACH — full BPTT through refinement
-            probs = pred
+                prev, mem = model._single_pass(chunk_states, prev, mem)
+            probs = prev
             eps = 1e-7
             probs = probs.clamp(eps, 1 - eps)
             chunk_logits = torch.log(probs / (1 - probs)).squeeze(1)
         else:
-            raw = model(chunk_states)
-            chunk_logits = raw[:, 0]
+            probs, _ = model(chunk_states)
+            eps = 1e-7
+            probs = probs.clamp(eps, 1 - eps)
+            chunk_logits = torch.log(probs / (1 - probs)).squeeze(1)
 
         flat_logits = chunk_logits.view(B, -1)
         flat_covered = chunk_covered.view(B, -1)
@@ -336,30 +370,54 @@ def reinforce_step(
         log_probs_flat = policy_logits - torch.logsumexp(policy_logits, dim=1, keepdim=True)
         log_probs = log_probs_flat.view(B, H, W)
 
-        # Entropy bonus: H = -sum(p * log p) — prevents policy collapse
-        probs_flat = torch.exp(log_probs_flat)
-        safe_log_probs = torch.where(
-            flat_covered,
-            log_probs_flat,
-            torch.tensor(0.0, device=device)
-        )
-        entropy = -(probs_flat * safe_log_probs).sum(dim=1).mean()
-
         chosen_log_probs = log_probs[torch.arange(B, device=device), chunk_r, chunk_c]
-
         policy_loss = -(chosen_log_probs * chunk_adv).sum() / n_steps_total
-        entropy_loss = -entropy_coef * entropy * (B / n_steps_total)
-        loss_chunk = policy_loss + entropy_loss
+        policy_loss.backward()
+        total_rl_loss += policy_loss.item()
 
-        loss_chunk.backward()
-        total_loss += loss_chunk.item()
+    # ── MSE anchoring loss ──
+    total_mse_loss = 0.0
+    if conservative_alpha > 0 and len(solver_targets) > 0:
+        # Recompute model outputs with fresh forward pass for MSE
+        # (detached from RL graph to keep gradients separate)
+        solver_t = torch.stack(solver_targets).to(device)
+        N_mse = solver_t.shape[0]
+        # Process in chunks to save memory
+        mse_chunk = 64
+        for i in range(0, N_mse, mse_chunk):
+            end = min(i + mse_chunk, N_mse)
+            chunk_s = batch_states[i:end]
+            chunk_mask = covered_masks_t[i:end]
+            chunk_target = solver_t[i:end]
+
+            Bc, _, Hc, Wc = chunk_s.shape
+            if actual_refine > 1:
+                pv = torch.full((Bc, 1, Hc, Wc), 0.5, device=device)
+                mem = torch.zeros(Bc, model.config.hidden_channels, Hc, Wc, device=device)
+                for _ in range(actual_refine):
+                    pv, mem = model._single_pass(chunk_s, pv, mem)
+                pred_probs = pv
+            else:
+                raw = model(chunk_s)
+                pred_probs = torch.sigmoid(raw[:, 0:1])
+
+            chunk_target = chunk_target.unsqueeze(1)
+            # Squeeze mask to match pred_probs shape for indexing
+            mask_bool = chunk_mask.bool().unsqueeze(1)  # (B, 1, H, W)
+            mse = torch.nn.functional.mse_loss(
+                pred_probs[mask_bool],
+                chunk_target[mask_bool],
+            )
+            (conservative_alpha * mse).backward()
+            total_mse_loss += mse.item()
 
     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     optimizer.step()
 
+    total_loss = total_rl_loss + total_mse_loss
     avg_return = total_return / n_games
     new_baseline = baseline * (1 - 0.1) + avg_return * 0.1
-    return total_loss, avg_return, new_baseline
+    return total_loss, total_rl_loss, total_mse_loss, avg_return, new_baseline
 
 
 # ─── Full Training Loop ────────────────────────────────────────────────────
@@ -375,6 +433,8 @@ def train_rl(config: RLConfig) -> dict:
         f"floodfill_bonus={config.reward_floodfill_bonus}, "
         f"mine={config.reward_hit_mine}, step={config.reward_step_penalty}"
     )
+    if config.conservative_alpha > 0:
+        print(f"Conservative RL: α={config.conservative_alpha}, decay={config.alpha_decay}")
     print(f"Device: {device}")
 
     # Load pretrained model
@@ -451,9 +511,11 @@ def train_rl(config: RLConfig) -> dict:
 
     # Metrics
     baseline = 0.0
+    alpha = config.conservative_alpha  # current alpha for annealing
     metrics: dict[str, Any] = {
-        "game": [], "loss": [], "avg_return": [],
-        "win_rate": [], "eval_win_rate": [],
+        "game": [], "loss": [], "rl_loss": [], "mse_loss": [],
+        "avg_return": [], "win_rate": [], "eval_win_rate": [],
+        "alpha": [],
     }
 
     Path(config.save_dir).mkdir(parents=True, exist_ok=True)
@@ -461,19 +523,26 @@ def train_rl(config: RLConfig) -> dict:
     total_played = 0
 
     for batch_start in range(1, config.total_games + 1, config.games_per_batch):
-        loss, avg_ret, baseline = reinforce_step(
+        loss, rl_loss, mse_loss, avg_ret, baseline = reinforce_step(
             model, optimizer, train_env,
             temperature=config.temperature,
             entropy_coef=config.entropy_coef,
             baseline=baseline,
             device=device, n_games=config.games_per_batch,
             refine_steps=config.refine_steps,
+            conservative_alpha=alpha,
         )
+
+        # Anneal alpha
+        alpha *= config.alpha_decay
 
         total_played += config.games_per_batch
         metrics["game"].append(total_played)
         metrics["loss"].append(loss)
+        metrics["rl_loss"].append(rl_loss)
+        metrics["mse_loss"].append(mse_loss)
         metrics["avg_return"].append(avg_ret)
+        metrics["alpha"].append(alpha)
 
         if total_played % config.log_every == 0 or total_played <= config.games_per_batch:
             eval_wr, _, _ = collect_eval(
@@ -485,10 +554,9 @@ def train_rl(config: RLConfig) -> dict:
             elapsed = time.time() - t0
             print(
                 f"  Game {total_played:5d}/{config.total_games} | "
-                f"loss={loss:.4f} | ret={avg_ret:.1f} | "
-                f"eval_wr={eval_wr:.1%} | "
-                f"baseline={baseline:.1f} | "
-                f"{elapsed:.0f}s"
+                f"loss={loss:.4f} rl={rl_loss:.4f} mse={mse_loss:.4f} | "
+                f"ret={avg_ret:.1f} | eval_wr={eval_wr:.1%} | "
+                f"α={alpha:.3f} | {elapsed:.0f}s"
             )
 
         if total_played % config.save_every == 0:

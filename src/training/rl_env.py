@@ -15,6 +15,7 @@ import numpy as np
 
 from minesweeper.game import MinesweeperGame
 from minesweeper.constants import CellState, MoveType, GameStatus
+from minesweeper.probability_solver import ProbabilitySolver
 from data.self_validated import generate_self_validated_board
 
 
@@ -205,3 +206,21 @@ class RLEnv:
     @property
     def mine_hits(self) -> int:
         return self._hits
+
+    def solver_probs(self) -> "np.ndarray":
+        """Run ProbabilitySolver on current game state.
+
+        Returns P(mine) for each cell (H, W). Only valid for self-validated boards.
+        """
+        if self.game is None:
+            return np.zeros((self.height, self.width), dtype=np.float32)
+        solver = ProbabilitySolver(self.game)
+        probs = solver.compute_probabilities()
+        # Pad for mixed mode
+        if self.mixed:
+            H, W = probs.shape
+            pad = self.mixed_max_size
+            padded = np.full((pad, pad), 1.0, dtype=np.float32)
+            padded[:H, :W] = probs
+            return padded
+        return probs.astype(np.float32)
