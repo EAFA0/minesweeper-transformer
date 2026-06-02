@@ -37,7 +37,7 @@ class RLConfig:
     width: int = 8
     height: int = 8
     total_mines: int = 10
-    mine_continue: bool = False
+    mine_continue: bool = True   # True = learn from mine patterns via flag channel
     warmup_clicks: int = 0
     mixed_env: bool = False          # random size + density each episode
     mixed_min_size: int = 6
@@ -57,8 +57,12 @@ class RLConfig:
     entropy_coef: float = 0.0  # pretrained RL fine-tuning does not need forced exploration
 
     # Conservative RL: MSE anchoring prevents catastrophic forgetting
-    conservative_alpha: float = 0.5   # initial weight for MSE loss (1.0 = pure supervised)
-    alpha_decay: float = 0.9995       # per-batch decay: α ← α × decay
+    conservative_alpha: float = 0.9   # initial weight for MSE loss (1.0 = pure supervised)
+    alpha_decay: float = 0.9999       # per-batch decay: α ← α × decay
+
+    # Temperature annealing: start high (explore) → low (exploit)
+    temperature_min: float = 0.05
+    temperature_decay: float = 0.999  # per-batch decay
 
     # Architecture overrides (RL-specific)
     dropout: float = 0.0  # RL doesn't need dropout — pretrained weights are already converged
@@ -255,7 +259,7 @@ def reinforce_step(
     n_games: int = 8,
     refine_steps: int = POLICY.refinement.rl_steps,
     conservative_alpha: float = 0.0,  # 0=pure RL, 1=pure supervised
-) -> Tuple[float, float, float, float]:
+) -> Tuple[float, float, float, float, float]:
     """One REINFORCE update with optional MSE anchoring.
 
     Returns (total_loss, rl_loss, mse_loss, avg_return, new_baseline).
@@ -435,6 +439,7 @@ def train_rl(config: RLConfig) -> dict:
     )
     if config.conservative_alpha > 0:
         print(f"Conservative RL: α={config.conservative_alpha}, decay={config.alpha_decay}")
+    print(f"Temperature: {config.temperature} → min {config.temperature_min} (decay {config.temperature_decay})")
     print(f"Device: {device}")
 
     # Load pretrained model
@@ -511,11 +516,12 @@ def train_rl(config: RLConfig) -> dict:
 
     # Metrics
     baseline = 0.0
-    alpha = config.conservative_alpha  # current alpha for annealing
+    alpha = config.conservative_alpha
+    temperature = config.temperature  # current temperature for annealing
     metrics: dict[str, Any] = {
         "game": [], "loss": [], "rl_loss": [], "mse_loss": [],
         "avg_return": [], "win_rate": [], "eval_win_rate": [],
-        "alpha": [],
+        "alpha": [], "temperature": [],
     }
 
     Path(config.save_dir).mkdir(parents=True, exist_ok=True)
@@ -525,7 +531,7 @@ def train_rl(config: RLConfig) -> dict:
     for batch_start in range(1, config.total_games + 1, config.games_per_batch):
         loss, rl_loss, mse_loss, avg_ret, baseline = reinforce_step(
             model, optimizer, train_env,
-            temperature=config.temperature,
+            temperature=temperature,
             entropy_coef=config.entropy_coef,
             baseline=baseline,
             device=device, n_games=config.games_per_batch,
@@ -533,8 +539,9 @@ def train_rl(config: RLConfig) -> dict:
             conservative_alpha=alpha,
         )
 
-        # Anneal alpha
+        # Anneal alpha and temperature
         alpha *= config.alpha_decay
+        temperature = max(temperature * config.temperature_decay, config.temperature_min)
 
         total_played += config.games_per_batch
         metrics["game"].append(total_played)
@@ -543,6 +550,7 @@ def train_rl(config: RLConfig) -> dict:
         metrics["mse_loss"].append(mse_loss)
         metrics["avg_return"].append(avg_ret)
         metrics["alpha"].append(alpha)
+        metrics["temperature"].append(temperature)
 
         if total_played % config.log_every == 0 or total_played <= config.games_per_batch:
             eval_wr, _, _ = collect_eval(
@@ -556,7 +564,7 @@ def train_rl(config: RLConfig) -> dict:
                 f"  Game {total_played:5d}/{config.total_games} | "
                 f"loss={loss:.4f} rl={rl_loss:.4f} mse={mse_loss:.4f} | "
                 f"ret={avg_ret:.1f} | eval_wr={eval_wr:.1%} | "
-                f"α={alpha:.3f} | {elapsed:.0f}s"
+                f"α={alpha:.3f} τ={temperature:.3f} | {elapsed:.0f}s"
             )
 
         if total_played % config.save_every == 0:

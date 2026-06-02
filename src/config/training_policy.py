@@ -28,7 +28,8 @@ class RLRewardPolicy:
 
     reveal_safe: float = 1.0
     floodfill_bonus: float = 0.05
-    hit_mine: float = -20.0
+    hit_mine: float = -1.0   # less punishing with mine_continue
+    win_bonus: float = 10.0   # make winning clearly valuable
     step_penalty: float = 0.0
 
 

@@ -25,7 +25,8 @@ from data.self_validated import generate_self_validated_board
 class Rewards:
     reveal_safe: float = 1.0
     floodfill_bonus: float = 0.05
-    hit_mine: float = -20.0
+    hit_mine: float = -1.0   # less punishing with mine_continue
+    win_bonus: float = 10.0   # make winning clearly valuable
     step_penalty: float = 0.0
 
 
@@ -153,6 +154,7 @@ class RLEnv:
             )
 
         if self.game.status == GameStatus.WON:
+            reward += self.rewards.win_bonus
             return self.state, reward, True
         elif self.game.status == GameStatus.LOST:
             self._hits += 1

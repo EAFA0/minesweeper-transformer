@@ -32,8 +32,10 @@ def main() -> None:
                         help="Total games for RL training")
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--save_dir", default="checkpoints/rl")
-    parser.add_argument("--temperature", type=float, default=0.01,
-                        help="Action selection temperature (0 = deterministic argmin; default: 0.01)")
+    parser.add_argument("--temperature", type=float, default=0.3,
+                        help="Action selection temperature (higher = more exploration)")
+    parser.add_argument("--no_mine_continue", action="store_true",
+                        help="End episode on mine hit (default: continue, learn mine patterns)")
     parser.add_argument("--board_pool", default="",
                         help="Path to pre-built board pool (.npz). Default is based on board size.")
     parser.add_argument("--mixed", action="store_true",
@@ -70,7 +72,7 @@ def main() -> None:
     config = RLConfig(
         width=args.width, height=args.height,
         total_mines=args.mines,
-        mine_continue=True,
+        mine_continue=not args.no_mine_continue,
         board_pool_path=board_pool,
         pretrained_path=args.pretrained,
         total_games=args.total_games,
