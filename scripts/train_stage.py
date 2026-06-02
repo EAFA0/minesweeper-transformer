@@ -4,9 +4,11 @@
 核心路线 S1 → S2 → S3:
   S1 (规则):  8×8 / 10雷 → 学习基本扫雷规则
   S2 (密度):  8×8 / 20雷 → 学习雷密度可变
-  S3 (泛化):  8×8 / 25雷 → 高密度泛化 (39%密度, 接近评估目标 10×10/40)
+  S3 (高密度):  8×8 / 32雷 → 极限密度挑战 (50%密度)
 
-历史/实验阶段可通过 --legacy_stage 显式运行
+ 数据规模: S1=1000条, 后续阶段=200条 (transfer learning 收敛快)
+
+ 历史/实验阶段可通过 --legacy_stage 显式运行
 RL 微调: S3 完成后可选 REINFORCE fine-tuning
 
 用法:
@@ -26,7 +28,7 @@ from pathlib import Path
 STAGES = {
     "S1": {
         "width": 8, "height": 8, "mines": 10,
-        "n_samples": 10000, "epochs": 2,
+        "n_samples": 1000, "epochs": 2,
         "data_dir": "data/S1", "save_dir": "checkpoints/S1",
         "lr": 1e-3, "weight_decay": 3e-4,
         "pretrained": None,
@@ -35,7 +37,7 @@ STAGES = {
     },
     "S2": {
         "width": 8, "height": 8, "mines": 20,
-        "n_samples": 10000, "epochs": 2,
+        "n_samples": 200, "epochs": 3,
         "data_dir": "data/S2", "save_dir": "checkpoints/S2",
         "lr": 3e-4, "weight_decay": 3e-4,
         "pretrained": "checkpoints/S1/best_model.pt",
@@ -44,7 +46,7 @@ STAGES = {
     },
     "S3": {
         "width": 8, "height": 8, "mines": 32,
-        "n_samples": 10000, "epochs": 5,
+        "n_samples": 200, "epochs": 5,
         "data_dir": "data/S3", "save_dir": "checkpoints/S3",
         "lr": 3e-4, "weight_decay": 3e-4,
         "pretrained": "checkpoints/S2/best_model.pt",
@@ -56,7 +58,7 @@ STAGES = {
 LEGACY_STAGES = {
     "S1.5": {
         "width": 8, "height": 8, "mines": 15,
-        "n_samples": 10000, "epochs": 2,
+        "n_samples": 200, "epochs": 2,
         "data_dir": "data/S1.5", "save_dir": "checkpoints/S1.5",
         "lr": 3e-4, "weight_decay": 3e-4,
         "pretrained": "checkpoints/S1/best_model.pt",
@@ -65,7 +67,7 @@ LEGACY_STAGES = {
     },
     "S2.5": {
         "width": 8, "height": 8, "mines": 25,
-        "n_samples": 10000, "epochs": 3,
+        "n_samples": 200, "epochs": 3,
         "data_dir": "data/S2.5", "save_dir": "checkpoints/S2.5",
         "lr": 3e-4, "weight_decay": 3e-4,
         "pretrained": "checkpoints/S2/best_model.pt",
@@ -74,7 +76,7 @@ LEGACY_STAGES = {
     },
     "S2.75": {
         "width": 8, "height": 8, "mines": 30,
-        "n_samples": 10000, "epochs": 3,
+        "n_samples": 200, "epochs": 3,
         "data_dir": "data/S2.75", "save_dir": "checkpoints/S2.75",
         "lr": 3e-4, "weight_decay": 3e-4,
         "pretrained": "checkpoints/S2.5/best_model.pt",
@@ -83,7 +85,7 @@ LEGACY_STAGES = {
     },
     "S3L": {
         "width": 12, "height": 12, "mines": 40,
-        "n_samples": 10000, "epochs": 5,
+        "n_samples": 200, "epochs": 5,
         "data_dir": "data/S3L", "save_dir": "checkpoints/S3L",
         "lr": 3e-4, "weight_decay": 3e-4,
         "pretrained": "checkpoints/S3/best_model.pt",
@@ -92,7 +94,7 @@ LEGACY_STAGES = {
     },
     "S4L": {
         "width": 16, "height": 16, "mines": 80,
-        "n_samples": 10000, "epochs": 5,
+        "n_samples": 200, "epochs": 5,
         "data_dir": "data/S4L", "save_dir": "checkpoints/S4L",
         "lr": 3e-4, "weight_decay": 3e-4,
         "pretrained": "checkpoints/S3L/best_model.pt",

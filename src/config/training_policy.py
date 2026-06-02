@@ -17,9 +17,9 @@ class RefinementPolicy:
     """
 
     train_max_steps: int = 4     # Reduced to 4 to save compute during BPTT training
-    eval_max_steps: int = 16     # Allow deep reasoning during inference
-    rl_steps: int = 16
-    convergence_eps: float = 0.05  # stop when max|ΔP| < 5%
+    eval_max_steps: int = 4      # Match train_max_steps; prevents train/eval mismatch
+    rl_steps: int = 4
+    convergence_eps: float = 0.01  # stop when max|ΔP| < 1% (tightened from 5%)
 
 
 @dataclass(frozen=True)
