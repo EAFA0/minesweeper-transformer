@@ -205,13 +205,25 @@ class MinesweeperTransformer(nn.Module):
         # 1. Local Interaction (CNN): Combine board with explicit 1D probabilities
         x = torch.cat([board, prev_probs], dim=1)  # (B, 11, H, W)
         local_features = self.cnn(x)
-        local_features = self.pos_encoding(local_features)
 
         # 2. Memory Injection: Combine CNN's new insights with Transformer's old high-dimensional memory
         combined_features = local_features + mem_state
 
         # 3. Global Reasoning (Transformer)
-        seq = combined_features.flatten(2).transpose(1, 2)
+        #    Add positional encoding at token level to prevent PE accumulation
+        #    across refinement steps (PE was previously on CNN output, which got
+        #    baked into mem_state and doubled each iteration).
+        seq = combined_features.flatten(2).transpose(1, 2)  # (B, H*W, d_model)
+        _, _, H_feat, W_feat = combined_features.shape
+        if H_feat == self.pos_encoding.ref_grid and W_feat == self.pos_encoding.ref_grid:
+            pe = self.pos_encoding.pe
+        else:
+            pe = F.interpolate(
+                self.pos_encoding.pe, size=(H_feat, W_feat),
+                mode='bilinear', align_corners=False,
+            )
+        pe_seq = pe.flatten(2).transpose(1, 2)  # (1, H*W, d_model)
+        seq = seq + pe_seq
         seq = self.transformer(seq)
 
         # 4. Extract new states
