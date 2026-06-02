@@ -32,8 +32,8 @@ def main() -> None:
                         help="Total games for RL training")
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--save_dir", default="checkpoints/rl")
-    parser.add_argument("--temperature", type=float, default=1.0,
-                        help="Action selection temperature (default: 1.0)")
+    parser.add_argument("--temperature", type=float, default=0.01,
+                        help="Action selection temperature (0 = deterministic argmin; default: 0.01)")
     parser.add_argument("--board_pool", default="",
                         help="Path to pre-built board pool (.npz). Default is based on board size.")
     parser.add_argument("--mixed", action="store_true",
