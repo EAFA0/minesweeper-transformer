@@ -194,16 +194,16 @@ def train(config: TrainingConfig) -> TrainingMetrics:
                 best_idx = int(np.argmin(masked))
                 r, c = divmod(best_idx, config.board_width)
 
-            # BCE loss on frontier cells
-            frontier = _compute_frontier(game.visible)
-            if frontier.any():
+            # BCE loss on all covered cells (full supervision)
+            covered = game.covered_cells
+            if covered.any():
                 mine_mask = torch.from_numpy(game.get_mine_mask()).float().to(device)
-                frontier_t = torch.from_numpy(frontier).bool().to(device)
+                covered_t = torch.from_numpy(covered).bool().to(device)
 
-                probs_frontier = pv[0, 0][frontier_t]
-                labels_frontier = mine_mask[frontier_t]
+                probs_covered = pv[0, 0][covered_t]
+                labels_covered = mine_mask[covered_t]
 
-                bce_loss = F.binary_cross_entropy(probs_frontier, labels_frontier)
+                bce_loss = F.binary_cross_entropy(probs_covered, labels_covered)
                 bce_loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip_norm)
                 optimizer.step()
