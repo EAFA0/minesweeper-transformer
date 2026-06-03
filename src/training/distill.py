@@ -17,6 +17,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from model.architecture import MinesweeperTransformer, ModelConfig
 from game.constants import NUM_CHANNELS
+from training.evaluate import evaluate_model
 
 
 @dataclass
