@@ -152,6 +152,7 @@ def train_distill(config: DistillConfig):
             masks = masks.to(device)
 
             model_probs, _ = model(channels)  # (B, 1, H, W), (B, d_model, H, W)
+            model_probs = model_probs.squeeze(1)  # → (B, H, W)
 
             mask_bool = masks > 0.5
             if mask_bool.any():
