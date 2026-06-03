@@ -108,14 +108,13 @@ def train_distill(config: DistillConfig):
     # Model
     model_config = ModelConfig(
         in_channels=NUM_CHANNELS,
-        hidden_channels=config.hidden_channels,
         d_model=config.d_model,
-        num_transformer_layers=config.num_transformer_layers,
-        num_attention_heads=config.num_attention_heads,
-        d_ff=config.d_ff,
-        board_height=config.board_height,
-        board_width=config.board_width,
+        cnn_layers=3,
+        nhead=config.num_attention_heads,
+        num_layers=config.num_transformer_layers,
+        dim_feedforward=config.d_ff,
         refinement_steps=config.refinement_steps,
+        dropout=0.0,
     )
     model = MinesweeperTransformer(model_config).to(device)
     n_params = sum(p.numel() for p in model.parameters())
@@ -152,7 +151,7 @@ def train_distill(config: DistillConfig):
             probs = probs.to(device)
             masks = masks.to(device)
 
-            model_probs = model(channels)  # (B, H, W)
+            model_probs, _ = model(channels)  # (B, 1, H, W), (B, d_model, H, W)
 
             mask_bool = masks > 0.5
             if mask_bool.any():
