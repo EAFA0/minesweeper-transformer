@@ -100,22 +100,37 @@ class BoardPool:
 
 # ── Training Board Pool ────────────────────────────────────────────────────
 
+def _mp_generate_board(width: int, height: int, mines: int, seed: int):
+    """Multiprocessing worker: generate one board, return (mine_mask, visible)."""
+    rng = np.random.default_rng(seed)
+    game = generate_self_validated_board(
+        width=width, height=height,
+        total_mines=mines,
+        rng=rng, max_attempts=200,
+    )
+    if game is not None and game.status == GameStatus.PLAYING:
+        return (game.get_mine_mask(), game.visible.copy())
+    return None
+
+
 class TrainBoardPool:
     """Disk-backed pool of self-validated boards for online BCE training.
 
     Caches pre-generated boards as .npz (mine masks + visible state),
     same format as BoardPool.  On restart, loads existing cache instantly.
     Boards are consumed (pop'd) during training; pool refills from
-    solver when low.
+    solver when low, optionally using multiple worker processes.
     """
 
     def __init__(self, width: int, height: int, mines: int,
                  pool_size: int = 64, seed: int = 42,
+                 num_workers: int = 0,
                  cache_path: Optional[str] = None):
         self.width = width
         self.height = height
         self.mines = mines
         self.pool_size = pool_size
+        self.num_workers = num_workers
         self.rng = np.random.default_rng(seed)
 
         if cache_path is None:
@@ -159,14 +174,51 @@ class TrainBoardPool:
         return None
 
     def _fill(self):
-        while len(self._mines_list) < self.pool_size:
+        needed = self.pool_size - len(self._mines_list)
+        if needed <= 0:
+            return
+
+        if self.num_workers > 1 and needed >= self.num_workers:
+            self._fill_parallel(needed)
+        else:
+            self._fill_serial(needed)
+
+        if self._unsaved >= 10:
+            self._save_now()
+
+    def _fill_serial(self, needed: int):
+        for _ in range(needed):
             g = self._generate_one()
             if g is not None:
                 self._mines_list.append(g.get_mine_mask())
                 self._visible_list.append(g.visible.copy())
                 self._unsaved += 1
-        if self._unsaved >= 10:
-            self._save_now()
+
+    def _fill_parallel(self, needed: int):
+        """Generate boards using multiprocessing."""
+        from concurrent.futures import ProcessPoolExecutor
+        import os
+
+        seeds = [self.rng.integers(0, 2**31) for _ in range(needed)]
+        chunksize = max(1, needed // (self.num_workers * 2))
+
+        with ProcessPoolExecutor(max_workers=self.num_workers) as ex:
+            futures = [
+                ex.submit(
+                    _mp_generate_board,
+                    self.width, self.height, self.mines, seed,
+                )
+                for seed in seeds
+            ]
+            for fut in futures:
+                try:
+                    result = fut.result(timeout=120)
+                    if result is not None:
+                        self._mines_list.append(result[0])
+                        self._visible_list.append(result[1])
+                        self._unsaved += 1
+                except Exception:
+                    pass  # skip failed generations
 
     def get(self) -> Optional[MinesweeperGame]:
         """Pop one fresh board. Auto-refills and saves to disk."""

@@ -1,9 +1,10 @@
 # 训练记录
 
-当前主线: 三阶段监督预训练 — S1(规则) → S2(密度) → S3(高密度泛化)
-> **2026-06-03**: 大扫除完成。RL 归档，train_online 合并到 train.py（--mode online），评估逻辑统一到 `src/training/evaluate.py`，train/eval 共享 BoardPool+refinement。
+当前主线: Online BCE 三阶段训练 — S1(规则) → S2(密度) → S3(高密度泛化)
+> **2026-06-03**: 全线切换 Online BCE。MSE 监督训练、data_dir、LEGACY_STAGES 退役。评
+> 估和训练共享 BoardPool/TrainBoardPool。全 BPTT refinement (无 detach)。
 
-全局策略: refine 默认统一来自 `src/config/training_policy.py`。监督训练 BPTT 固定 4 步全展开（无 detach），评估/推理 4 步且收敛早停。
+全局策略: Online BCE 训练，refine 固定 4 步全 BPTT（无 detach），评估/推理 4 步且收敛早停。
 
 ## 日志格式
 

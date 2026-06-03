@@ -27,7 +27,7 @@
 
 ## 🚦 项目现状
 
-- **当前路线**: 三阶段监督预训练 — S1(规则) → S2(密度) → S3(高密度泛化)；Online BCE 冷启动验证中
+- **当前路线**: Online BCE 三阶段训练 — S1(规则) → S2(密度) → S3(高密度泛化)
 - **最新结果**: S3 (8×8/25雷) 零样本 10×10/40 曾达 74%；后续目标为复现 99%+ 胜率，再考虑 RL
 - **训练设备**: RTX 4070 SUPER (CUDA)，ssh ubuntu@FAEX1.local
 - **开发环境**: 本机 Linux + uv 包管理
@@ -49,17 +49,13 @@
 | 模块 | 路径 | 说明 |
 |------|------|------|
 | 模型架构 | `src/model/architecture.py` | CNN + Transformer + Refinement (V3 hidden state) |
-| 全局策略 | `src/config/training_policy.py` | 统一 refine/reward 默认策略 |
-| 数据生成 | `src/data/generator.py` | 自验证棋盘生成 + 概率标签 |
-| 混合数据 | `src/data/mixed_generator.py` | 可变尺寸+密度 padded 数据 |
-| 数据集 | `src/training/dataset.py` | PyTorch Dataset + D4 增强 |
-| **训练** | `scripts/train.py` | **统一入口: --mode supervised|online** |
-| 训练核心 | `src/training/train.py` | train_epoch (监督MSE) + train_online (BCE) |
-| **评估** | `src/training/evaluate.py` | **共享: BoardPool + evaluate_model** |
-| 评估脚本 | `scripts/evaluate.py` | 独立评估 CLI |
-| **分阶段训练** | `scripts/train_stage.py` | **统一入口: S1→S2→S3** |
-| 数据生成脚本 | `scripts/generate_data.py` | 数据生成 CLI |
-| RL (已归档) | `scripts/archived/` | RL 代码已搁置，等待复现 99%+ 后再考虑 |
+| 全局策略 | `src/config/training_policy.py` | 统一 refine 默认策略 |
+| 训练核心 | `src/training/train.py` | Online BCE (frontier loss, 全 BPTT) |
+| 棋盘池 | `src/training/evaluate.py` | BoardPool (eval) + TrainBoardPool (train, mp) |
+| 评估 | `scripts/evaluate.py` | 独立评估 CLI |
+| **训练** | `scripts/train.py` | 训练入口 |
+| **分阶段** | `scripts/train_stage.py` | S1→S2→S3 编排 |
+| RL/旧代码 | `scripts/archived/` | RL、MSE 监督训练、data gen 等 |
 
 ## 🎯 Agent 开发约束
 
