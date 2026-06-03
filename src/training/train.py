@@ -161,8 +161,10 @@ def train(config: TrainingConfig) -> TrainingMetrics:
     )
     print(f"Board pool: {pool.available} boards ({pool.path})")
 
-    # Use eval mode to prevent BatchNorm corruption from batch_size=1
-    model.eval()
+    # Use train mode: BN statistics adapt to data distribution over time.
+    # V4 CNN runs once per forward call, so single-sample BN noise is
+    # acceptable and far better than frozen statistics.
+    model.train()
 
     t0 = time.time()
     best_win_rate = metrics.best_win_rate
@@ -219,7 +221,8 @@ def train(config: TrainingConfig) -> TrainingMetrics:
 
         # Periodic eval + checkpoint
         if (game_idx + 1) % config.eval_interval_games == 0:
-            wr, _ = _run_eval(model, device, config, game_idx + 1, config.n_games, t0)
+            wr, acc = _run_eval(model, device, config, game_idx + 1, config.n_games, t0)
+            metrics.val_action_accuracy.append(acc)
 
             _save_checkpoint(
                 save_dir, "latest.pt",
