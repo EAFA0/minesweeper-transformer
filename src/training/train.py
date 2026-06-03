@@ -12,11 +12,10 @@ from typing import List, Optional
 
 import numpy as np
 import torch
-import torch.nn as nn
+import torch.nn.functional as F
 
 from config import POLICY
 from game.constants import CellState, GameStatus, MoveType
-from game.game import MinesweeperGame
 from model.architecture import MinesweeperTransformer, ModelConfig
 from training.evaluate import evaluate_model as evaluate_game_model
 from training.evaluate import load_model, TrainBoardPool
@@ -42,7 +41,7 @@ class TrainingConfig:
 
     # Optimizer
     learning_rate: float = 3e-4
-    min_lr: float = 1e-6
+    min_lr: float = 0.0
     weight_decay: float = 3e-4
     grad_clip_norm: float = 1.0
 
@@ -52,7 +51,6 @@ class TrainingConfig:
         return POLICY.refinement.train_max_steps
 
     # Logging
-    log_interval: int = 50
     save_dir: str = "checkpoints"
     device: str = "cpu"
 
@@ -203,7 +201,7 @@ def train(config: TrainingConfig) -> TrainingMetrics:
                 probs_frontier = pv[0, 0][frontier_t]
                 labels_frontier = mine_mask[frontier_t]
 
-                bce_loss = nn.functional.binary_cross_entropy(probs_frontier, labels_frontier)
+                bce_loss = F.binary_cross_entropy(probs_frontier, labels_frontier)
                 bce_loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip_norm)
                 optimizer.step()
