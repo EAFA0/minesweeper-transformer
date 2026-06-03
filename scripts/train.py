@@ -57,6 +57,15 @@ def main():
     device = args.device if args.device != "auto" else auto_device()
     print(f"Device: {device}")
 
+    lr = args.learning_rate
+
+    # Auto-reduce lr when fine-tuning (pretrained model is already good)
+    if args.pretrained and args.learning_rate == 3e-4:
+        lr = 1e-4
+        print(f"Fine-tuning mode: auto-lowering lr {3e-4:.0e} → {lr:.0e}")
+    elif args.pretrained and lr >= 3e-4:
+        print(f"⚠ Fine-tuning with lr={lr:.0e} — consider using --lr 1e-5 for stability")
+
     config = TrainingConfig(
         board_width=args.board_width,
         board_height=args.board_height,
@@ -68,7 +77,7 @@ def main():
         eval_interval_games=args.eval_interval_games,
         eval_games=args.eval_games,
         board_pool_path=args.board_pool_path,
-        learning_rate=args.learning_rate,
+        learning_rate=lr,
         weight_decay=args.weight_decay,
         grad_clip_norm=args.grad_clip_norm,
         save_dir=args.save_dir,
