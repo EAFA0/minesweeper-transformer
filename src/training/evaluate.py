@@ -101,23 +101,54 @@ class BoardPool:
 # ── Training Board Pool ────────────────────────────────────────────────────
 
 class TrainBoardPool:
-    """In-memory pool of self-validated boards for online BCE training.
+    """Disk-backed pool of self-validated boards for online BCE training.
 
-    Pre-generates boards to avoid solver overhead during training.
-    Lazy refill when pool drops below half.
+    Caches pre-generated boards as .npz (mine masks + visible state),
+    same format as BoardPool.  On restart, loads existing cache instantly.
+    Boards are consumed (pop'd) during training; pool refills from
+    solver when low.
     """
 
     def __init__(self, width: int, height: int, mines: int,
-                 pool_size: int = 32, seed: int = 42):
+                 pool_size: int = 64, seed: int = 42,
+                 cache_path: Optional[str] = None):
         self.width = width
         self.height = height
         self.mines = mines
         self.pool_size = pool_size
         self.rng = np.random.default_rng(seed)
-        self._pool: list = []
-        self._fill()  # pre-generate on init
 
-    def _generate_one(self):
+        if cache_path is None:
+            cache_path = f"train_boards_{width}x{height}_{mines}.npz"
+        self.path = Path(cache_path)
+
+        self._mines_list: List[np.ndarray] = []
+        self._visible_list: List[np.ndarray] = []
+        self._unsaved = 0
+        self._load_disk()
+        self._fill()
+        self._save_now()
+
+    def _load_disk(self):
+        if not self.path.exists():
+            return
+        data = np.load(self.path, allow_pickle=True)
+        n = len(data.files) // 2
+        self._mines_list = [data[f"mines_{i}"] for i in range(n)]
+        self._visible_list = [data[f"visible_{i}"] for i in range(n)]
+        print(f"  Loaded {n} boards from {self.path}")
+
+    def _save_now(self):
+        if not self._mines_list:
+            return
+        save_dict = {}
+        for i, (m, v) in enumerate(zip(self._mines_list, self._visible_list)):
+            save_dict[f"mines_{i}"] = m
+            save_dict[f"visible_{i}"] = v
+        np.savez_compressed(self.path, **save_dict)
+        self._unsaved = 0
+
+    def _generate_one(self) -> Optional[MinesweeperGame]:
         game = generate_self_validated_board(
             width=self.width, height=self.height,
             total_mines=self.mines,
@@ -128,23 +159,41 @@ class TrainBoardPool:
         return None
 
     def _fill(self):
-        while len(self._pool) < self.pool_size:
+        while len(self._mines_list) < self.pool_size:
             g = self._generate_one()
             if g is not None:
-                self._pool.append(g)
+                self._mines_list.append(g.get_mine_mask())
+                self._visible_list.append(g.visible.copy())
+                self._unsaved += 1
+        if self._unsaved >= 10:
+            self._save_now()
 
-    def get(self):
-        """Get a fresh board. Refills lazily when pool is low."""
-        if not self._pool:
+    def get(self) -> Optional[MinesweeperGame]:
+        """Pop one fresh board. Auto-refills and saves to disk."""
+        if not self._mines_list:
             self._fill()
-        game = self._pool.pop()
-        if len(self._pool) < self.pool_size // 2:
+        if not self._mines_list:
+            return None
+
+        mine = self._mines_list.pop()
+        vis = self._visible_list.pop()
+
+        # Save remaining boards to disk
+        if self._mines_list:
+            self._save_now()
+
+        # Refill in background
+        if len(self._mines_list) < self.pool_size // 2:
             self._fill()
-        return game
+
+        return MinesweeperGame.from_mine_mask(
+            self.width, self.height, mine,
+            first_done=True, visible=vis,
+        )
 
     @property
     def available(self) -> int:
-        return len(self._pool)
+        return len(self._mines_list)
 
 
 

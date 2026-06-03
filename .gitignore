@@ -41,3 +41,4 @@ uv.lock
 *.npz
 
 ai-docs/
+train_boards_*.npz

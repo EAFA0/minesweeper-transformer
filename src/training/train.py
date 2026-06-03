@@ -68,7 +68,7 @@ class TrainingConfig:
     eval_interval_games: int = 50 # run evaluation every N games
     eval_games: int = 100         # number of eval games per evaluation
     board_pool_path: str = ""     # path to eval board pool .npz
-    board_pool_size: int = 64     # training board pool size (pre-generate)
+    board_pool_size: int = 64     # training board pool size (disk-cached)
     board_width: int = 8          # board width for online BCE
     board_height: int = 8         # board height for online BCE
     board_mines: int = 10         # board mines for online BCE
@@ -552,14 +552,14 @@ def train_online(config: TrainingConfig) -> TrainingMetrics:
     save_dir = Path(config.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
 
-    # Board pool for training
+    # Board pool for training (disk-backed, survives restarts)
     pool = TrainBoardPool(
         width=config.board_width,
         height=config.board_height,
         mines=config.board_mines,
         pool_size=config.board_pool_size,
     )
-    print(f"Training board pool: {pool.available} boards ready")
+    print(f"Training board pool: {pool.available} boards ready ({pool.path})")
 
     rng = np.random.default_rng(42)
     t0 = time.time()
