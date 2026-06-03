@@ -567,6 +567,11 @@ def train_online(config: TrainingConfig) -> TrainingMetrics:
 
     n_games = config.n_games or (config.epochs * config.eval_interval_games)
 
+    # Use eval mode during forward to prevent BatchNorm corruption from
+    # batch_size=1 train-mode statistics. Gradients still flow through
+    # learnable gamma/beta even in eval mode.
+    model.eval()
+
     for game_idx in range(n_games):
         # Get fresh board from pool
         game = pool.get()
@@ -580,8 +585,6 @@ def train_online(config: TrainingConfig) -> TrainingMetrics:
             channels = game.board_to_channels()
             ch_t = torch.from_numpy(channels).unsqueeze(0).float().to(device)
             B, _, H, W = ch_t.shape
-
-            model.train()
 
             # Initial prior
             mem_state = torch.zeros((B, model.config.hidden_channels, H, W), device=device)
