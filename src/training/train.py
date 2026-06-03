@@ -42,6 +42,7 @@ class TrainingConfig:
 
     # Optimizer
     learning_rate: float = 3e-4
+    min_lr: float = 1e-6
     weight_decay: float = 3e-4
     grad_clip_norm: float = 1.0
 
@@ -140,6 +141,15 @@ def train(config: TrainingConfig) -> TrainingMetrics:
             for pg in optimizer.param_groups:
                 pg["lr"] = config.learning_rate
 
+    # Cosine LR schedule: decay from initial_lr → min_lr over n_games
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=config.n_games, eta_min=config.min_lr,
+    )
+    # Step scheduler forward if resuming mid-training
+    for _ in range(start_game):
+        scheduler.step()
+    print(f"LR schedule: cosine {config.learning_rate:.0e} → {config.min_lr:.0e} over {config.n_games} games")
+
     save_dir = Path(config.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
 
@@ -215,6 +225,7 @@ def train(config: TrainingConfig) -> TrainingMetrics:
 
         avg_loss = game_loss / max(1, game_steps)
         metrics.train_loss.append(avg_loss)
+        scheduler.step()  # cosine decay each game
 
         # Periodic eval + checkpoint
         if (game_idx + 1) % config.eval_interval_games == 0:
@@ -223,7 +234,7 @@ def train(config: TrainingConfig) -> TrainingMetrics:
             _save_checkpoint(
                 save_dir, "latest.pt",
                 model, optimizer, model_config, metrics,
-                game_idx + 1, best_win_rate, wr,
+                game_idx + 1, best_win_rate, wr, scheduler,
             )
 
             if wr > best_win_rate:
@@ -236,6 +247,7 @@ def train(config: TrainingConfig) -> TrainingMetrics:
         if (game_idx + 1) % 10 == 0:
             elapsed = time.time() - t0
             print(f"  Game {game_idx+1:5d} | loss={avg_loss:.4f} | "
+                  f"lr={scheduler.get_last_lr()[0]:.1e} | "
                   f"best_wr={best_win_rate:.1%} | {elapsed:.0f}s")
 
     total_time = time.time() - t0
@@ -245,28 +257,28 @@ def train(config: TrainingConfig) -> TrainingMetrics:
     _save_checkpoint(
         save_dir, "final_model.pt",
         model, optimizer, model_config, metrics,
-        config.n_games, best_win_rate, best_win_rate,
+        config.n_games, best_win_rate, best_win_rate, scheduler,
     )
 
     return metrics
 
 
-def _save_checkpoint(path, fname, model, optimizer, model_config, metrics, epoch, best_wr, wr):
-    torch.save(
-        {
-            "epoch": epoch,
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "model_config": model_config,
-            "loss_type": "online_bce",
-            "train_loss": metrics.train_loss,
-            "val_action_accuracy": metrics.val_action_accuracy,
-            "best_win_rate": best_wr,
-            "best_epoch": metrics.best_epoch,
-            "win_rate": wr,
-        },
-        Path(path) / fname,
-    )
+def _save_checkpoint(path, fname, model, optimizer, model_config, metrics, epoch, best_wr, wr, scheduler=None):
+    data = {
+        "epoch": epoch,
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "model_config": model_config,
+        "loss_type": "online_bce",
+        "train_loss": metrics.train_loss,
+        "val_action_accuracy": metrics.val_action_accuracy,
+        "best_win_rate": best_wr,
+        "best_epoch": metrics.best_epoch,
+        "win_rate": wr,
+    }
+    if scheduler is not None:
+        data["scheduler_state_dict"] = scheduler.state_dict()
+    torch.save(data, Path(path) / fname)
 
 
 def _run_eval(model, device, config, game_idx, n_games, t0):
