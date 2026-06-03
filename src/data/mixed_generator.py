@@ -18,10 +18,10 @@ from typing import List, Optional
 
 import numpy as np
 
-from minesweeper_transformer.minesweeper.game import MinesweeperGame
-from minesweeper_transformer.minesweeper.constants import CellState, MoveType, GameStatus
-from minesweeper_transformer.minesweeper.probability_solver import ProbabilitySolver
-from minesweeper_transformer.data.generator import save_trajectory_buffer
+from game.game import MinesweeperGame
+from game.constants import CellState, MoveType, GameStatus
+from game.probability_solver import ProbabilitySolver
+from data.generator import save_trajectory_buffer
 
 
 def generate_mixed_data(
@@ -136,7 +136,7 @@ def _record_padded_trajectory(
     rng: np.random.Generator,
 ) -> Optional[dict]:
     """Play through a no-guess board, recording padded states."""
-    from minesweeper_transformer.data.no_guess import generate_no_guess_board
+    from data.no_guess import generate_no_guess_board
 
     # Generate no-guess board at actual size
     game = generate_no_guess_board(

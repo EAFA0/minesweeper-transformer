@@ -11,7 +11,7 @@ Examples:
 import argparse
 import torch
 
-from minesweeper_transformer.training.evaluate import BoardPool, evaluate_model, load_model
+from training.evaluate import BoardPool, evaluate_model, load_model
 
 
 def main():

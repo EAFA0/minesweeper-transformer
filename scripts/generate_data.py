@@ -13,12 +13,12 @@ from typing import Optional
 
 import numpy as np
 
-from minesweeper_transformer.data.generator import (
+from data.generator import (
     generate_training_data,
     record_game_trajectory,
     save_trajectory_buffer,
 )
-from minesweeper_transformer.data.mixed_generator import generate_mixed_data
+from data.mixed_generator import generate_mixed_data
 
 
 def _parallel_worker(seed, width, height, total_mines):

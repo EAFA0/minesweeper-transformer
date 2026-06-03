@@ -20,7 +20,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from minesweeper_transformer.config import POLICY
+from config import POLICY
 
 @dataclass
 class ModelConfig:

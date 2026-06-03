@@ -9,8 +9,8 @@ from typing import Optional, Tuple
 
 import numpy as np
 
-from minesweeper_transformer.minesweeper.game import MinesweeperGame
-from minesweeper_transformer.minesweeper.constants import MoveType
+from game.game import MinesweeperGame
+from game.constants import MoveType
 
 
 def generate_no_guess_board(
@@ -93,8 +93,8 @@ def _generate_fallback(
     Only returns boards that our solver can fully solve.
     Much lower success rate than ms-toollib above ~15% mine density.
     """
-    from minesweeper_transformer.minesweeper.solver import ConstraintSolver
-    from minesweeper_transformer.minesweeper.constants import CellState, GameStatus
+    from game.solver import ConstraintSolver
+    from game.constants import CellState, GameStatus
 
     for _ in range(max_attempts * 3):  # more attempts for low-success-rate fallback
         game = MinesweeperGame(width, height, total_mines)

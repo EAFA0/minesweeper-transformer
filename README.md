@@ -5,7 +5,7 @@ CNN + Transformer 混合架构的扫雷 AI。当前主线：**监督预训练 `S
 ## 快速开始
 
 ```bash
-# 1. 安装依赖（editable install，import minesweeper_transformer 随处可用）
+# 1. 安装依赖（editable install，import model/training/data 随处可用）
 uv sync
 
 # 2. 监督预训练主线：S1 → S2 → S3
@@ -22,7 +22,7 @@ uv run python3 scripts/train.py --mode online --n_games 5000 \
 
 ## 全局策略配置
 
-跨训练和评估必须一致的项目参数统一维护在 `src/minesweeper_transformer/config/training_policy.py`：
+跨训练和评估必须一致的项目参数统一维护在 `src/config/training_policy.py`：
 
 ```text
 refinement.train_max_steps = 4   # 监督训练 BPTT 全展开（无 detach）
@@ -82,8 +82,8 @@ uv run python3 scripts/train_stage.py --stage S3 --eval_only --eval 10 10 40
 ## 项目结构
 
 ```text
-src/minesweeper_transformer/
-  minesweeper/     扫雷引擎、求解器
+src/
+  game/             扫雷引擎、求解器
   config/          训练/评估策略配置
   data/            数据生成（自验证棋盘 + 概率标签）
   model/           CNN + Transformer + iterative refinement (V3 hidden state)

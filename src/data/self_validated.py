@@ -20,9 +20,9 @@ from typing import Optional
 
 import numpy as np
 
-from minesweeper_transformer.minesweeper.game import MinesweeperGame
-from minesweeper_transformer.minesweeper.constants import CellState, MoveType, GameStatus
-from minesweeper_transformer.minesweeper.probability_solver import ProbabilitySolver
+from game.game import MinesweeperGame
+from game.constants import CellState, MoveType, GameStatus
+from game.probability_solver import ProbabilitySolver
 
 
 def generate_self_validated_board(

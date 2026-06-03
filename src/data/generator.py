@@ -14,9 +14,9 @@ from typing import List, Optional
 
 import numpy as np
 
-from minesweeper_transformer.minesweeper.game import MinesweeperGame
-from minesweeper_transformer.minesweeper.constants import CellState, MoveType, GameStatus
-from minesweeper_transformer.minesweeper.probability_solver import ProbabilitySolver
+from game.game import MinesweeperGame
+from game.constants import CellState, MoveType, GameStatus
+from game.probability_solver import ProbabilitySolver
 
 
 def save_trajectory_buffer(
@@ -74,7 +74,7 @@ def record_game_trajectory(
         rng = np.random.default_rng()
 
     # Generate no-guess board
-    from minesweeper_transformer.data.no_guess import generate_no_guess_board
+    from data.no_guess import generate_no_guess_board
     game = generate_no_guess_board(
         width=width, height=height, total_mines=total_mines,
         rng=rng, max_attempts=100,

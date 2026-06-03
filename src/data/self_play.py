@@ -12,10 +12,10 @@ import numpy as np
 from pathlib import Path
 from typing import Optional
 
-from minesweeper_transformer.minesweeper.game import MinesweeperGame
-from minesweeper_transformer.minesweeper.constants import MoveType, GameStatus, CellState
-from minesweeper_transformer.minesweeper.probability_solver import ProbabilitySolver
-from minesweeper_transformer.data.no_guess import generate_no_guess_board
+from game.game import MinesweeperGame
+from game.constants import MoveType, GameStatus, CellState
+from game.probability_solver import ProbabilitySolver
+from data.no_guess import generate_no_guess_board
 
 
 def collect_self_play_trajectory(

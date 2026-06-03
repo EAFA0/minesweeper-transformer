@@ -21,14 +21,14 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-from minesweeper_transformer.config import POLICY
-from minesweeper_transformer.data.self_validated import generate_self_validated_board
-from minesweeper_transformer.minesweeper.constants import CellState, GameStatus, MoveType
-from minesweeper_transformer.minesweeper.game import MinesweeperGame
-from minesweeper_transformer.model.architecture import MinesweeperTransformer, ModelConfig
-from minesweeper_transformer.training.dataset import MinesweeperDataset
-from minesweeper_transformer.training.evaluate import evaluate_model as evaluate_game_model
-from minesweeper_transformer.training.evaluate import load_model
+from config import POLICY
+from data.self_validated import generate_self_validated_board
+from game.constants import CellState, GameStatus, MoveType
+from game.game import MinesweeperGame
+from model.architecture import MinesweeperTransformer, ModelConfig
+from training.dataset import MinesweeperDataset
+from training.evaluate import evaluate_model as evaluate_game_model
+from training.evaluate import load_model
 
 
 @dataclass

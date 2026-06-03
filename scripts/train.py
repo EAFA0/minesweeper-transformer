@@ -12,7 +12,7 @@ Examples:
 import argparse
 import torch
 
-from minesweeper_transformer.training.train import TrainingConfig, train, train_online
+from training.train import TrainingConfig, train, train_online
 
 
 def auto_device() -> str:
