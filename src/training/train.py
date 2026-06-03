@@ -190,7 +190,7 @@ def train(config: TrainingConfig) -> TrainingMetrics:
                 probs_np = pv[0, 0].cpu().numpy()
                 masked = np.where(covered, probs_np, 2.0)
                 best_idx = int(np.argmin(masked))
-                r, c = divmod(best_idx, W)
+                r, c = divmod(best_idx, config.board_width)
 
             # BCE loss on frontier cells
             frontier = _compute_frontier(game.visible)
