@@ -39,7 +39,6 @@ def main():
     p.add_argument("--d_ff", type=int, default=256)
     p.add_argument("--eval_interval", type=int, default=1)
     p.add_argument("--eval_games", type=int, default=200)
-    p.add_argument("--pool_size", type=int, default=128)
     p.add_argument("--save_dir", default="checkpoints/distill_6x6_18")
     p.add_argument("--device", default="auto")
     p.add_argument("--seed", type=int, default=42)
@@ -67,7 +66,6 @@ def main():
         d_ff=args.d_ff,
         eval_interval_epochs=args.eval_interval,
         eval_games=args.eval_games,
-        board_pool_size=args.pool_size,
         save_dir=args.save_dir,
         device=args.device,
         seed=args.seed,
