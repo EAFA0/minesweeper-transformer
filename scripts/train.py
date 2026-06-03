@@ -54,6 +54,7 @@ def main():
 
     # Online-specific
     p.add_argument("--n_games", type=int, default=5000)
+    p.add_argument("--pool_size", type=int, default=64, help="Training board pool size")
     p.add_argument("--board_width", type=int, default=8)
     p.add_argument("--board_height", type=int, default=8)
     p.add_argument("--board_mines", type=int, default=10)
@@ -86,6 +87,7 @@ def main():
         val_ratio=args.val_ratio,
         # Online BCE
         n_games=args.n_games,
+        board_pool_size=args.pool_size,
         board_width=args.board_width,
         board_height=args.board_height,
         board_mines=args.board_mines,

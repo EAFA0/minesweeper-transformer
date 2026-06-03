@@ -11,6 +11,7 @@ Shared:
 """
 
 import json
+import shutil
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,13 +23,12 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from config import POLICY
-from data.self_validated import generate_self_validated_board
 from game.constants import CellState, GameStatus, MoveType
 from game.game import MinesweeperGame
 from model.architecture import MinesweeperTransformer, ModelConfig
 from training.dataset import MinesweeperDataset
 from training.evaluate import evaluate_model as evaluate_game_model
-from training.evaluate import load_model
+from training.evaluate import load_model, TrainBoardPool
 
 
 @dataclass
@@ -68,6 +68,7 @@ class TrainingConfig:
     eval_interval_games: int = 50 # run evaluation every N games
     eval_games: int = 100         # number of eval games per evaluation
     board_pool_path: str = ""     # path to eval board pool .npz
+    board_pool_size: int = 64     # training board pool size (pre-generate)
     board_width: int = 8          # board width for online BCE
     board_height: int = 8         # board height for online BCE
     board_mines: int = 10         # board mines for online BCE
@@ -551,6 +552,15 @@ def train_online(config: TrainingConfig) -> TrainingMetrics:
     save_dir = Path(config.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
 
+    # Board pool for training
+    pool = TrainBoardPool(
+        width=config.board_width,
+        height=config.board_height,
+        mines=config.board_mines,
+        pool_size=config.board_pool_size,
+    )
+    print(f"Training board pool: {pool.available} boards ready")
+
     rng = np.random.default_rng(42)
     t0 = time.time()
     best_win_rate = 0.0
@@ -558,14 +568,8 @@ def train_online(config: TrainingConfig) -> TrainingMetrics:
     n_games = config.n_games or (config.epochs * config.eval_interval_games)
 
     for game_idx in range(n_games):
-        # Generate self-validated board
-        game = generate_self_validated_board(
-            width=config.board_width,
-            height=config.board_height,
-            total_mines=config.board_mines,
-            rng=rng,
-            max_attempts=200,
-        )
+        # Get fresh board from pool
+        game = pool.get()
         if game is None or game.status != GameStatus.PLAYING:
             continue
 
@@ -637,25 +641,31 @@ def train_online(config: TrainingConfig) -> TrainingMetrics:
             )
             metrics.val_action_accuracy.append(act_acc)
 
+            # Always save latest checkpoint (for partial eval)
+            torch.save(
+                {
+                    "epoch": game_idx + 1,
+                    "model_state_dict": model.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "win_rate": wr,
+                    "action_accuracy": act_acc,
+                    "model_config": model_config,
+                    "loss_type": "online_bce",
+                    "train_loss": metrics.train_loss,
+                    "val_action_accuracy": metrics.val_action_accuracy,
+                    "best_win_rate": best_win_rate,
+                    "best_epoch": metrics.best_epoch,
+                },
+                save_dir / "latest.pt",
+            )
+
+            # Save best separately
             if wr > best_win_rate:
                 best_win_rate = wr
                 metrics.best_epoch = game_idx + 1
-                torch.save(
-                    {
-                        "epoch": game_idx + 1,
-                        "model_state_dict": model.state_dict(),
-                        "optimizer_state_dict": optimizer.state_dict(),
-                        "win_rate": wr,
-                        "action_accuracy": act_acc,
-                        "model_config": model_config,
-                        "loss_type": "online_bce",
-                        "train_loss": metrics.train_loss,
-                        "val_action_accuracy": metrics.val_action_accuracy,
-                        "best_win_rate": best_win_rate,
-                        "best_epoch": metrics.best_epoch,
-                    },
-                    save_dir / "best_model.pt",
-                )
+                # Copy latest → best_model.pt
+                import shutil
+                shutil.copy2(save_dir / "latest.pt", save_dir / "best_model.pt")
 
         # Print progress
         if (game_idx + 1) % 10 == 0:

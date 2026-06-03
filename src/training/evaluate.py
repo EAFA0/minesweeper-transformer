@@ -97,6 +97,56 @@ class BoardPool:
         return len(mines)
 
 
+
+# ── Training Board Pool ────────────────────────────────────────────────────
+
+class TrainBoardPool:
+    """In-memory pool of self-validated boards for online BCE training.
+
+    Pre-generates boards to avoid solver overhead during training.
+    Lazy refill when pool drops below half.
+    """
+
+    def __init__(self, width: int, height: int, mines: int,
+                 pool_size: int = 32, seed: int = 42):
+        self.width = width
+        self.height = height
+        self.mines = mines
+        self.pool_size = pool_size
+        self.rng = np.random.default_rng(seed)
+        self._pool: list = []
+
+    def _generate_one(self):
+        game = generate_self_validated_board(
+            width=self.width, height=self.height,
+            total_mines=self.mines,
+            rng=self.rng, max_attempts=200,
+        )
+        if game is not None and game.status == GameStatus.PLAYING:
+            return game
+        return None
+
+    def _fill(self):
+        while len(self._pool) < self.pool_size:
+            g = self._generate_one()
+            if g is not None:
+                self._pool.append(g)
+
+    def get(self):
+        """Get a fresh board. Refills lazily when pool is low."""
+        if not self._pool:
+            self._fill()
+        game = self._pool.pop()
+        if len(self._pool) < self.pool_size // 2:
+            self._fill()
+        return game
+
+    @property
+    def available(self) -> int:
+        return len(self._pool)
+
+
+
 # ── Inference ───────────────────────────────────────────────────────────────
 
 def pick_action(
