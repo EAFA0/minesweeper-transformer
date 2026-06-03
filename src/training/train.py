@@ -1,32 +1,43 @@
-"""Training loop for probability distillation.
+"""Training loop for Minesweeper Transformer.
 
-Trains the MinesweeperTransformer to predict P(mine) for covered cells.
-Uses MSE loss against solver-computed probability labels.
+Supports two modes:
+- Supervised (MSE): train from pre-generated .npz probability distillation data
+- Online BCE: generate self-validated boards on-the-fly, compute BCE loss on frontier
 
-Supports:
-- Fresh training from scratch
-- Curriculum transfer (--pretrained: weights only)
-- Training resume (--resume: weights + optimizer state + metrics)
-- Iterative refinement training (refinement_steps > 1)
+Shared:
+- Full BPTT refinement (no detach between steps)
+- Common evaluation via training.evaluate
+- Checkpoint save/load for both modes
 """
 
 import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Optional
 
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from config import POLICY
+from data.generator import Generator
+from data.self_validated import generate_self_validated_board
+from minesweeper.constants import CellState, GameStatus, MoveType
+from minesweeper.game import MinesweeperGame
 from model.architecture import MinesweeperTransformer, ModelConfig
 from training.dataset import MinesweeperDataset
+from training.evaluate import evaluate_model as evaluate_game_model
+from training.evaluate import load_model
 
 
 @dataclass
 class TrainingConfig:
     """Hyperparameters for training."""
+    # Mode
+    mode: str = "supervised"      # "supervised" or "online"
+
     # Data
     data_dir: str = "data/training"
     val_ratio: float = 0.1
@@ -52,6 +63,16 @@ class TrainingConfig:
     # Checkpoint
     pretrained: str = ""          # curriculum transfer: load weights only, fresh optimizer
     resume_from: str = ""         # resume training: load weights + optimizer + epoch + metrics
+
+    # Online BCE settings
+    n_games: int = 0              # total games for online BCE (0 = use epochs)
+    eval_interval_games: int = 50 # run evaluation every N games
+    eval_games: int = 100         # number of eval games per evaluation
+    board_pool_path: str = ""     # path to eval board pool .npz
+    board_width: int = 8          # board width for online BCE
+    board_height: int = 8         # board height for online BCE
+    board_mines: int = 10         # board mines for online BCE
+    max_game_steps: int = 200     # max steps per game
 
     def __post_init__(self):
         if self.device == "auto":
@@ -162,27 +183,18 @@ def train_epoch(
 
         optimizer.zero_grad()
         
-        if refinement_steps > 1:
+        # Initial prior (Hidden State Memory + Probs)
+        mem_state = torch.zeros((B, model.config.hidden_channels, channels.shape[2], channels.shape[3]), device=device)
+        prev_probs = torch.full((B, 1, channels.shape[2], channels.shape[3]), 0.5, device=device)
 
-            # Initial prior (Hidden State Memory + Probs)
-            mem_state = torch.zeros((B, model.config.hidden_channels, channels.shape[2], channels.shape[3]), device=device)
-            prev_probs = torch.full((B, 1, channels.shape[2], channels.shape[3]), 0.5, device=device)
+        # Full BPTT through refinement loop — no detach between steps.
+        # Gradient flows through all steps, teaching the model to produce
+        # useful intermediate prev_probs and mem_state.
+        for step in range(refinement_steps):
+            prev_probs, mem_state = model._single_pass(channels, prev_probs, mem_state)
 
-            # Fixed Refinement loop (BPTT)
-            for step in range(refinement_steps):
-                prev_probs, mem_state = model._single_pass(channels, prev_probs, mem_state)
-                # Detach for intermediate steps to prevent BPTT OOM, only the last step tracks gradient
-                if step < refinement_steps - 1:
-                    prev_probs = prev_probs.detach()
-                    mem_state = mem_state.detach()
-                
-            loss = compute_masked_mse(prev_probs, probs, mask)
-            pred_probs = prev_probs
-
-        else:
-            raw = model(channels)
-            pred_probs = torch.sigmoid(raw)
-            loss = compute_masked_mse(pred_probs, probs, mask)
+        loss = compute_masked_mse(prev_probs, probs, mask)
+        pred_probs = prev_probs
 
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
@@ -224,14 +236,9 @@ def validate(
         probs = probs.to(device)
         mask = mask.to(device)
 
-        if refinement_steps > 1:
-            all_outputs = model.refine(channels, num_steps=refinement_steps)
-            pred_probs = all_outputs[-1]
-            loss = compute_masked_mse(pred_probs, probs, mask)
-        else:
-            raw = model(channels)
-            pred_probs = torch.sigmoid(raw)
-            loss = compute_masked_mse(pred_probs, probs, mask)
+        all_outputs = model.refine(channels, num_steps=refinement_steps)
+        pred_probs = all_outputs[-1]
+        loss = compute_masked_mse(pred_probs, probs, mask)
 
         total_loss += loss.item()
 
@@ -464,3 +471,248 @@ def train(config: TrainingConfig) -> TrainingMetrics:
         )
 
     return metrics
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Online BCE Training (self-validated boards, frontier BCE loss)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _compute_frontier(visible: np.ndarray) -> np.ndarray:
+    """Return bool mask: covered cells adjacent to at least one revealed cell.
+
+    Only frontier cells have enough local information for meaningful inference.
+    Cells far from the revealed region have no nearby clues to work with.
+    """
+    H, W = visible.shape
+    revealed = visible >= 0  # 0-8 number cells are "revealed"
+    frontier = np.zeros((H, W), dtype=bool)
+    for r in range(H):
+        for c in range(W):
+            if not revealed[r, c]:
+                continue
+            for dr in (-1, 0, 1):
+                for dc in (-1, 0, 1):
+                    nr, nc = r + dr, c + dc
+                    if 0 <= nr < H and 0 <= nc < W and visible[nr, nc] == CellState.COVERED:
+                        frontier[nr, nc] = True
+    return frontier
+
+
+def train_online(config: TrainingConfig) -> TrainingMetrics:
+    """Online BCE training using self-validated no-guess boards.
+
+    Generates boards on-the-fly. For each game step:
+    1. Full BPTT refinement (train mode, no detach)
+    2. Action selection (no_grad, lowest P(mine) among covered)
+    3. BCE loss on frontier cells with ground-truth mine mask labels
+    4. Backprop + optimize
+
+    Periodic evaluation via shared evaluate module.
+    """
+    device = torch.device(config.device)
+    print(f"Training on: {device}")
+    print(f"Online BCE — {config.n_games} games, refine={config.refinement_steps}")
+
+    # Model
+    model_config = ModelConfig()
+    model = MinesweeperTransformer(model_config).to(device)
+    start_game = 0
+    metrics = TrainingMetrics()
+
+    if config.resume_from:
+        ckpt = torch.load(config.resume_from, map_location=device, weights_only=False)
+        model.load_state_dict(ckpt["model_state_dict"])
+        start_game = ckpt.get("epoch", 0) * config.eval_interval_games
+        if "train_loss" in ckpt:
+            metrics.train_loss = ckpt["train_loss"]
+            metrics.val_loss = ckpt["val_loss"]
+            metrics.val_accuracy = ckpt.get("val_accuracy", [])
+            metrics.val_action_accuracy = ckpt.get("val_action_accuracy", [])
+            metrics.best_val_loss = ckpt.get("best_val_loss", float("inf"))
+            metrics.best_epoch = ckpt.get("best_epoch", 0)
+        print(f"  Resumed from game ~{start_game}")
+    elif config.pretrained:
+        print(f"Loading pretrained weights from: {config.pretrained}")
+        model.load_pretrained(config.pretrained, device=str(device))
+
+    print(f"Model: {model.num_parameters:,} parameters")
+
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=config.learning_rate,
+        weight_decay=config.weight_decay,
+    )
+    if config.resume_from:
+        ckpt = torch.load(config.resume_from, map_location=device, weights_only=False)
+        if "optimizer_state_dict" in ckpt:
+            optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+            for pg in optimizer.param_groups:
+                pg["lr"] = config.learning_rate
+
+    save_dir = Path(config.save_dir)
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    rng = np.random.default_rng(42)
+    t0 = time.time()
+    best_win_rate = 0.0
+
+    n_games = config.n_games or (config.epochs * config.eval_interval_games)
+
+    for game_idx in range(n_games):
+        # Generate self-validated board
+        game = generate_self_validated_board(
+            width=config.board_width,
+            height=config.board_height,
+            total_mines=config.board_mines,
+            rng=rng,
+            max_attempts=200,
+        )
+        if game is None or game.status != GameStatus.PLAYING:
+            continue
+
+        game_loss = 0.0
+        game_steps = 0
+
+        while game.status == GameStatus.PLAYING and game_steps < config.max_game_steps:
+            channels = game.board_to_channels()
+            ch_t = torch.from_numpy(channels).unsqueeze(0).float().to(device)
+            B, _, H, W = ch_t.shape
+
+            model.train()
+
+            # Initial prior
+            mem_state = torch.zeros((B, model.config.hidden_channels, H, W), device=device)
+            prev_probs = torch.full((B, 1, H, W), 0.5, device=device)
+
+            # Full BPTT refinement
+            for step in range(config.refinement_steps):
+                prev_probs, mem_state = model._single_pass(ch_t, prev_probs, mem_state)
+
+            pv = prev_probs  # (B, 1, H, W), in computation graph
+
+            # Action selection (no_grad — don't backprop through action logic)
+            with torch.no_grad():
+                covered = game.covered_cells
+                if not covered.any():
+                    break
+                probs_np = pv[0, 0].cpu().numpy()
+                masked = np.where(covered, probs_np, 2.0)
+                best_idx = int(np.argmin(masked))
+                r, c = divmod(best_idx, W)
+
+            # Compute frontier BCE loss
+            frontier = _compute_frontier(game.visible)
+            if frontier.any():
+                mine_mask = torch.from_numpy(game.get_mine_mask()).float().to(device)
+                frontier_t = torch.from_numpy(frontier).bool().to(device)
+
+                probs_frontier = pv[0, 0][frontier_t]
+                labels_frontier = mine_mask[frontier_t]
+
+                # All frontier cells contribute (both safe=0 and mine=1)
+                bce_loss = nn.functional.binary_cross_entropy(
+                    probs_frontier, labels_frontier,
+                )
+                bce_loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip_norm)
+                optimizer.step()
+                optimizer.zero_grad()
+
+                game_loss += bce_loss.item()
+            else:
+                # No frontier — just move
+                optimizer.zero_grad()
+
+            # Step game
+            is_safe = not game.get_mine_mask()[r, c]
+            game.make_move(r, c, MoveType.REVEAL)
+            game_steps += 1
+
+        avg_loss = game_loss / max(1, game_steps)
+        metrics.train_loss.append(avg_loss)
+
+        # Periodic evaluation
+        if (game_idx + 1) % config.eval_interval_games == 0:
+            wr, act_acc = _run_eval(
+                model, device, config, game_idx, n_games, t0,
+            )
+            metrics.val_action_accuracy.append(act_acc)
+
+            if wr > best_win_rate:
+                best_win_rate = wr
+                metrics.best_epoch = game_idx + 1
+                torch.save(
+                    {
+                        "epoch": game_idx + 1,
+                        "model_state_dict": model.state_dict(),
+                        "optimizer_state_dict": optimizer.state_dict(),
+                        "win_rate": wr,
+                        "action_accuracy": act_acc,
+                        "model_config": model_config,
+                        "loss_type": "online_bce",
+                        "train_loss": metrics.train_loss,
+                        "val_action_accuracy": metrics.val_action_accuracy,
+                        "best_win_rate": best_win_rate,
+                        "best_epoch": metrics.best_epoch,
+                    },
+                    save_dir / "best_model.pt",
+                )
+
+        # Print progress
+        if (game_idx + 1) % 10 == 0:
+            elapsed = time.time() - t0
+            games_done = game_idx + 1
+            print(
+                f"  Game {games_done:5d}/{n_games} | "
+                f"loss={avg_loss:.4f} | "
+                f"best_wr={best_win_rate:.1%} | "
+                f"({elapsed:.0f}s)"
+            )
+
+    total_time = time.time() - t0
+    print(f"\n═══ Training complete in {total_time:.0f}s ═══")
+    print(f"Best win rate: {best_win_rate:.2%} at game {metrics.best_epoch}")
+
+    torch.save(
+        {
+            "epoch": n_games,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "model_config": model_config,
+            "loss_type": "online_bce",
+            "train_loss": metrics.train_loss,
+            "val_action_accuracy": metrics.val_action_accuracy,
+            "best_win_rate": best_win_rate,
+            "best_epoch": metrics.best_epoch,
+        },
+        save_dir / "final_model.pt",
+    )
+
+    return metrics
+
+
+def _run_eval(model, device, config, game_idx, n_games, t0):
+    """Run evaluation using shared evaluate module. Returns (win_rate, action_accuracy)."""
+    print(f"\n  ── Eval at game {game_idx+1}/{n_games} ──")
+    result = evaluate_game_model(
+        model,
+        device,
+        n_games=config.eval_games,
+        width=config.board_width,
+        height=config.board_height,
+        total_mines=config.board_mines,
+        seed=42 + game_idx,
+        board_pool_path=Path(config.board_pool_path) if config.board_pool_path else None,
+        refine_steps=config.refinement_steps,
+        quiet=False,
+    )
+    wr = result["win_rate"]
+    acc = result["action_accuracy"]
+    elapsed = time.time() - t0
+    print(
+        f"  Eval: wr={wr:.1%} ({result['won']}/{result['played']}) "
+        f"act_acc={acc:.3f} "
+        f"stuck={result['stuck']} "
+        f"({elapsed:.0f}s total)"
+    )
+    return wr, acc

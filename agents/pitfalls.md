@@ -77,6 +77,14 @@
 - **正确做法**: 统一从 `src/config/training_policy.py` 读取；CLI 不支持 `--refine`
 - **记录日期**: 2026-06-01
 
+## 坑 #10: BPTT detach 废掉 refinement 梯度 (CRITICAL)
+
+- **症状**: 胜率卡在 ~70% 上不去，refinement 迭代输出几乎不变化
+- **原因**: `train_epoch` 中 `if step < refinement_steps-1: detach()` 切断了中间步梯度。Step 3 接收 step 2 的 prev_probs 和 mem_state 都是 detach 纯数值，梯度无法反传。CNN channel 10 (prev_probs) 权重和 mem_state 残差路径梯度恒为 0，模型退化回纯单步前向。
+- **正确做法**: refinement 循环中不加 detach，全 BPTT 展开。330K 参数 × 4 步 × 8×8 棋盘只需 ~500MB 显存，detach 完全没有必要。
+- **根因溯源**: 此 detach 来自 RL 训练的内存爆炸修复（33GB → 500MB），被不留心从 RL 合入监督训练。
+- **记录日期**: 2026-06-03
+
 ---
 
 *最后更新: 2026-06-01*

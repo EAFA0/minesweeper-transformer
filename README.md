@@ -1,6 +1,6 @@
 # Minesweeper Transformer
 
-CNN + Transformer 混合架构的扫雷 AI。当前主线是 **监督预训练 `S1 -> S2 -> S3` + RL 微调**。
+CNN + Transformer 混合架构的扫雷 AI。当前主线是 **监督预训练 `S1 -> S2 -> S3`**，Online BCE 冷启实验中。
 
 ## 快速开始
 
@@ -15,35 +15,25 @@ python scripts/train_stage.py --all
 python scripts/evaluate.py checkpoints/S3/best_model.pt \
   --width 10 --height 10 --mines 40
 
-# 4. 构建 RL board pool
-python scripts/generate_rl_pool.py \
-  --width 10 --height 10 --mines 40 \
-  --target_size 12000 \
-  --workers 16
-
-# 5. 从 S3 checkpoint 做 RL 微调
-python scripts/train_rl.py \
-  --pretrained checkpoints/S3/best_model.pt \
-  --width 10 --height 10 --mines 40 \
-  --total_games 5000 \
-  --lr 1e-6 \
-  --temperature 0.1
+# 4. Online BCE 冷启动 (从零训练，无需预生成数据)
+python scripts/train.py --mode online --n_games 5000 \
+  --board_width 8 --board_height 8 --board_mines 10
 ```
 
 默认 RL pool 路径会按棋盘自动推导为 `rl_boards_10x10_40.npz`。
 
 ## 全局策略配置
 
-跨训练、RL、评估必须一致的项目参数统一维护在 `src/config/training_policy.py`：
+跨训练和评估必须一致的项目参数统一维护在 `src/config/training_policy.py`：
 
 ```text
-refinement.train_max_steps = 16  # 监督训练随机采样 k ∈ [1, 16]
-refinement.eval_max_steps  = 16  # 评估/推理上限，收敛后提前停止
-refinement.rl_steps        = 16  # RL rollout 与梯度重算固定一致
-refinement.convergence_eps = 1e-3
+refinement.train_max_steps = 4   # 监督训练 BPTT 全展开，无 detach
+refinement.eval_max_steps  = 4   # 评估/推理与训练一致
+refinement.rl_steps        = 16  # RL (已归档)
+refinement.convergence_eps = 0.05
 ```
 
-`scripts/train.py` 和 `scripts/train_rl.py` 不再提供 `--refine` 参数，避免训练、RL、评估之间出现局部默认值漂移。
+`scripts/train.py` 不再提供 `--refine` 参数，避免训练与评估之间出现局部默认值漂移。
 
 ## 训练 Pipeline
 

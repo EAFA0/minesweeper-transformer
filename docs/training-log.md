@@ -1,8 +1,9 @@
 # 训练记录
 
-当前主线: 三阶段监督预训练 — S1(规则) → S2(密度) → S3(高密度泛化) → RL 微调
+当前主线: 三阶段监督预训练 — S1(规则) → S2(密度) → S3(高密度泛化)
+> **2026-06-03**: 大扫除完成。RL 归档，train_online 合并到 train.py（--mode online），评估逻辑统一到 `src/training/evaluate.py`，train/eval 共享 BoardPool+refinement。
 
-全局策略: refine 默认统一来自 `src/config/training_policy.py`。监督训练随机采样 `k ∈ [1, 16]`，评估/推理上限 16 且收敛早停，RL 固定 16 步保持 rollout 与梯度重算一致。
+全局策略: refine 默认统一来自 `src/config/training_policy.py`。监督训练 BPTT 固定 4 步全展开（无 detach），评估/推理 4 步且收敛早停。
 
 ## 日志格式
 
@@ -53,17 +54,8 @@
 | 已知结果 | 74% 胜率 (1000 局, 0 stuck) |
 | Checkpoint | `checkpoints/S3/` |
 
-### RL 微调 — 10×10/40 目标分布
-
-| 项目 | 值 |
-|------|-----|
-| 日期 | 2026-05-31 |
-| 入口 | `scripts/generate_rl_pool.py` → `scripts/train_rl.py` |
-| 预训练 | `checkpoints/S3/best_model.pt` |
-| 棋盘 | 10×10, 40 雷 |
-| Reward | safe=+1, extra floodfill=+0.05/cell, mine=-20, no win bonus |
-| Refine | global 16 steps |
-| 备注 | 纯 RL from scratch 20k 局可学到正 return，但样本效率低；主线仍为 S3 预训练 + 保守 RL |
+---
+> **RL 微调已放弃 (2026-06-03)**。代码移至 `scripts/archived/`。优先用在线 BCE 复现 99%+ 胜率，再考虑 RL。
 
 ---
 

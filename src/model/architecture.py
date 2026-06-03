@@ -280,7 +280,15 @@ class MinesweeperTransformer(nn.Module):
                 if max_change < convergence_eps:
                     break
 
-            prev_probs = probs.detach()
+            # Detach only in eval mode; training should not use refine()
+            # (train_epoch has its own BPTT loop without detach).
+            if not self.training:
+                prev_probs = probs.detach()
+            else:
+                raise RuntimeError(
+                    "refine() should not be called during training. "
+                    "Use the BPTT loop in train_epoch() instead."
+                )
 
         return results
 

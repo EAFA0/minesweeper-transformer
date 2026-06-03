@@ -8,14 +8,12 @@
 
  数据规模: S1=1000条, 后续阶段=200条 (transfer learning 收敛快)
 
- 历史/实验阶段可通过 --legacy_stage 显式运行
-RL 微调: S3 完成后可选 REINFORCE fine-tuning
+  历史/实验阶段可通过 --legacy_stage 显式运行
 
-用法:
+ 用法:
     python scripts/train_stage.py --stage S1       # 单阶段训练
-    python scripts/train_stage.py --all            # 主线全部阶段
-    python scripts/train_stage.py --all --rl       # 主线全部 + RL 微调
-    python scripts/train_stage.py --stage S3 --eval 10 10 40  # 零样本评估
+     python scripts/train_stage.py --all            # 主线全部阶段
+     python scripts/train_stage.py --stage S3 --eval 10 10 40  # 零样本评估
 """
 
 import argparse
@@ -116,9 +114,6 @@ PRETRAINED_CHAIN = {
     "S4L": "S3L",
 }
 
-DEFAULT_RL_POOL = "rl_boards_10x10_40.npz"
-
-
 def run(cmd, desc=""):
     print(f"\n── {desc}")
     print(f"   $ {' '.join(cmd)}")
@@ -194,6 +189,7 @@ def run_stage(stage_name, args):
     # ── 2) Train ──────────────────────────────────────────────────────
     cmd = [
         sys.executable, "scripts/train.py",
+        "--mode", "supervised",
         "--data_dir", cfg["data_dir"],
         "--epochs", str(epochs),
         "--save_dir", cfg["save_dir"],
@@ -228,40 +224,13 @@ def run_stage(stage_name, args):
         print(f"⚠ No checkpoint at {ckpt}")
 
 
-def run_rl(args):
-    """S3 完成后运行 RL 微调."""
-    print("\n── RL 微调 ──")
-    pretrained = Path("checkpoints/S3/best_model.pt")
-    if not pretrained.exists():
-        print(f"❌ RL pretrained checkpoint not found: {pretrained}")
-        print("   Run --stage S3 first to generate it.")
-        sys.exit(1)
-
-    pool = Path(args.rl_board_pool)
-    if not pool.exists():
-        print(f"❌ RL board pool not found: {pool}")
-        print("   Generate it first:")
-        print("   python scripts/generate_rl_pool.py --width 10 --height 10 --mines 40 --target_size 12000 --workers 16")
-        sys.exit(1)
-
-    run([
-        sys.executable, "scripts/train_rl.py",
-        "--pretrained", str(pretrained),
-        "--width", "10", "--height", "10", "--mines", "40",
-        "--board_pool", str(pool),
-        "--total_games", "5000",
-        "--device", args.device,
-    ], "RL fine-tuning from S3")
-
-
 def main():
     p = argparse.ArgumentParser(
         description="Minesweeper Transformer — 多阶段密度课程训练",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="示例:\n"
                "  python scripts/train_stage.py --stage S1\n"
-               "  python scripts/train_stage.py --all\n"
-               "  python scripts/train_stage.py --all --rl\n"
+                "  python scripts/train_stage.py --all\n"
                "  python scripts/train_stage.py --legacy_stage S1.5 --force_data\n"
                "  python scripts/train_stage.py --stage S3 --eval 10 10 40",
     )
@@ -271,10 +240,6 @@ def main():
                    help="历史/实验阶段: " + " | ".join(LEGACY_STAGES.keys()))
     p.add_argument("--all", action="store_true",
                    help="运行主线全部训练阶段: " + " → ".join(STAGES.keys()))
-    p.add_argument("--rl", action="store_true",
-                   help="S3 完成后运行 RL 微调")
-    p.add_argument("--rl_board_pool", default=DEFAULT_RL_POOL,
-                   help=f"RL board pool path (default: {DEFAULT_RL_POOL})")
     p.add_argument("--epochs", type=int, default=None,
                    help="覆盖默认 epoch 数")
     p.add_argument("--lr", type=float, default=None,
@@ -303,16 +268,14 @@ def main():
         stages_to_run = [args.stage]
     elif args.legacy_stage:
         stages_to_run = [args.legacy_stage]
-    elif not args.rl:
+    else:
         stage_names = list(STAGES.keys())
         legacy_names = list(LEGACY_STAGES.keys())
         print("\n核心路线: S1 → S2 → S3")
         print(f"主线阶段: {', '.join(stage_names)}")
         print(f"历史/实验阶段: {', '.join(legacy_names)}")
-        print("\n--all  运行主线全部  |  --stage S1  指定主线阶段  |  --legacy_stage S1.5 运行历史阶段  |  --rl  RL微调")
+        print("\n--all  运行主线全部  |  --stage S1  指定主线阶段  |  --legacy_stage S1.5 运行历史阶段")
         sys.exit(0)
-    else:
-        stages_to_run = []
 
     # Device detection (do once)
     if args.device == "auto":
@@ -327,10 +290,6 @@ def main():
     # Run stages
     for stage in stages_to_run:
         run_stage(stage, args)
-
-    # Optional RL fine-tuning
-    if args.rl:
-        run_rl(args)
 
 
 if __name__ == "__main__":
