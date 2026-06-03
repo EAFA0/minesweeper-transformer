@@ -247,8 +247,7 @@ def train(config: TrainingConfig) -> TrainingMetrics:
         if (game_idx + 1) % 10 == 0:
             elapsed = time.time() - t0
             print(f"  Game {game_idx+1:5d} | loss={avg_loss:.4f} | "
-                  f"lr={scheduler.get_last_lr()[0]:.1e} | "
-                  f"best_wr={best_win_rate:.1%} | {elapsed:.0f}s")
+                  f"lr={scheduler.get_last_lr()[0]:.1e} | {elapsed:.0f}s")
 
     total_time = time.time() - t0
     print(f"\n═══ Done in {total_time:.0f}s ═══")
