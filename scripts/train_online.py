@@ -25,6 +25,26 @@ from minesweeper.constants import MoveType, GameStatus, CellState
 from data.no_guess import generate_no_guess_board
 
 
+def _compute_frontier(revealed: np.ndarray, covered: np.ndarray) -> np.ndarray:
+    """Return bool mask of covered cells adjacent to at least one revealed cell.
+
+    Only these cells have enough information for meaningful inference.
+    Cells far from the revealed frontier have no local clues to work with.
+    """
+    H, W = revealed.shape
+    frontier = np.zeros((H, W), dtype=bool)
+    for r in range(H):
+        for c in range(W):
+            if not revealed[r, c]:
+                continue
+            for dr in (-1, 0, 1):
+                for dc in (-1, 0, 1):
+                    nr, nc = r + dr, c + dc
+                    if 0 <= nr < H and 0 <= nc < W:
+                        frontier[nr, nc] = True
+    return frontier & covered
+
+
 def train_online(
     model: MinesweeperTransformer,
     optimizer: torch.optim.Optimizer,
@@ -38,8 +58,6 @@ def train_online(
     eval_every: int = 200,
     eval_games: int = 50,
     temperature: float = 0.0,
-    bce_weight: float = 1.0,
-    mse_weight: float = 1.0,
     max_attempts: int = 100,
 ):
     save_path = Path(save_dir)
@@ -57,8 +75,8 @@ def train_online(
 
         # ── Play one game, computing loss at each step ──
         game_bce = 0.0
-        game_mse = 0.0
-        game_det = 0
+        game_frontier = 0.0
+        game_active = 0
         game_steps = 0
 
         optimizer.zero_grad()
@@ -100,38 +118,48 @@ def train_online(
                     best = int(np.random.choice(len(probs_flat), p=probs_flat))
             r, c = divmod(best, game.width)
 
+            # ── Frontier mask: covered cells adjacent to revealed numbers ──
+            # Only these cells have actual information to reason about.
+            visible = game.visible
+            revealed = (visible >= 0) & (visible <= 8)
+            frontier = _compute_frontier(revealed, covered)
+
             # ── Solver on CURRENT state (before the move) ──
             solver = ProbabilitySolver(game)
             solver_probs = solver.compute_probabilities()
+            # Determined cells = solver mathematically proved (P=0 or P=1)
             determined = (solver_probs == 0.0) | (solver_probs == 1.0)
-            n_det = int(determined.sum())
+            # BCE targets: only determined cells within frontier
+            active = determined & frontier
+            n_active = int(active.sum())
 
             # ── Reveal ──
             is_mine = (game.board[r, c] == -1)
             game.make_move(r, c, MoveType.REVEAL)
 
-            # ── BCE loss on chosen cell (ground truth from game) ──
+            # ── BCE on chosen cell (game ground truth, always included) ──
             p_chosen = pv[0, 0, r, c]
             label = 1.0 if is_mine else 0.0
-            bce = F.binary_cross_entropy(
+            bce_chosen = F.binary_cross_entropy(
                 p_chosen, torch.tensor(label, device=device)
             )
 
-            # ── MSE loss on solver-determined cells ──
-            mse = torch.tensor(0.0, device=device)
-            if n_det > 0:
+            # ── BCE on all determined cells in frontier ──
+            # Both safe (P=0) and mine (P=1) — solver math is 100% reliable here.
+            bce_frontier = torch.tensor(0.0, device=device)
+            if n_active > 0:
                 solver_t = torch.from_numpy(solver_probs.astype(np.float32)).to(device)
-                det_t = torch.from_numpy(determined).to(device)
-                pred_det = pv[0, 0][det_t]
-                target_det = solver_t[det_t]
-                mse = F.mse_loss(pred_det, target_det)
+                active_t = torch.from_numpy(active).to(device)
+                pred_active = pv[0, 0][active_t]
+                target_active = solver_t[active_t]
+                bce_frontier = F.binary_cross_entropy(pred_active, target_active)
 
-            loss = bce_weight * bce + mse_weight * mse
+            loss = bce_chosen + bce_frontier
             loss.backward()
 
-            game_bce += bce.item()
-            game_mse += mse.item()
-            game_det += n_det
+            game_bce += bce_chosen.item()
+            game_frontier += bce_frontier.item()
+            game_active += n_active
             game_steps += 1
 
             # Handle mine_continue
@@ -148,14 +176,14 @@ def train_online(
 
         # ── Logging ──
         if total_games % 10 == 0 or total_games == 1:
-            avg_bce = game_bce / max(game_steps, 1)
-            avg_mse = game_mse / max(game_steps, 1)
-            avg_det = game_det / max(game_steps, 1)
+            avg_chosen = game_bce / max(game_steps, 1)
+            avg_frontier = game_frontier / max(game_steps, 1)
+            avg_active = game_active / max(game_steps, 1)
             elapsed = time.time() - t0
             print(
                 f"  Game {total_games:5d}/{n_games} | "
-                f"bce={avg_bce:.4f} mse={avg_mse:.4f} det={avg_det:.0f} "
-                f"steps={game_steps:2d} | {elapsed:.0f}s"
+                f"bce={avg_chosen:.4f} fbc={avg_frontier:.4f} "
+                f"act={avg_active:.0f} st={game_steps:2d} | {elapsed:.0f}s"
             )
 
         # ── Evaluation ──
@@ -264,8 +292,6 @@ if __name__ == "__main__":
     parser.add_argument("--n_games", type=int, default=5000)
     parser.add_argument("--lr", type=float, default=3e-5)
     parser.add_argument("--temperature", type=float, default=0.0)
-    parser.add_argument("--bce_weight", type=float, default=1.0)
-    parser.add_argument("--mse_weight", type=float, default=1.0)
     parser.add_argument("--save_dir", default="checkpoints/online")
     parser.add_argument("--eval_every", type=int, default=200)
     parser.add_argument("--device", default="auto")
@@ -283,7 +309,7 @@ if __name__ == "__main__":
 
     print(f"=== Online BCE @ {args.width}×{args.height}/{args.mines} ===")
     print(f"Device: {dev} | Games: {args.n_games} | LR: {args.lr}")
-    print(f"BCE×{args.bce_weight} MSE×{args.mse_weight} τ={args.temperature}")
+    print(f"τ={args.temperature} | Frontier-only BCE on determined cells")
 
     ckpt = torch.load(args.pretrained, map_location="cpu", weights_only=False)
     model = MinesweeperTransformer().to(dev)
@@ -303,6 +329,4 @@ if __name__ == "__main__":
         save_dir=args.save_dir,
         eval_every=args.eval_every,
         temperature=args.temperature,
-        bce_weight=args.bce_weight,
-        mse_weight=args.mse_weight,
     )
