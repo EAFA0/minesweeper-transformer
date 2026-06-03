@@ -12,12 +12,16 @@ so training covers states the model actually encounters (on-policy).
 from __future__ import annotations
 
 import argparse
+import sys
 import time
-import numpy as np
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn.functional as F
+
+# Ensure project root is on path (same convention as other scripts)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from model.architecture import MinesweeperTransformer, ModelConfig
 from minesweeper.probability_solver import ProbabilitySolver
