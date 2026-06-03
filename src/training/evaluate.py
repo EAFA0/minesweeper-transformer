@@ -115,6 +115,7 @@ class TrainBoardPool:
         self.pool_size = pool_size
         self.rng = np.random.default_rng(seed)
         self._pool: list = []
+        self._fill()  # pre-generate on init
 
     def _generate_one(self):
         game = generate_self_validated_board(
@@ -241,7 +242,7 @@ def evaluate_model(
 
     pool = _setup_board_pool(board_pool_path, width, height, total_mines)
     if pool and pool.size > 0 and not quiet:
-        print(f"Board pool: {pool.size} boards cached in {board_pool_path}")
+        print(f"Board pool: {pool.size} boards cached in {pool.path}")
 
     t0 = time.time()
 
@@ -330,7 +331,7 @@ class _EvalMetrics:
 def _setup_board_pool(
     path: Optional[Path], width: int, height: int, mines: int
 ) -> Optional[BoardPool]:
-    if path is None:
+    if not path:  # None or empty string
         path = Path(f"eval_boards_{width}x{height}_{mines}.npz")
     return BoardPool(path, width, height, mines)
 
