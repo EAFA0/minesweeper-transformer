@@ -180,17 +180,9 @@ def train(config: TrainingConfig) -> TrainingMetrics:
         while game.status == GameStatus.PLAYING and game_steps < config.max_game_steps:
             channels = game.board_to_channels()
             ch_t = torch.from_numpy(channels).unsqueeze(0).float().to(device)
-            B, _, H, W = ch_t.shape
 
-            # Initial prior
-            mem_state = torch.zeros((B, model.config.hidden_channels, H, W), device=device)
-            prev_probs = torch.full((B, 1, H, W), 0.5, device=device)
-
-            # Full BPTT refinement
-            for _step in range(config.refinement_steps):
-                prev_probs, mem_state = model._single_pass(ch_t, prev_probs, mem_state)
-
-            pv = prev_probs  # (B, 1, H, W) in computation graph
+            # Full BPTT: CNN once → Transformer self-loop → Decoder
+            pv, _ = model.forward(ch_t)  # (B, 1, H, W) in computation graph
 
             # Action selection (no_grad)
             with torch.no_grad():
@@ -265,6 +257,7 @@ def train(config: TrainingConfig) -> TrainingMetrics:
 def _save_checkpoint(path, fname, model, optimizer, model_config, metrics, epoch, best_wr, wr, scheduler=None):
     data = {
         "epoch": epoch,
+        "arch_version": "V4",
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
         "model_config": model_config,
