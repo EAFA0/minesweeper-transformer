@@ -48,14 +48,14 @@
 
 | 模块 | 路径 | 说明 |
 |------|------|------|
-| 模型架构 | `src/model/architecture.py` | CNN + Transformer + Refinement (V3 hidden state) |
-| 全局策略 | `src/config/training_policy.py` | 统一 refine/reward 默认策略 |
-| 数据生成 | `src/data/generator.py` | 自验证棋盘生成 + 概率标签 |
-| 混合数据 | `src/data/mixed_generator.py` | 可变尺寸+密度 padded 数据 |
-| 数据集 | `src/training/dataset.py` | PyTorch Dataset + D4 增强 |
+| 模型架构 | `src/minesweeper_transformer/model/architecture.py` | CNN + Transformer + Refinement (V3 hidden state) |
+| 全局策略 | `src/minesweeper_transformer/config/training_policy.py` | 统一 refine/reward 默认策略 |
+| 数据生成 | `src/minesweeper_transformer/data/generator.py` | 自验证棋盘生成 + 概率标签 |
+| 混合数据 | `src/minesweeper_transformer/data/mixed_generator.py` | 可变尺寸+密度 padded 数据 |
+| 数据集 | `src/minesweeper_transformer/training/dataset.py` | PyTorch Dataset + D4 增强 |
 | **训练** | `scripts/train.py` | **统一入口: --mode supervised|online** |
-| 训练核心 | `src/training/train.py` | train_epoch (监督MSE) + train_online (BCE) |
-| **评估** | `src/training/evaluate.py` | **共享: BoardPool + evaluate_model + pick_action** |
+| 训练核心 | `src/minesweeper_transformer/training/train.py` | train_epoch (监督MSE) + train_online (BCE) |
+| **评估** | `src/minesweeper_transformer/training/evaluate.py` | **共享: BoardPool + evaluate_model** |
 | 评估脚本 | `scripts/evaluate.py` | 独立评估 CLI |
 | **分阶段训练** | `scripts/train_stage.py` | **统一入口: S1→S2→S3** |
 | 数据生成脚本 | `scripts/generate_data.py` | 数据生成 CLI |

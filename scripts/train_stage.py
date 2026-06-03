@@ -21,6 +21,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Use uv for consistent Python environment (editable install)
+PYTHON_CMD = ["uv", "run", "python3"]
+
 # ── 阶段预设 ───────────────────────────────────────────────────────────────
 
 STAGES = {
@@ -159,7 +162,7 @@ def run_stage(stage_name, args):
         ckpt = Path(cfg["save_dir"]) / "best_model.pt"
         if ckpt.exists():
             eval_cmd = [
-                sys.executable, "scripts/evaluate.py",
+                *PYTHON_CMD, "scripts/evaluate.py",
                 str(ckpt),
                 "--width", str(eval_w),
                 "--height", str(eval_h),
@@ -174,7 +177,7 @@ def run_stage(stage_name, args):
 
     # ── 1) Generate data ──────────────────────────────────────────────
     cmd = [
-        sys.executable, "scripts/generate_data.py",
+        *PYTHON_CMD, "scripts/generate_data.py",
         "--width", str(cfg["width"]),
         "--height", str(cfg["height"]),
         "--mines", str(cfg["mines"]),
@@ -188,7 +191,7 @@ def run_stage(stage_name, args):
 
     # ── 2) Train ──────────────────────────────────────────────────────
     cmd = [
-        sys.executable, "scripts/train.py",
+        *PYTHON_CMD, "scripts/train.py",
         "--mode", "supervised",
         "--data_dir", cfg["data_dir"],
         "--epochs", str(epochs),
@@ -211,7 +214,7 @@ def run_stage(stage_name, args):
     ckpt = Path(cfg["save_dir"]) / "best_model.pt"
     if ckpt.exists():
         eval_cmd = [
-            sys.executable, "scripts/evaluate.py",
+            *PYTHON_CMD, "scripts/evaluate.py",
             str(ckpt),
             "--width", str(eval_w),
             "--height", str(eval_h),

@@ -15,12 +15,11 @@ from typing import List, Optional, Tuple
 import numpy as np
 import torch
 
-from config import POLICY
-from data.generator import Generator
-from data.self_validated import generate_self_validated_board
-from minesweeper.constants import GameStatus, MoveType
-from minesweeper.game import MinesweeperGame
-from model.architecture import MinesweeperTransformer, ModelConfig
+from minesweeper_transformer.config import POLICY
+from minesweeper_transformer.data.self_validated import generate_self_validated_board
+from minesweeper_transformer.minesweeper.constants import GameStatus, MoveType
+from minesweeper_transformer.minesweeper.game import MinesweeperGame
+from minesweeper_transformer.model.architecture import MinesweeperTransformer, ModelConfig
 
 
 # ── Board Pool ─────────────────────────────────────────────────────────────

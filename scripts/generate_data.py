@@ -1,16 +1,6 @@
 # pyright: reportMissingImports=false
 # Minesweeper Transformer — Training Data Generation (Probability Distillation)
 # Usage: python scripts/generate_data.py [--n_samples 1000] [--output data/training]
-#
-# Generates probability-distilled training data from no-guess boards.
-# Each step records (board_state → solver-computed P(mine) matrix).
-# Model learns to estimate probabilities via MSE loss.
-#
-# Supports:
-# - Fixed-size generation (--width --height --mines), with optional multiprocessing
-# - Mixed data generation (--mixed, --min_size, --max_size, --min_density, --max_density)
-#
-# Skips generation if data already exists (use --force to override).
 
 import argparse
 import json
@@ -23,15 +13,12 @@ from typing import Optional
 
 import numpy as np
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-from data.generator import (
+from minesweeper_transformer.data.generator import (
     generate_training_data,
     record_game_trajectory,
     save_trajectory_buffer,
 )
-from data.mixed_generator import generate_mixed_data
+from minesweeper_transformer.data.mixed_generator import generate_mixed_data
 
 
 def _parallel_worker(seed, width, height, total_mines):

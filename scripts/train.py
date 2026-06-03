@@ -10,15 +10,9 @@ Examples:
 """
 
 import argparse
-import sys
-from pathlib import Path
-
 import torch
 
-# Add project root to path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from training.train import TrainingConfig, train, train_online
+from minesweeper_transformer.training.train import TrainingConfig, train, train_online
 
 
 def auto_device() -> str:

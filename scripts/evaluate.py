@@ -9,14 +9,9 @@ Examples:
 """
 
 import argparse
-import sys
-from pathlib import Path
-
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from training.evaluate import BoardPool, evaluate_model, load_model
+from minesweeper_transformer.training.evaluate import BoardPool, evaluate_model, load_model
 
 
 def main():
