@@ -36,7 +36,7 @@ class TrainingConfig:
 
     # Training
     n_games: int = 5000
-    eval_interval_games: int = 50
+    eval_interval_games: int = 200
     eval_games: int = 100
     board_pool_path: str = ""
 

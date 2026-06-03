@@ -34,7 +34,7 @@ def main():
 
     # Training
     p.add_argument("--n_games", type=int, default=5000)
-    p.add_argument("--eval_interval_games", type=int, default=50)
+    p.add_argument("--eval_interval_games", type=int, default=200)
     p.add_argument("--eval_games", type=int, default=100)
     p.add_argument("--pool_size", type=int, default=64)
     p.add_argument("--pool_workers", type=int, default=0,
