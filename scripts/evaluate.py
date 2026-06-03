@@ -65,7 +65,8 @@ def main():
     print(f"Loss: {result['lost']:4d}")
     print(f"Stuck:{result['stuck']:4d}")
     print(f"Action accuracy: {result['action_accuracy']:.4f}")
-    print(f"Avg steps: {result['avg_steps']:.1f}")
+    print(f"Avg game steps: {result['avg_steps']:.1f}")
+    print(f"Avg refine steps: {result['avg_refine_steps']:.1f} (early stop savings)")
     print(f"Time: {result['elapsed']:.0f}s")
 
 

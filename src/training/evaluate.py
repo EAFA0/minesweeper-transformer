@@ -256,10 +256,10 @@ def pick_action(
     game: MinesweeperGame,
     device: torch.device,
     refine_steps: int = None,
-) -> Optional[Tuple[MoveType, int, int]]:
-    """Choose the next move: reveal the covered cell with lowest P(mine).
+) -> Optional[Tuple[MoveType, int, int, int]]:
+    """Choose the next move + return refinement steps actually used.
 
-    Uses model.predict() with the project-wide refinement policy.
+    Returns (MoveType, row, col, n_refine_steps) or None if no moves.
     """
     if refine_steps is None:
         refine_steps = POLICY.refinement.eval_max_steps
@@ -267,8 +267,9 @@ def pick_action(
     channels = game.board_to_channels()
     with torch.no_grad():
         x = torch.from_numpy(channels).unsqueeze(0).to(device)
-        probs = model.predict(x, max_refine_steps=refine_steps)
-        probs = probs.squeeze(0).squeeze(0).cpu().numpy()
+        results = model.refine(x, num_steps=refine_steps)
+        probs = results[-1].squeeze(0).squeeze(0).cpu().numpy()
+        n_refine = len(results)
 
     covered = game.covered_cells
     if not covered.any():
@@ -277,7 +278,7 @@ def pick_action(
     masked_probs = np.where(covered, probs, 2.0)
     best_idx = np.argmin(masked_probs)
     best_r, best_c = divmod(int(best_idx), game.width)
-    return MoveType.REVEAL, best_r, best_c
+    return MoveType.REVEAL, best_r, best_c, n_refine
 
 
 def play_one_game(
@@ -291,13 +292,15 @@ def play_one_game(
     steps = 0
     safe_reveals = 0
     mine_hits = 0
+    refine_steps_used: list = []
 
     while game.status == GameStatus.PLAYING and steps < max_steps:
         action = pick_action(model, game, device, refine_steps=refine_steps)
         if action is None:
             break
 
-        move_type, mr, mc = action
+        move_type, mr, mc, n_refine = action
+        refine_steps_used.append(n_refine)
         is_safe = not game.get_mine_mask()[mr, mc]
         game.make_move(mr, mc, move_type)
         steps += 1
@@ -312,6 +315,7 @@ def play_one_game(
         "steps": steps,
         "safe_reveals": safe_reveals,
         "mine_hits": mine_hits,
+        "refine_steps": refine_steps_used,
     }
 
 
@@ -374,9 +378,10 @@ class _EvalMetrics:
         self.total_safe = 0
         self.total_mine = 0
         self.steps_list: list = []
+        self.refine_steps_list: list = []  # all refine_step counts across all games
         self.n_games = n_games
         self.quiet = quiet
-        self.progress_interval = max(1, min(50, n_games // 10))
+        self.progress_interval = max(1, min(50, n_games // 5))
 
     def add_gen_failure(self):
         self.gen_failed += 1
@@ -391,6 +396,8 @@ class _EvalMetrics:
         self.steps_list.append(stats["steps"])
         self.total_safe += stats["safe_reveals"]
         self.total_mine += stats["mine_hits"]
+        if stats.get("refine_steps"):
+            self.refine_steps_list.extend(stats["refine_steps"])
 
     def maybe_print(self, i: int, n: int, t0: float):
         if self.quiet or i % self.progress_interval != 0:
@@ -414,6 +421,7 @@ class _EvalMetrics:
         total_reveals = self.total_safe + self.total_mine
         action_acc = self.total_safe / max(1, total_reveals)
         avg_steps = float(np.mean(self.steps_list)) if self.steps_list else 0.0
+        avg_refine = float(np.mean(self.refine_steps_list)) if self.refine_steps_list else 0.0
 
         return {
             "n_games": n_games,
@@ -425,6 +433,7 @@ class _EvalMetrics:
             "win_rate": win_rate,
             "action_accuracy": action_acc,
             "avg_steps": avg_steps,
+            "avg_refine_steps": avg_refine,
             "elapsed": elapsed,
         }
 

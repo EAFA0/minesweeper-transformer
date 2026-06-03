@@ -244,7 +244,7 @@ def train(config: TrainingConfig) -> TrainingMetrics:
                 shutil.copy2(save_dir / "latest.pt", save_dir / "best_model.pt")
                 print(f"  🏆 New best: {best_win_rate:.1%}")
 
-        if (game_idx + 1) % 10 == 0:
+        if (game_idx + 1) % 100 == 0:
             elapsed = time.time() - t0
             print(f"  Game {game_idx+1:5d} | loss={avg_loss:.4f} | "
                   f"lr={scheduler.get_last_lr()[0]:.1e} | {elapsed:.0f}s")
@@ -298,6 +298,7 @@ def _run_eval(model, device, config, game_idx, n_games, t0):
     print(
         f"  Eval: wr={wr:.1%} ({result['won']}/{result['played']}) "
         f"act_acc={acc:.3f} stuck={result['stuck']} "
-        f"({elapsed:.0f}s total)"
+        f"avg_steps={result['avg_steps']:.1f} refine={result['avg_refine_steps']:.1f} "
+        f"({elapsed:.0f}s)"
     )
     return wr, acc
