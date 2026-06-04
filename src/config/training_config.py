@@ -39,7 +39,7 @@ class TrainingConfig:
 
     # Logging
     save_dir: str = "checkpoints"
-    device: str = "cpu"
+    device: str = "auto"
 
     # Supervised Mode
     epochs: int = 5

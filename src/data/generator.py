@@ -83,7 +83,7 @@ def generate_training_data(
     height: int = 8,
     total_mines: int = 10,
     seed: int = 42,
-    samples_per_file: int = 100,
+    samples_per_file: int = 2000,
 ) -> dict:
     """Generate and save trajectory dataset sequentially."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -144,7 +144,7 @@ if __name__ == "__main__":
     import argparse
     p = argparse.ArgumentParser()
     p.add_argument("--n_samples", type=int, default=100)
-    p.add_argument("--output", type=str, default="data/training")
+    p.add_argument("--output", type=str, default="data/trajectories")
     p.add_argument("--width", type=int, default=8)
     p.add_argument("--height", type=int, default=8)
     p.add_argument("--mines", type=int, default=10)

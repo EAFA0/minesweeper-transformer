@@ -20,9 +20,8 @@ uv run python3 scripts/train.py \
   --mode online --board_width 8 --board_height 8 --board_mines 10 --n_games 5000
 
 # 5. 离线监督蒸馏 (Supervised 模式)
-uv run python3 -m src.data.generator --output data/S1 --n_samples 1000
-uv run python3 scripts/train.py \
-  --mode supervised --data_dir data/S1 --epochs 5
+uv run python3 -m src.data.generator --n_samples 1000
+uv run python3 scripts/train.py --mode supervised --epochs 5
 
 # 6. 从 checkpoint 继续
 uv run python3 scripts/train.py \
@@ -90,7 +89,7 @@ uv run python3 scripts/train_stage.py --stage S3 --eval_only --eval 10 10 40
 src/
   game/             扫雷引擎、求解器
   config/          训练/评估策略配置
-  data/            数据生成（自验证棋盘 + 概率标签）
+  data/            数据生成模块（含 generator.py CLI）
   model/           CNN + Transformer + iterative refinement (V3 hidden state)
   training/        训练循环（MSE + online BCE）+ 共享评估模块
 
@@ -98,7 +97,6 @@ scripts/
   train.py           统一训练入口 (支持 --loss_type bce|mse)
   train_stage.py     分阶段编排 (S1→S2→S3)
   evaluate.py        独立评估 CLI
-  src/data/generator.py  数据生成模块与 CLI
   archived/          RL 代码（已归档）
 ```
 
