@@ -51,7 +51,8 @@
 | 模型架构 | `src/model/architecture.py` | CNN + Transformer + Refinement (V3 hidden state) |
 | 全局策略 | `src/config/training_policy.py` | 统一 refine 默认策略 |
 | 训练核心 | `src/training/train.py` | Online BCE (frontier loss, 全 BPTT) |
-| 棋盘池 | `src/training/evaluate.py` | BoardPool (eval) + TrainBoardPool (train, mp) |
+| 棋盘池 | `src/training/board_pool.py` | BoardPool (eval) + TrainBoardPool (train, mp) |
+| 评估核心 | `src/training/evaluate.py` | 模型评估循环逻辑 |
 | 评估 | `scripts/evaluate.py` | 独立评估 CLI |
 | **训练** | `scripts/train.py` | 训练入口 |
 | **分阶段** | `scripts/train_stage.py` | S1→S2→S3 编排 |

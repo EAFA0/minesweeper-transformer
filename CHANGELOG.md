@@ -1,4 +1,13 @@
-## [未发布] - 2026-06-02
+## [未发布] - 2026-06-04
+
+### 架构与代码重构
+- **合并训练脚本**: 将 `train_supervised.py` (MSE) 和 `train.py` (BCE) 逻辑合并至单一 `train.py` 入口，通过 `--loss_type mse|bce` 动态切换，删除了大量冗余代码。
+- **解耦棋盘池逻辑**: 将 `BoardPool` 和 `TrainBoardPool` 逻辑从超长的 `src/training/evaluate.py` 剥离至独立的 `src/training/board_pool.py` 文件中，提升模块单一职责。
+- **降低圈复杂度**:
+  - `src/training/train.py` 引入 `TrainingContext` (Parameter Object 模式) 将近 200 行的主循环拆分为更小的独立函数，解决多返回值和长参数列表问题。
+  - `src/game/probability_solver.py` 重构 `_enumerate_exact` 函数，消除嵌套重名函数和高圈复杂度回溯逻辑。
+
+## [历史记录] - 2026-06-02
 
 ### 架构重构 (V3/V4 Dual-Track Architecture)
 - **隐式记忆 (Hidden State)**: 引入 64 维 `mem_state`，与 CNN 提取的 1 通道局部概率解耦，大幅提升模型在长程逻辑推导（如反证法）时的"草稿本"容量。

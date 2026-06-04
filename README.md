@@ -86,7 +86,7 @@ src/
   training/        训练循环（MSE + online BCE）+ 共享评估模块
 
 scripts/
-  train.py           统一训练入口 (--mode supervised|online)
+  train.py           统一训练入口 (支持 --loss_type bce|mse)
   train_stage.py     分阶段编排 (S1→S2→S3)
   evaluate.py        独立评估 CLI
   generate_data.py   数据生成 CLI
