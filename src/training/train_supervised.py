@@ -1,7 +1,7 @@
-"""Online BCE training for Minesweeper Transformer.
+"""Supervised training for Minesweeper Transformer (MSE Probability Distillation).
 
-Generates self-validated boards from a disk-backed pool, computes BCE loss
-on frontier (determined) cells with full BPTT refinement.
+Generates self-validated boards from a disk-backed pool, computes MSE loss
+on all covered cells against ProbabilitySolver targets with full BPTT refinement.
 """
 
 import shutil
@@ -16,45 +16,25 @@ import torch.nn.functional as F
 
 from config import POLICY, TrainingConfig, TrainingMetrics
 from game.constants import CellState, GameStatus, MoveType
+from game.probability_solver import ProbabilitySolver
 from model.architecture import MinesweeperTransformer, ModelConfig
 from training.evaluate import evaluate_model as evaluate_game_model
 from training.evaluate import load_model, TrainBoardPool
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Frontier helper
-# ═══════════════════════════════════════════════════════════════════════════
-
-def _compute_frontier(visible: np.ndarray) -> np.ndarray:
-    """Return bool mask: covered cells adjacent to at least one revealed cell."""
-    H, W = visible.shape
-    revealed = visible >= 0
-    frontier = np.zeros((H, W), dtype=bool)
-    for r in range(H):
-        for c in range(W):
-            if not revealed[r, c]:
-                continue
-            for dr in (-1, 0, 1):
-                for dc in (-1, 0, 1):
-                    nr, nc = r + dr, c + dc
-                    if 0 <= nr < H and 0 <= nc < W and visible[nr, nc] == CellState.COVERED:
-                        frontier[nr, nc] = True
-    return frontier
-
-
-# ═══════════════════════════════════════════════════════════════════════════
 # Training
 # ═══════════════════════════════════════════════════════════════════════════
 
-def train(config: TrainingConfig) -> TrainingMetrics:
-    """Online BCE training: self-validated boards + frontier BCE loss + full BPTT.
+def train_supervised(config: TrainingConfig) -> TrainingMetrics:
+    """Supervised training (MSE Probability Distillation).
 
-    Uses a disk-backed board pool to avoid repeated solver calls.
-    Periodic evaluation via shared evaluate module.
+    Uses a disk-backed board pool and ProbabilitySolver to compute exact P(mine)
+    targets for all covered cells.
     """
     device = torch.device(config.device)
     print(f"Device: {device}")
-    print(f"Online BCE — {config.n_games} games, "
+    print(f"Supervised MSE — {config.n_games} games, "
           f"{config.board_width}×{config.board_height}/{config.board_mines} mines, "
           f"refine={config.refinement_steps}")
 
@@ -148,21 +128,22 @@ def train(config: TrainingConfig) -> TrainingMetrics:
                 best_idx = int(np.argmin(masked))
                 r, c = divmod(best_idx, config.board_width)
 
-            # BCE loss on frontier cells
-            frontier = _compute_frontier(game.visible)
-            if frontier.any():
-                mine_mask = torch.from_numpy(game.get_mine_mask()).float().to(device)
-                frontier_t = torch.from_numpy(frontier).bool().to(device)
+            # MSE loss on all covered cells using ProbabilitySolver
+            covered_t = torch.from_numpy(covered).bool().to(device)
+            if covered_t.any():
+                solver = ProbabilitySolver(game)
+                solver_probs = solver.compute_probabilities()
+                solver_t = torch.from_numpy(solver_probs).float().to(device)
 
-                probs_frontier = pv[0, 0][frontier_t]
-                labels_frontier = mine_mask[frontier_t]
+                probs_covered = pv[0, 0][covered_t]
+                targets_covered = solver_t[covered_t]
 
-                bce_loss = F.binary_cross_entropy(probs_frontier, labels_frontier)
-                bce_loss.backward()
+                mse_loss = F.mse_loss(probs_covered, targets_covered)
+                mse_loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip_norm)
                 optimizer.step()
                 optimizer.zero_grad()
-                game_loss += bce_loss.item()
+                game_loss += mse_loss.item()
             else:
                 optimizer.zero_grad()
 
@@ -216,7 +197,7 @@ def _save_checkpoint(path, fname, model, optimizer, model_config, metrics, epoch
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
         "model_config": model_config,
-        "loss_type": "online_bce",
+        "loss_type": "supervised_mse",
         "train_loss": metrics.train_loss,
         "val_action_accuracy": metrics.val_action_accuracy,
         "best_win_rate": best_wr,

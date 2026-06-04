@@ -15,12 +15,13 @@ from typing import List, Optional, Tuple
 import numpy as np
 import torch
 
-from config import POLICY
+from config import POLICY, TrainingConfig
 from data.self_validated import generate_self_validated_board
 from game.constants import GameStatus, MoveType
 from game.game import MinesweeperGame
 from model.architecture import MinesweeperTransformer, ModelConfig
 
+_DEFAULT_CFG = TrainingConfig()
 
 # ── Board Pool ─────────────────────────────────────────────────────────────
 
@@ -122,9 +123,13 @@ class TrainBoardPool:
     solver when low, optionally using multiple worker processes.
     """
 
-    def __init__(self, width: int, height: int, mines: int,
-                 pool_size: int = 64, seed: int = 42,
-                 num_workers: int = 0,
+    def __init__(self,
+                 width: int = _DEFAULT_CFG.board_width,
+                 height: int = _DEFAULT_CFG.board_height,
+                 mines: int = _DEFAULT_CFG.board_mines,
+                 pool_size: int = _DEFAULT_CFG.board_pool_size,
+                 seed: int = 42,
+                 num_workers: int = _DEFAULT_CFG.pool_workers,
                  cache_path: Optional[str] = None):
         self.width = width
         self.height = height
@@ -325,9 +330,9 @@ def evaluate_model(
     model: MinesweeperTransformer,
     device: torch.device,
     n_games: int = 1000,
-    width: int = 8,
-    height: int = 8,
-    total_mines: int = 10,
+    width: int = _DEFAULT_CFG.board_width,
+    height: int = _DEFAULT_CFG.board_height,
+    total_mines: int = _DEFAULT_CFG.board_mines,
     seed: int = 42,
     board_pool_path: Optional[Path] = None,
     refine_steps: int = None,

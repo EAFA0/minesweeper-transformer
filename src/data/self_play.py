@@ -16,6 +16,9 @@ from game.game import MinesweeperGame
 from game.constants import MoveType, GameStatus, CellState
 from game.probability_solver import ProbabilitySolver
 from data.no_guess import generate_no_guess_board
+from config import TrainingConfig
+
+_DEFAULT_CFG = TrainingConfig()
 
 
 def collect_self_play_trajectory(
@@ -68,9 +71,9 @@ def generate_self_play_data(
     output_dir: Path,
     model,                    # MinesweeperTransformer
     device: str,
-    width: int = 8,
-    height: int = 8,
-    total_mines: int = 10,
+    width: int = _DEFAULT_CFG.board_width,
+    height: int = _DEFAULT_CFG.board_height,
+    total_mines: int = _DEFAULT_CFG.board_mines,
     n_games: int = 100,
     max_steps: int = 200,
     max_attempts: int = 100,

@@ -1,19 +1,19 @@
-"""Online BCE Training Entry Point.
+"""Supervised MSE Training Entry Point.
 
-Self-validated boards from disk-backed pool, BCE loss on frontier cells,
+Self-validated boards from disk-backed pool, MSE distillation loss on all covered cells,
 full BPTT refinement.
 
 Usage:
-  python scripts/train.py --board_width 8 --board_height 8 --board_mines 10 --n_games 5000
-  python scripts/train.py --pretrained checkpoints/S1/best_model.pt --n_games 500
-  python scripts/train.py --resume checkpoints/S1/final_model.pt
+  python scripts/train_supervised.py --board_width 8 --board_height 8 --board_mines 10 --n_games 5000
+  python scripts/train_supervised.py --pretrained checkpoints/S1/best_model.pt --n_games 500
+  python scripts/train_supervised.py --resume checkpoints/S1/final_model.pt
 """
 
 import argparse
 import torch
 
 from config import TrainingConfig
-from training.train import train
+from training.train_supervised import train_supervised
 
 
 def auto_device() -> str:
@@ -25,7 +25,7 @@ def auto_device() -> str:
 
 
 def main():
-    p = argparse.ArgumentParser(description="Minesweeper Transformer — Online BCE Training")
+    p = argparse.ArgumentParser(description="Minesweeper Transformer — Supervised MSE Training")
     default_cfg = TrainingConfig()
 
     # Board
@@ -88,7 +88,7 @@ def main():
         resume_from=args.resume_from,
     )
 
-    train(config)
+    train_supervised(config)
 
 
 if __name__ == "__main__":

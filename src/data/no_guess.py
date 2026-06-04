@@ -9,14 +9,16 @@ from typing import Optional, Tuple
 
 import numpy as np
 
+from game.constants import GameStatus, MoveType
 from game.game import MinesweeperGame
-from game.constants import MoveType
+from config import TrainingConfig
 
+_DEFAULT_CFG = TrainingConfig()
 
 def generate_no_guess_board(
-    width: int = 8,
-    height: int = 8,
-    total_mines: int = 10,
+    width: int = _DEFAULT_CFG.board_width,
+    height: int = _DEFAULT_CFG.board_height,
+    total_mines: int = _DEFAULT_CFG.board_mines,
     rng: Optional[np.random.Generator] = None,
     max_attempts: int = 100,
 ) -> Optional[MinesweeperGame]:

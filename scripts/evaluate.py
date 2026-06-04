@@ -12,16 +12,19 @@ import argparse
 import torch
 from pathlib import Path
 
+from config import TrainingConfig
 from training.evaluate import BoardPool, evaluate_model, load_model
 
 
 def main():
     p = argparse.ArgumentParser(description="Evaluate Minesweeper Transformer model")
+    default_cfg = TrainingConfig()
+
     p.add_argument("checkpoint", help="Path to model checkpoint (.pt)")
     p.add_argument("--n_games", type=int, default=1000)
-    p.add_argument("--width", type=int, default=8)
-    p.add_argument("--height", type=int, default=8)
-    p.add_argument("--mines", type=int, default=10)
+    p.add_argument("--width", type=int, default=default_cfg.board_width)
+    p.add_argument("--height", type=int, default=default_cfg.board_height)
+    p.add_argument("--mines", type=int, default=default_cfg.board_mines)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--refine_steps", type=int, default=None,
                    help="Override eval refinement steps (default: from policy)")

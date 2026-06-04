@@ -17,7 +17,9 @@ import numpy as np
 from game.game import MinesweeperGame
 from game.constants import CellState, MoveType, GameStatus
 from game.probability_solver import ProbabilitySolver
+from config import TrainingConfig
 
+_DEFAULT_CFG = TrainingConfig()
 
 def save_trajectory_buffer(
     buffer: List[dict],
@@ -52,9 +54,9 @@ def save_trajectory_buffer(
 
 
 def record_game_trajectory(
-    width: int = 8,
-    height: int = 8,
-    total_mines: int = 10,
+    width: int = _DEFAULT_CFG.board_width,
+    height: int = _DEFAULT_CFG.board_height,
+    total_mines: int = _DEFAULT_CFG.board_mines,
     rng: Optional[np.random.Generator] = None,
     min_steps: int = 2,
 ) -> Optional[dict]:
@@ -145,10 +147,10 @@ def record_game_trajectory(
 
 def generate_training_data(
     output_dir: Path,
-    n_samples: int = 1000,
-    width: int = 8,
-    height: int = 8,
-    total_mines: int = 10,
+    n_samples: int = 10000,
+    width: int = _DEFAULT_CFG.board_width,
+    height: int = _DEFAULT_CFG.board_height,
+    total_mines: int = _DEFAULT_CFG.board_mines,
     seed: int = 42,
     samples_per_file: int = 100,
     show_progress: bool = True,

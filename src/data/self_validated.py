@@ -23,12 +23,14 @@ import numpy as np
 from game.game import MinesweeperGame
 from game.constants import CellState, MoveType, GameStatus
 from game.probability_solver import ProbabilitySolver
+from config import TrainingConfig
 
+_DEFAULT_CFG = TrainingConfig()
 
 def generate_self_validated_board(
-    width: int = 8,
-    height: int = 8,
-    total_mines: int = 10,
+    width: int = _DEFAULT_CFG.board_width,
+    height: int = _DEFAULT_CFG.board_height,
+    total_mines: int = _DEFAULT_CFG.board_mines,
     rng: Optional[np.random.Generator] = None,
     max_attempts: int = 50,
     max_steps: int = 300,
