@@ -22,6 +22,7 @@ class TrainingConfig:
     eval_interval_games: int = 200
     eval_games: int = 100
     board_pool_path: str = ""
+    loss_type: str = "bce"  # "bce" or "mse"
 
     # Optimizer
     learning_rate: float = 3e-4

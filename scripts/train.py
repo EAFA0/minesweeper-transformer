@@ -1,12 +1,12 @@
-"""Online BCE Training Entry Point.
+"""Online Training Entry Point.
 
-Self-validated boards from disk-backed pool, BCE loss on frontier cells,
-full BPTT refinement.
+Self-validated boards from disk-backed pool, BCE loss on frontier cells
+(or MSE on all covered cells), full BPTT refinement.
 
 Usage:
   python scripts/train.py --board_width 8 --board_height 8 --board_mines 10 --n_games 5000
   python scripts/train.py --pretrained checkpoints/S1/best_model.pt --n_games 500
-  python scripts/train.py --resume checkpoints/S1/final_model.pt
+  python scripts/train.py --loss_type mse --n_games 5000
 """
 
 import argparse
@@ -25,7 +25,7 @@ def auto_device() -> str:
 
 
 def main():
-    p = argparse.ArgumentParser(description="Minesweeper Transformer — Online BCE Training")
+    p = argparse.ArgumentParser(description="Minesweeper Transformer — Online Training")
     default_cfg = TrainingConfig()
 
     # Board
@@ -41,6 +41,8 @@ def main():
     p.add_argument("--pool_size", type=int, default=default_cfg.board_pool_size)
     p.add_argument("--pool_workers", type=int, default=default_cfg.pool_workers,
                    help="Multiprocessing workers (0=serial)")
+    p.add_argument("--loss_type", type=str, default="bce", choices=["bce", "mse"],
+                   help="Loss type: bce (frontier) or mse (all covered cells)")
 
     # Optimizer
     p.add_argument("--lr", type=float, default=default_cfg.learning_rate, dest="learning_rate")
@@ -79,6 +81,7 @@ def main():
         eval_interval_games=args.eval_interval_games,
         eval_games=args.eval_games,
         board_pool_path=args.board_pool_path,
+        loss_type=args.loss_type,
         learning_rate=lr,
         weight_decay=args.weight_decay,
         grad_clip_norm=args.grad_clip_norm,
