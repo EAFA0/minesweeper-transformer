@@ -10,6 +10,7 @@ Examples:
 
 import argparse
 import torch
+from pathlib import Path
 
 from training.evaluate import BoardPool, evaluate_model, load_model
 

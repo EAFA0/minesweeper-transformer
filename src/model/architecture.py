@@ -106,12 +106,12 @@ class TransformerEncoder(nn.Module):
         self.encoder = nn.TransformerEncoder(
             layer, num_layers=num_layers, enable_nested_tensor=False
         )
-        self.norm = nn.LayerNorm(d_model)
+        # Removed final LayerNorm to avoid squashing confidence growth during loop
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """x: (B, S, C) → (B, S, C)"""
         x = self.encoder(x)
-        return self.norm(x)
+        return x
 
 
 class DecoderHead(nn.Module):
@@ -183,17 +183,21 @@ class MinesweeperTransformer(nn.Module):
         """Sequence → spatial: (B, H*W, C) → (B, C, H, W)."""
         return seq.transpose(1, 2).reshape(seq.shape[0], seq.shape[2], H, W)
 
-    def _transformer_step(self, mem_seq: torch.Tensor, H: int, W: int) -> torch.Tensor:
-        """One Transformer self-loop step.
+    def _transformer_step(self, mem_seq: torch.Tensor, features_seq: torch.Tensor, H: int, W: int) -> torch.Tensor:
+        """One Transformer self-loop step with external residual and feature injection.
 
         Args:
             mem_seq: (B, H*W, d_model) current memory sequence
+            features_seq: (B, H*W, d_model) original CNN features for grounding
         Returns:
             new_mem_seq: (B, H*W, d_model)
         """
         pe_seq = self.pos_encoding.get_seq(H, W).to(mem_seq.device)
-        x = mem_seq + pe_seq
-        return self.transformer(x)
+        # Inject original features and positional encoding into the current memory state
+        x = mem_seq + pe_seq + features_seq
+        
+        # External residual connection to prevent state drift
+        return mem_seq + self.transformer(x)
 
     # ─── Public API ──────────────────────────────────────────────────────
 
@@ -210,14 +214,16 @@ class MinesweeperTransformer(nn.Module):
 
         # 1. CNN: board → features
         features = self._extract_features(board)              # (B, d_model, H, W)
+        features_seq = self._to_seq(features)                 # (B, H*W, d_model)
 
         # 2. First Transformer step from features
-        mem_seq = self._to_seq(features)                     # (B, H*W, d_model)
-        mem_seq = self._transformer_step(mem_seq, H, W)
+        # Initialize memory with features
+        mem_seq = features_seq.clone()
+        mem_seq = self._transformer_step(mem_seq, features_seq, H, W)
 
         # 3. Refinement: Transformer self-loop
         for _step in range(num_refine_steps - 1):
-            mem_seq = self._transformer_step(mem_seq, H, W)
+            mem_seq = self._transformer_step(mem_seq, features_seq, H, W)
 
         # 4. Decode final memory to probabilities
         mem_spatial = self._to_spatial(mem_seq, H, W)        # (B, d_model, H, W)
@@ -237,10 +243,11 @@ class MinesweeperTransformer(nn.Module):
 
         # 1. CNN
         features = self._extract_features(board)
+        features_seq = self._to_seq(features)
 
         # 2. First step
-        mem_seq = self._to_seq(features)
-        mem_seq = self._transformer_step(mem_seq, H, W)
+        mem_seq = features_seq.clone()
+        mem_seq = self._transformer_step(mem_seq, features_seq, H, W)
 
         mem_spatial = self._to_spatial(mem_seq, H, W)
         probs = torch.sigmoid(self.decoder(mem_spatial))
@@ -249,7 +256,7 @@ class MinesweeperTransformer(nn.Module):
 
         # 3. Refinement
         for step in range(1, num_steps):
-            mem_seq = self._transformer_step(mem_seq, H, W)
+            mem_seq = self._transformer_step(mem_seq, features_seq, H, W)
             mem_spatial = self._to_spatial(mem_seq, H, W)
             probs = torch.sigmoid(self.decoder(mem_spatial))
             results.append(probs)
@@ -281,9 +288,10 @@ class MinesweeperTransformer(nn.Module):
         B, _, H, W = x.shape
 
         features = self._extract_features(x)
+        features_seq = self._to_seq(features)
 
-        mem_seq = self._to_seq(features)
-        mem_seq = self._transformer_step(mem_seq, H, W)
+        mem_seq = features_seq.clone()
+        mem_seq = self._transformer_step(mem_seq, features_seq, H, W)
 
         mem_spatial = self._to_spatial(mem_seq, H, W)
         probs = torch.sigmoid(self.decoder(mem_spatial))
@@ -294,7 +302,7 @@ class MinesweeperTransformer(nn.Module):
         prev_probs = probs
 
         for step in range(1, max_refine_steps):
-            mem_seq = self._transformer_step(mem_seq, H, W)
+            mem_seq = self._transformer_step(mem_seq, features_seq, H, W)
             mem_spatial = self._to_spatial(mem_seq, H, W)
             probs = torch.sigmoid(self.decoder(mem_spatial))
 

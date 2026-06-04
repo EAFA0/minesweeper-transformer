@@ -12,11 +12,11 @@ class RefinementPolicy:
     """Global policy for refinement iterations.
 
     Training: Fixed BPTT unfolding (no detach between steps).
-    Inference: Same steps as training; early stop on convergence.
+    Inference: Can be deeper than training; early stop on convergence.
     """
 
     train_max_steps: int = 4
-    eval_max_steps: int = 4      # must match train_max_steps
+    eval_max_steps: int = 16     # Deep Inference: allow up to 16 steps
     convergence_eps: float = 0.01  # stop when max|ΔP| < 1%
 
 
