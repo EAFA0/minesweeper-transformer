@@ -4,8 +4,8 @@
 - **统一数据管道 (Unified Data Pipeline)**: 引入 `TrajectoryPool` (`src/training/trajectory_pool.py`) 彻底替代并移除了 `Dataset` 和 `BoardPool` (`TrainBoardPool`)。
 - **重构生成器**: 将 `scripts/generate_data.py` 和底层的生成器收敛为单一的 `src/data/generator.py`，支持生成完整的对局时间序列轨迹 (Trajectory) 并按需计算 Probs。
 - **后台异步经验池**: `TrajectoryPool` 现在通过 `multiprocessing` 后台守护进程预先推演并存储完整轨迹。前端暴露 `pop()` (提供 `(mines, visible)` 供在线探索) 和 `batch()` (提供 `(channels, probs, mask)` 供离线蒸馏)，彻底打通 Online 与 Offline 的界限，并解决容量不足时的阻塞问题。
-- **合并训练脚本**: 将 `train_supervised.py` (MSE) 和 `train.py` (BCE) 逻辑合并至单一 `train.py` 入口，通过 `--loss_type mse|bce` 动态切换，删除了大量冗余代码。
-- **解耦棋盘池逻辑**: 将 `BoardPool` 和 `TrainBoardPool` 逻辑从超长的 `src/training/evaluate.py` 剥离至独立的 `src/training/board_pool.py` 文件中，提升模块单一职责。
+- **统一训练入口**: `scripts/train.py` 作为单一 CLI 入口，通过 `--mode online|supervised` 和 `--loss_type bce|mse` 动态路由到 `train.py`(Online BCE) 或 `train_supervised.py`(Offline npz)。
+- **数据管线模块化**: `TrajectoryPool` (`trajectory_pool.py`) 统一离线/在线数据生产；`EvalBoardPool` (`eval_pool.py`) 负责评估缓存。旧 `board_pool.py` 和 `Dataset` 已移除。
 - **降低圈复杂度**:
   - `src/training/train.py` 引入 `TrainingContext` (Parameter Object 模式) 将近 200 行的主循环拆分为更小的独立函数，解决多返回值和长参数列表问题。
   - `src/game/probability_solver.py` 重构 `_enumerate_exact` 函数，消除嵌套重名函数和高圈复杂度回溯逻辑。

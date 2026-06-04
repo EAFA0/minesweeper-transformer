@@ -58,18 +58,21 @@ python scripts/train_stage.py --stage S3 --eval 10 10 40  # 零样本评估
 # 历史/实验阶段
 python scripts/train_stage.py --legacy_stage S1.5
 
-# RL board pool 构建 + 微调
-python scripts/generate_rl_pool.py --width 10 --height 10 --mines 40 --target_size 12000 --workers 16
-python scripts/train_rl.py --pretrained checkpoints/S3/best_model.pt --width 10 --height 10 --mines 40
+# RL (已归档至 scripts/archived/)
+python scripts/archived/generate_rl_pool.py --width 10 --height 10 --mines 40 --target_size 12000 --workers 16
+python scripts/archived/train_rl.py --pretrained checkpoints/S3/best_model.pt --width 10 --height 10 --mines 40
 
 # 直接调 train.py（调试用）
-# Online 模式（自我探索）
-python scripts/train.py --mode online --board_width 8 --board_height 8 --board_mines 10 --n_games 5000 --device cuda \
+# Online BCE（自我探索，默认）
+python scripts/train.py --board_width 8 --board_height 8 --board_mines 10 --n_games 5000 --device cuda \
     --save_dir checkpoints/online_run --lr 1e-4 --weight_decay 3e-4
 
-# Supervised 模式（离线数据蒸馏）
+# Supervised 模式（离线 npz 蒸馏）
 python scripts/train.py --mode supervised --data_dir data/S1 --epochs 5 --device cuda \
     --save_dir checkpoints/S1 --lr 1e-3 --weight_decay 3e-4
+
+# MSE loss (全 covered cells，替代 BCE 的 frontier 策略)
+python scripts/train.py --loss_type mse --n_games 5000
 ```
 
 ### 评估

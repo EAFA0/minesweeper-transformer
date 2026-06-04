@@ -48,7 +48,7 @@
 
 | 模块 | 路径 | 说明 |
 |------|------|------|
-| 模型架构 | `src/model/architecture.py` | CNN + Transformer + Refinement (V3 hidden state) |
+| 模型架构 | `src/model/architecture.py` | CNN + Transformer + Refinement (V4: grounding + residual) |
 | 全局策略 | `src/config/training_policy.py` | 统一 refine 默认策略 |
 | 训练核心 | `src/training/train.py` | Online BCE (frontier loss, 全 BPTT) |
 | 棋盘池 | `src/training/trajectory_pool.py` | TrajectoryPool (统一数据管道: online & offline) |
