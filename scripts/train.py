@@ -102,7 +102,8 @@ def main():
     )
 
     if args.mode == "supervised":
-        train_supervised(config)
+        from model.architecture import ModelConfig
+        train_supervised(config, ModelConfig())
     else:
         train(config)
 

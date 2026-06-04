@@ -15,11 +15,16 @@ uv run python3 scripts/train_stage.py --all
 uv run python3 scripts/evaluate.py checkpoints/S3/best_model.pt \
   --width 10 --height 10 --mines 40
 
-# 4. 单阶段冷启动
+# 4. 单阶段冷启动 (Online 模式)
 uv run python3 scripts/train.py \
-  --board_width 8 --board_height 8 --board_mines 10 --n_games 5000
+  --mode online --board_width 8 --board_height 8 --board_mines 10 --n_games 5000
 
-# 5. 从 checkpoint 继续
+# 5. 离线监督蒸馏 (Supervised 模式)
+uv run python3 -m src.data.generator --output data/S1 --n_samples 1000
+uv run python3 scripts/train.py \
+  --mode supervised --data_dir data/S1 --epochs 5
+
+# 6. 从 checkpoint 继续
 uv run python3 scripts/train.py \
   --pretrained checkpoints/S1/best_model.pt --n_games 500
 ```
@@ -59,9 +64,13 @@ uv run python3 scripts/train_stage.py --all
 # 单阶段
 uv run python3 scripts/train_stage.py --stage S1
 
-# 独立训练（冷启动）
+# 独立训练（冷启动 Online）
 uv run python3 scripts/train.py \
-  --board_width 8 --board_height 8 --board_mines 10 --n_games 5000
+  --mode online --board_width 8 --board_height 8 --board_mines 10 --n_games 5000
+
+# 离线监督训练（Supervised）
+uv run python3 scripts/train.py \
+  --mode supervised --data_dir data/S1 --epochs 5
 
 # 微调已有模型
 uv run python3 scripts/train.py \

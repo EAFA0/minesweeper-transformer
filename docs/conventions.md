@@ -63,7 +63,12 @@ python scripts/generate_rl_pool.py --width 10 --height 10 --mines 40 --target_si
 python scripts/train_rl.py --pretrained checkpoints/S3/best_model.pt --width 10 --height 10 --mines 40
 
 # 直接调 train.py（调试用）
-python scripts/train.py --data_dir data/S1 --epochs 5 --device cuda \
+# Online 模式（自我探索）
+python scripts/train.py --mode online --board_width 8 --board_height 8 --board_mines 10 --n_games 5000 --device cuda \
+    --save_dir checkpoints/online_run --lr 1e-4 --weight_decay 3e-4
+
+# Supervised 模式（离线数据蒸馏）
+python scripts/train.py --mode supervised --data_dir data/S1 --epochs 5 --device cuda \
     --save_dir checkpoints/S1 --lr 1e-3 --weight_decay 3e-4
 ```
 
