@@ -4,7 +4,7 @@
 > **2026-06-03**: 全线切换 Online BCE。MSE 监督训练、data_dir、LEGACY_STAGES 退役。评
 > 估和训练共享 BoardPool/TrainBoardPool。全 BPTT refinement (无 detach)。
 
-全局策略: Online BCE 训练，refine 固定 4 步全 BPTT（无 detach），评估/推理 4 步且收敛早停。
+全局策略: Online BCE 训练，refine 固定 4 步全 BPTT（无 detach），Deep Inference 评估/推理 16 步且收敛早停。
 
 ## 日志格式
 
@@ -156,4 +156,35 @@
 
 ---
 
-*最后更新: 2026-06-02*
+## 2026-06-04 代码审计 & 架构迭代
+
+### V4 架构修复（FAEX1 上午完成）
+
+| 改动 | 说明 |
+|------|------|
+| Grounding 注入 | CNN 特征 `features_seq` 在每轮 Transformer 自循环中重新注入 |
+| 外部残差 | `mem_seq + Transformer(mem_seq + PE + features)`，Transformer 建模 delta |
+| 去末端 LayerNorm | 允许 confidence 信号在循环中增长，不被归一化压缩 |
+| Deep Inference | `eval_max_steps`: 4 → 16，训练固定 4 步 BPTT，推理可深度思考 |
+| dropout | 0.0 → 0.2 (Transformer Encoder) |
+| 配置模块化 | ModelConfig / TrainingConfig / StageConfig / STAGES 拆分 |
+
+### S3 碰撞测试重置
+
+S3 重新定义为 `8×8/32`（50% 密度），直接在新 V4 上验证高密度能力。
+
+### 代码审计结论
+
+Nanobot 对完整训练/评估/模型管线进行了逐行审计：
+- **无逻辑 bug** — 训练循环、梯度流、数据管线均正确
+- 识别了三个非阻塞问题（记录为 pitfalls #11-13）
+- BN batch_size=1 在 2D 卷积场景下被空间维度缓解，不构成阻塞
+
+### 待验证
+
+- [ ] 新 V4（grounding + residual + deep inference）在 S3 8×8/32 上的实际表现
+- [ ] eval_max_steps=16 时训练/推理解耦是否导致分布偏移
+
+---
+
+*最后更新: 2026-06-04*

@@ -42,3 +42,4 @@ uv.lock
 
 ai-docs/
 train_boards_*.npz
+*.bundle

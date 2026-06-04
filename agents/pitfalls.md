@@ -85,6 +85,35 @@
 - **根因溯源**: 此 detach 来自 RL 训练的内存爆炸修复（33GB → 500MB），被不留心从 RL 合入监督训练。
 - **记录日期**: 2026-06-03
 
+## 坑 #11: V4 架构缺少 grounding 和残差 — 状态漂移导致高密度失败
+
+- **症状**: 6×6/18 (50%密度) Online BCE 胜率 6.5%，蒸馏 BCE 胜率 12%；格点准确率峰值 82.5%，远低于所需 99%+
+- **根因排查**: 审计 V4 代码发现两个设计缺陷：
+  1. CNN 特征仅在第一步使用，后续 refinement step 中 Transformer 只能看见自己的隐状态 → 状态逐渐漂移
+  2. 无外部残差：`m_{t+1} = Transformer(m_t)`，Transformer 需重建完整表示 → BPTT 梯度容易消失
+- **修复 (2026-06-04)**: 
+  1. 每步重注 CNN 特征: `x = mem_seq + pe_seq + features_seq`
+  2. 外部残差: `return mem_seq + self.transformer(x)`
+  3. 去除末端 LayerNorm: 允许 confidence 在循环中增长
+- **教训**: 循环架构必须保持 grounding（原始特征注入）+ residual（delta 建模），否则退化为无记忆的单步推理
+- **记录日期**: 2026-06-04
+
+## 坑 #12: BatchNorm + batch_size=1 的微妙权衡
+
+- **症状**: 历史上 commit `0d35275` 改为 `model.eval()` 训练，随后 `c8ad0a2` 改回 `model.train()`
+- **根因**: 在线 BCE 每次 forward 只处理 1 个棋盘。BatchNorm2d 统计量来自 H×W 个空间位置（8×8=64 样本/通道），虽非退化但噪声大。Running stats 被每步的噪声 EMA 更新，可能导致累积偏置。
+- **当前选择**: `model.train()` — V4 CNN 只跑一次，单步噪声可接受；eval() 会完全冻结 running stats，若初始值不匹配更危险
+- **未来改进方向**: 换 GroupNorm(num_groups=8) 彻底消除 batch 依赖，或训练初期用 eval 模式预热 BN 统计量
+- **教训**: BN 的 batch_size 问题在 2D 场景下被空间维度缓解，不是根因但值得标记
+- **记录日期**: 2026-06-04
+
+## 坑 #13: BCE 数值稳定性 — sigmoid + BCE → 应换 _with_logits
+
+- **症状**: 潜在 NaN（当 sigmoid 输出极端 0/1 时）
+- **根因**: `torch.sigmoid() + F.binary_cross_entropy()` 组合不如 `F.binary_cross_entropy_with_logits()` 稳定。后者内部用 log-sum-exp trick 避免 log(0) 的 -inf
+- **当前状态**: 未修复，实际未触发 NaN，但属最佳实践
+- **记录日期**: 2026-06-04
+
 ---
 
-*最后更新: 2026-06-01*
+*最后更新: 2026-06-04*
