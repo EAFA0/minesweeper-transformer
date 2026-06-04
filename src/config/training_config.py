@@ -14,8 +14,10 @@ class TrainingConfig:
     max_game_steps: int = 200
 
     # Pool
-    board_pool_size: int = 64
-    pool_workers: int = 0         # 0 = serial, >=2 = multiprocessing
+    pool_size: int = 100
+    pool_workers: int = 0         # 0 = serial, >=1 = multiprocessing background workers
+    data_dir: str = ""            # optional offline npz dir
+    mixed_mode: bool = False      # if True, randomizes board size and mine density
 
     # Training
     n_games: int = 5000
@@ -40,7 +42,6 @@ class TrainingConfig:
     device: str = "cpu"
 
     # Supervised Mode
-    data_dir: str = "data/S1"
     epochs: int = 5
 
     # Checkpoint

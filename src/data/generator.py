@@ -21,235 +21,141 @@ from config import TrainingConfig
 
 _DEFAULT_CFG = TrainingConfig()
 
-def save_trajectory_buffer(
-    buffer: List[dict],
-    output_dir: Path,
-    file_idx: int,
-    *,
-    include_counts: bool = True,
-) -> Path:
-    """Save trajectory steps to a compressed training data file."""
-    all_channels = []
-    all_probs = []
-    all_masks = []
-
-    for traj in buffer:
-        for step in traj["trajectory"]:
-            all_channels.append(step["channels"])
-            all_probs.append(step["probs"])
-            all_masks.append(step["mask"])
-
-    save_dict = {
-        "channels": np.stack(all_channels),
-        "probs": np.stack(all_probs),
-        "masks": np.stack(all_masks),
-    }
-    if include_counts:
-        save_dict["n_games"] = np.array(len(buffer))
-        save_dict["n_samples"] = np.array(len(all_channels))
-
-    filepath = output_dir / f"data_{file_idx:04d}.npz"
-    np.savez_compressed(filepath, **save_dict)
-    return filepath
-
-
-def record_game_trajectory(
+def generate_trajectory(
     width: int = _DEFAULT_CFG.board_width,
     height: int = _DEFAULT_CFG.board_height,
     total_mines: int = _DEFAULT_CFG.board_mines,
+    compute_probs: bool = True,
     rng: Optional[np.random.Generator] = None,
-    min_steps: int = 2,
 ) -> Optional[dict]:
-    """Play through a no-guess board, recording (state, probability_matrix) at each step.
-
-    At each step:
-    1. ProbabilitySolver computes exact P(mine) for every covered cell
-    2. Record (channels, probs, mask)
-    3. Reveal the covered cell with lowest P(mine) to advance the game
-
-    On no-guess boards, at least one cell always has P(mine)=0,
-    so the game never gets stuck.
-
-    Returns None if no steps recorded or generation fails.
+    """Play through a board, recording the full trajectory.
+    
+    Returns:
+        Dict with keys:
+        - "mines": (H, W) boolean array
+        - "actions": list of (r, c) tuples
+        - "masks": list of (H, W) boolean arrays (True = covered)
+        - "probs": list of (H, W) float arrays (only if compute_probs=True)
     """
     if rng is None:
         rng = np.random.default_rng()
 
-    # Generate no-guess board
-    from data.no_guess import generate_no_guess_board
-    game = generate_no_guess_board(
-        width=width, height=height, total_mines=total_mines,
-        rng=rng, max_attempts=100,
+    # Generate no-guess board (or use self_validated if no_guess is too slow)
+    from data.self_validated import generate_self_validated_board
+    mine_mask, visible, _ = generate_self_validated_board(width, height, total_mines, rng=rng)
+    if mine_mask is None or visible is None:
+        return None
+
+    game = MinesweeperGame.from_mine_mask(
+        width, height, mine_mask, first_done=True, visible=visible
     )
-    if game is None:
-        return None
 
-    if game.status != GameStatus.PLAYING:
-        return None
-
-    mine_mask = game.get_mine_mask()
-    steps = []
-    step_idx = 0
+    traj = {
+        "mines": mine_mask.copy(),
+        "actions": [],
+        "masks": [],
+    }
+    if compute_probs:
+        traj["probs"] = []
 
     while game.status == GameStatus.PLAYING:
-        # Compute probability matrix for current state
-        prob_solver = ProbabilitySolver(game)
-        probs = prob_solver.compute_probabilities()
-
-        # Record state
-        channels = game.board_to_channels().copy()
-        mask = game.get_label_mask().copy()
-
-        # Count stats for logging
-        n_safe = int(np.sum((probs == 0.0) & mask))
-        n_mine = int(np.sum((probs == 1.0) & mask))
-        n_ambig = int(np.sum((probs > 0.0) & (probs < 1.0) & mask))
-
-        steps.append({
-            "step": step_idx,
-            "channels": channels,
-            "probs": probs.copy(),
-            "mask": mask,
-            "n_deduced_safe": n_safe,
-            "n_deduced_mine": n_mine,
-            "n_ambiguous": n_ambig,
-        })
-
-        # Find and reveal the cell with lowest P(mine) among covered cells
         covered = game.covered_cells
-        if not covered.any():
-            break
-
+        traj["masks"].append(covered.copy())
+        
+        solver = ProbabilitySolver(game)
+        probs = solver.compute_probabilities()
+        
+        if compute_probs:
+            traj["probs"].append(probs.astype(np.float32))
+            
         masked_probs = np.where(covered, probs, 2.0)
-        best_idx = np.argmin(masked_probs)
-        best_r, best_c = divmod(int(best_idx), game.width)
-
-        if probs[best_r, best_c] > 0.0:
-            # Shouldn't happen on no-guess boards, but handle gracefully
-            # If min prob > 0, we'd be guessing — skip this step
-            break
-
-        game.make_move(best_r, best_c, MoveType.REVEAL)
-        step_idx += 1
-
-    if len(steps) < min_steps:
-        return None
-
-    return {
-        "width": width,
-        "height": height,
-        "total_mines": total_mines,
-        "mine_mask": mine_mask,
-        "n_steps": len(steps),
-        "trajectory": steps,
-    }
+        best_idx = int(np.argmin(masked_probs))
+        r, c = divmod(best_idx, width)
+        
+        traj["actions"].append((r, c))
+        game.make_move(r, c, MoveType.REVEAL)
+        
+    return traj
 
 
 def generate_training_data(
     output_dir: Path,
-    n_samples: int = 10000,
-    width: int = _DEFAULT_CFG.board_width,
-    height: int = _DEFAULT_CFG.board_height,
-    total_mines: int = _DEFAULT_CFG.board_mines,
+    n_samples: int = 1000,
+    width: int = 8,
+    height: int = 8,
+    total_mines: int = 10,
     seed: int = 42,
     samples_per_file: int = 100,
-    show_progress: bool = True,
-    start_file_idx: int = 0,
-    existing_stats: Optional[dict] = None,
 ) -> dict:
-    """Generate training data and save to disk.
-
-    Returns summary dict with generation statistics.
-    """
-    output_dir = Path(output_dir)
+    """Generate and save trajectory dataset sequentially."""
     output_dir.mkdir(parents=True, exist_ok=True)
-
     rng = np.random.default_rng(seed)
-    stats = {
-        "params": {
-            "width": width, "height": height, "total_mines": total_mines,
-            "n_samples_target": n_samples,
-            "label_type": "probability_distillation",
-        },
-        "attempts": 0,
-        "generated": 0,
-        "total_steps": 0,
-        "total_ambiguous_cells": 0,
-        "start_time": time.time(),
+    
+    total_saved = 0
+    file_idx = 0
+    buffer = []
+    
+    start_time = time.time()
+    
+    while total_saved < n_samples:
+        traj = generate_trajectory(width, height, total_mines, compute_probs=True, rng=rng)
+        if traj is not None:
+            buffer.append(traj)
+            total_saved += 1
+            
+            if len(buffer) >= samples_per_file:
+                save_trajectory_buffer(buffer, output_dir, file_idx)
+                file_idx += 1
+                buffer.clear()
+                print(f"Generated {total_saved}/{n_samples} trajectories...")
+                
+    if buffer:
+        save_trajectory_buffer(buffer, output_dir, file_idx)
+        
+    duration = time.time() - start_time
+    print(f"Finished generating {total_saved} trajectories in {duration:.1f}s")
+    
+    return {
+        "n_trajectories": total_saved,
+        "width": width,
+        "height": height,
+        "mines": total_mines,
+        "duration": duration,
     }
 
-    buffer = []
-    file_idx = start_file_idx
+def save_trajectory_buffer(
+    buffer: List[dict],
+    output_dir: Path,
+    file_idx: int,
+) -> Path:
+    """Save a batch of full trajectories to a compressed .npz file."""
+    data = {}
+    for i, traj in enumerate(buffer):
+        data[f"mines_{i}"] = traj["mines"]
+        data[f"actions_{i}"] = np.array(traj["actions"], dtype=np.int32)
+        data[f"masks_{i}"] = np.array(traj["masks"], dtype=bool)
+        if "probs" in traj:
+            data[f"probs_{i}"] = np.array(traj["probs"], dtype=np.float32)
+            
+    out_path = output_dir / f"data_{file_idx:04d}.npz"
+    np.savez_compressed(out_path, **data)
+    return out_path
 
-    pbar = None
-    if show_progress:
-        try:
-            from tqdm import tqdm
-            pbar = tqdm(total=n_samples, desc="Generating training data (prob distillation)")
-        except ImportError:
-            pass
-
-    while stats["generated"] < n_samples:
-        stats["attempts"] += 1
-        trajectory = record_game_trajectory(
-            width=width, height=height, total_mines=total_mines, rng=rng,
-        )
-
-        if trajectory is None:
-            continue
-
-        stats["generated"] += 1
-        stats["total_steps"] += trajectory["n_steps"]
-
-        # Count ambiguous cells across all steps
-        for step in trajectory["trajectory"]:
-            stats["total_ambiguous_cells"] += step["n_ambiguous"]
-
-        buffer.append(trajectory)
-
-        if pbar:
-            pbar.update(1)
-
-        # Flush buffer to disk
-        if len(buffer) >= samples_per_file:
-            _save_buffer(buffer, output_dir, file_idx)
-            buffer = []
-            file_idx += 1
-
-    # Flush remaining
-    if buffer:
-        _save_buffer(buffer, output_dir, file_idx)
-        file_idx += 1
-
-    stats["end_time"] = time.time()
-    stats["elapsed_seconds"] = stats["end_time"] - stats["start_time"]
+if __name__ == "__main__":
+    # Simple CLI for testing/generation
+    import argparse
+    p = argparse.ArgumentParser()
+    p.add_argument("--n_samples", type=int, default=100)
+    p.add_argument("--output", type=str, default="data/training")
+    p.add_argument("--width", type=int, default=8)
+    p.add_argument("--height", type=int, default=8)
+    p.add_argument("--mines", type=int, default=10)
+    args = p.parse_args()
     
-    if existing_stats:
-        stats["attempts"] += existing_stats.get("attempts", 0)
-        stats["generated"] += existing_stats.get("generated", 0)
-        stats["total_steps"] += existing_stats.get("total_steps", 0)
-        stats["total_ambiguous_cells"] += existing_stats.get("total_ambiguous_cells", 0)
-        stats["elapsed_seconds"] += existing_stats.get("elapsed_seconds", 0.0)
-
-    stats["avg_steps_per_game"] = stats["total_steps"] / max(1, stats["generated"])
-    stats["avg_ambig_per_game"] = stats["total_ambiguous_cells"] / max(1, stats["total_steps"])
-    stats["output_files"] = file_idx
-
-    # Save stats
-    with open(output_dir / "stats.json", "w") as f:
-        json.dump(stats, f, indent=2, default=lambda x: x.item() if hasattr(x, "item") else str(x))
-
-    if pbar:
-        pbar.close()
-
-    return stats
-
-
-def _save_buffer(buffer: List[dict], output_dir: Path, file_idx: int) -> None:
-    """Save a batch of trajectories to a compressed .npz file."""
-    save_trajectory_buffer(buffer, output_dir, file_idx, include_counts=True)
-
-    # Also save mine masks for reference
-    mine_masks = np.stack([t["mine_mask"] for t in buffer])
-    meta_path = output_dir / f"meta_{file_idx:04d}.npz"
-    np.savez_compressed(meta_path, mine_masks=mine_masks)
+    generate_training_data(
+        Path(args.output), 
+        n_samples=args.n_samples,
+        width=args.width,
+        height=args.height,
+        total_mines=args.mines
+    )

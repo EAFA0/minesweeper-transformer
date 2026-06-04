@@ -30,14 +30,14 @@
 ### 数据生成
 ```bash
 # 推荐：固定尺寸并行生成 (auto workers)
-python scripts/generate_data.py --n_samples 10000 --workers 0  # 0=auto
+python -m src.data.generator --n_samples 10000 --workers 0  # 0=auto
 
 # 混合数据（单进程，因为每个 trajectory 尺寸不同）
-python scripts/generate_data.py --mixed --min_size 4 --max_size 8 \
+python -m src.data.generator --mixed --min_size 4 --max_size 8 \
     --min_density 0.1 --max_density 0.5 --n_samples 12000
 
 # 强制重新生成
-python scripts/generate_data.py --n_samples 10000 --workers 0 --force
+python -m src.data.generator --n_samples 10000 --workers 0 --force
 ```
 
 ### 训练

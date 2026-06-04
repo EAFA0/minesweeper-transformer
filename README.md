@@ -46,7 +46,7 @@ Online BCE：自验证棋盘池 + frontier BCE loss + 全 BPTT refinement。
 | S2 | 8×8 | 20 | 31.3% | 3000 |
 | S3 | 8×8 | 32 | 50.0% | 3000 |
 
-每阶段继承前一阶段权重（curriculum transfer）。冷启动无需预生成数据，`TrainBoardPool` 自动管理棋盘池。
+每阶段继承前一阶段权重（curriculum transfer）。冷启动无需预生成数据，`TrajectoryPool` 统一管理后台经验回放池。
 
 ## 常用命令
 
@@ -89,7 +89,7 @@ scripts/
   train.py           统一训练入口 (支持 --loss_type bce|mse)
   train_stage.py     分阶段编排 (S1→S2→S3)
   evaluate.py        独立评估 CLI
-  generate_data.py   数据生成 CLI
+  src/data/generator.py  数据生成模块与 CLI
   archived/          RL 代码（已归档）
 ```
 

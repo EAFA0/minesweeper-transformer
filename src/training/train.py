@@ -18,7 +18,7 @@ from config import POLICY, TrainingConfig, TrainingMetrics
 from game.constants import CellState, GameStatus, MoveType
 from game.probability_solver import ProbabilitySolver
 from model.architecture import MinesweeperTransformer, ModelConfig
-from training.board_pool import TrainBoardPool
+from training.trajectory_pool import TrajectoryPool
 from training.evaluate import evaluate_model as evaluate_game_model
 
 
@@ -258,23 +258,33 @@ def train(config: TrainingConfig) -> TrainingMetrics:
     ctx = _setup_training_state(config, device)
     ctx.save_dir.mkdir(parents=True, exist_ok=True)
 
-    # Board pool (disk-backed, optional multiprocessing)
-    pool = TrainBoardPool(
-        width=config.board_width,
-        height=config.board_height,
-        mines=config.board_mines,
-        pool_size=config.board_pool_size,
-        num_workers=config.pool_workers,
+    # Initialize the unified TrajectoryPool for online mode (compute_probs=False for speed)
+    pool = TrajectoryPool(
+        board_width=config.board_width,
+        board_height=config.board_height,
+        board_mines=config.board_mines,
+        pool_size=getattr(config, 'pool_size', getattr(config, 'board_pool_size', 10000)),
+        pool_workers=config.pool_workers,
+        mixed_mode=getattr(config, 'mixed_mode', False),
+        compute_probs=False,
     )
-    print(f"Board pool: {pool.available} boards ({pool.path})")
+    print("Board pool: TrajectoryPool initialized")
 
     # Use train mode: BN statistics adapt to data distribution over time.
     # V4 CNN runs once per forward call, so single-sample BN noise is
     # acceptable and far better than frozen statistics.
     ctx.model.train()
 
+    from game.game import MinesweeperGame
+
     for game_idx in range(ctx.start_game, ctx.start_game + config.n_games):
-        game = pool.get()
+        # 1. Fetch initial board from pool
+        mine_mask, visible = pool.pop()
+        
+        # 2. Setup game
+        game = MinesweeperGame.from_mine_mask(
+            config.board_width, config.board_height, mine_mask, first_done=True, visible=visible
+        )
         if game is None or game.status != GameStatus.PLAYING:
             continue
 

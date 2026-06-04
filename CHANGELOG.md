@@ -1,6 +1,9 @@
 ## [未发布] - 2026-06-04
 
 ### 架构与代码重构
+- **统一数据管道 (Unified Data Pipeline)**: 引入 `TrajectoryPool` (`src/training/trajectory_pool.py`) 彻底替代并移除了 `Dataset` 和 `BoardPool` (`TrainBoardPool`)。
+- **重构生成器**: 将 `scripts/generate_data.py` 和底层的生成器收敛为单一的 `src/data/generator.py`，支持生成完整的对局时间序列轨迹 (Trajectory) 并按需计算 Probs。
+- **后台异步经验池**: `TrajectoryPool` 现在通过 `multiprocessing` 后台守护进程预先推演并存储完整轨迹。前端暴露 `pop()` (提供 `(mines, visible)` 供在线探索) 和 `batch()` (提供 `(channels, probs, mask)` 供离线蒸馏)，彻底打通 Online 与 Offline 的界限，并解决容量不足时的阻塞问题。
 - **合并训练脚本**: 将 `train_supervised.py` (MSE) 和 `train.py` (BCE) 逻辑合并至单一 `train.py` 入口，通过 `--loss_type mse|bce` 动态切换，删除了大量冗余代码。
 - **解耦棋盘池逻辑**: 将 `BoardPool` 和 `TrainBoardPool` 逻辑从超长的 `src/training/evaluate.py` 剥离至独立的 `src/training/board_pool.py` 文件中，提升模块单一职责。
 - **降低圈复杂度**:
