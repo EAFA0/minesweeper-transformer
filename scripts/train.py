@@ -14,6 +14,7 @@ import torch
 
 from config import TrainingConfig
 from training.train import train
+from training.train_supervised import train_supervised
 
 
 def auto_device() -> str:
@@ -25,8 +26,15 @@ def auto_device() -> str:
 
 
 def main():
-    p = argparse.ArgumentParser(description="Minesweeper Transformer — Online Training")
+    p = argparse.ArgumentParser(description="Minesweeper Transformer — Training")
     default_cfg = TrainingConfig()
+
+    p.add_argument("--mode", type=str, default="online", choices=["online", "supervised"],
+                   help="Training mode: online (self-play) or supervised (offline npz)")
+    p.add_argument("--data_dir", type=str, default=default_cfg.data_dir,
+                   help="Directory for offline npz data (used in supervised mode)")
+    p.add_argument("--epochs", type=int, default=default_cfg.epochs,
+                   help="Number of epochs for supervised mode")
 
     # Board
     p.add_argument("--board_width", type=int, default=default_cfg.board_width)
@@ -89,9 +97,14 @@ def main():
         device=device,
         pretrained=args.pretrained,
         resume_from=args.resume_from,
+        data_dir=args.data_dir,
+        epochs=args.epochs,
     )
 
-    train(config)
+    if args.mode == "supervised":
+        train_supervised(config)
+    else:
+        train(config)
 
 
 if __name__ == "__main__":

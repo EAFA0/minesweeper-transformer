@@ -39,6 +39,10 @@ class TrainingConfig:
     save_dir: str = "checkpoints"
     device: str = "cpu"
 
+    # Supervised Mode
+    data_dir: str = "data/S1"
+    epochs: int = 5
+
     # Checkpoint
     pretrained: str = ""
     resume_from: str = ""

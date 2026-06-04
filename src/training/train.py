@@ -150,17 +150,18 @@ def _compute_loss_and_step(
         else:
             ctx.optimizer.zero_grad()
     elif config.loss_type == "mse":
-        # MSE loss on all covered cells using ProbabilitySolver
-        covered_t = torch.from_numpy(covered).bool().to(ctx.device)
-        if covered_t.any():
+        # MSE loss on FRONTIER cells only
+        frontier = _compute_frontier(game.visible)
+        if frontier.any():
+            frontier_t = torch.from_numpy(frontier).bool().to(ctx.device)
             solver = ProbabilitySolver(game)
             solver_probs = solver.compute_probabilities()
             solver_t = torch.from_numpy(solver_probs).float().to(ctx.device)
 
-            probs_covered = pv[0, 0][covered_t]
-            targets_covered = solver_t[covered_t]
+            probs_frontier = pv[0, 0][frontier_t]
+            targets_frontier = solver_t[frontier_t]
 
-            loss = F.mse_loss(probs_covered, targets_covered)
+            loss = F.mse_loss(probs_frontier, targets_frontier)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(ctx.model.parameters(), config.grad_clip_norm)
             ctx.optimizer.step()
@@ -220,8 +221,15 @@ def _play_training_game(
             covered = game.covered_cells
             if not covered.any():
                 break
-            probs_np = pv[0, 0].cpu().numpy()
-            masked = np.where(covered, probs_np, 2.0)
+            
+            if config.loss_type == "mse":
+                solver = ProbabilitySolver(game)
+                solver_probs = solver.compute_probabilities()
+                masked = np.where(covered, solver_probs, 2.0)
+            else:
+                probs_np = pv[0, 0].cpu().numpy()
+                masked = np.where(covered, probs_np, 2.0)
+                
             best_idx = int(np.argmin(masked))
             r, c = divmod(best_idx, config.board_width)
 
