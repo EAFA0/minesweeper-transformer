@@ -46,7 +46,7 @@ def main():
     p.add_argument("--n_games", type=int, default=default_cfg.n_games)
     p.add_argument("--eval_interval_games", type=int, default=default_cfg.eval_interval_games)
     p.add_argument("--eval_games", type=int, default=default_cfg.eval_games)
-    p.add_argument("--pool_size", type=int, default=default_cfg.board_pool_size)
+    p.add_argument("--pool_size", type=int, default=default_cfg.pool_size)
     p.add_argument("--pool_workers", type=int, default=default_cfg.pool_workers,
                    help="Multiprocessing workers (0=serial)")
     p.add_argument("--loss_type", type=str, default="bce", choices=["bce", "mse"],
@@ -83,7 +83,7 @@ def main():
         board_height=args.board_height,
         board_mines=args.board_mines,
         max_game_steps=args.max_game_steps,
-        board_pool_size=args.pool_size,
+        pool_size=args.pool_size,
         pool_workers=args.pool_workers,
         n_games=args.n_games,
         eval_interval_games=args.eval_interval_games,

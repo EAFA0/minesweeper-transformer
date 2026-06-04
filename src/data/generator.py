@@ -40,15 +40,13 @@ def generate_trajectory(
     if rng is None:
         rng = np.random.default_rng()
 
-    # Generate no-guess board (or use self_validated if no_guess is too slow)
+    # Generate self-validated board
     from data.self_validated import generate_self_validated_board
-    mine_mask, visible, _ = generate_self_validated_board(width, height, total_mines, rng=rng)
-    if mine_mask is None or visible is None:
+    game = generate_self_validated_board(width, height, total_mines, rng=rng)
+    if game is None:
         return None
-
-    game = MinesweeperGame.from_mine_mask(
-        width, height, mine_mask, first_done=True, visible=visible
-    )
+        
+    mine_mask = game.get_mine_mask()
 
     traj = {
         "mines": mine_mask.copy(),

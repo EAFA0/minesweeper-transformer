@@ -52,7 +52,8 @@ def train_supervised(
     print(f"Run dir: {run_dir}")
     
     # Calculate rough number of batches per epoch (assuming n_games as total samples)
-    batches_per_epoch = max(1, config.num_games // config.batch_size)
+    batch_size = getattr(config, 'batch_size', 64)
+    batches_per_epoch = max(1, config.n_games // batch_size)
     
     for epoch in range(1, config.epochs + 1):
         model.train()
@@ -62,7 +63,7 @@ def train_supervised(
         
         for _ in range(batches_per_epoch):
             # 1. Fetch batch from unified pool
-            channels, targets, masks = pool.batch(config.batch_size)
+            channels, targets, masks = pool.batch(batch_size)
             
             channels = channels.to(device)
             targets = targets.to(device)

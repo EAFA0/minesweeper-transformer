@@ -19,7 +19,7 @@ from data.self_validated import generate_self_validated_board
 from game.constants import GameStatus, MoveType
 from game.game import MinesweeperGame
 from model.architecture import MinesweeperTransformer, ModelConfig
-from training.board_pool import BoardPool
+from training.eval_pool import EvalBoardPool
 
 _DEFAULT_CFG = TrainingConfig()
 
@@ -213,15 +213,15 @@ class _EvalMetrics:
 
 
 def _setup_board_pool(
-    path: Optional[Path], width: int, height: int, mines: int
-) -> Optional[BoardPool]:
+    path: str, width: int, height: int, mines: int
+) -> Optional[EvalBoardPool]:
     if not path:  # None or empty string
         path = Path(f"eval_boards_{width}x{height}_{mines}.npz")
-    return BoardPool(path, width, height, mines)
+    return EvalBoardPool(path, width, height, mines)
 
 
 def _get_game(
-    pool: Optional[BoardPool],
+    pool: Optional[EvalBoardPool],
     idx: int,
     rng: np.random.Generator,
     width: int,
