@@ -215,7 +215,31 @@ class ProbabilitySolver:
         n = len(cells)
         assert n <= MAX_ENUM_CELLS, f"Component too large: {n} > {MAX_ENUM_CELLS}"
 
-        # Convert to index-based
+        # 1. Setup indices and optimize ordering
+        idx_constraints, order = self._prepare_enumeration(cells, constraints)
+        if not idx_constraints:
+            return {cell: 0.5 for cell in cells}
+
+        # 2. Run backtracking search
+        total_assignments, mine_counts = self._run_backtracking(n, idx_constraints)
+
+        if total_assignments == 0:
+            return {cell: 0.5 for cell in cells}
+
+        # 3. Map results back to original cells
+        result = {}
+        for new_pos in range(n):
+            orig_pos = order[new_pos]
+            cell = cells[orig_pos]
+            result[cell] = mine_counts[new_pos] / total_assignments
+
+        return result
+
+    def _prepare_enumeration(
+        self, cells: List[Tuple[int, int]], constraints: List[Tuple[Set[Tuple[int, int]], int]]
+    ) -> Tuple[List[Tuple[Set[int], int]], List[int]]:
+        """Convert constraints to index-based, sort cells by degree for efficient pruning."""
+        n = len(cells)
         cell_to_idx = {cell: i for i, cell in enumerate(cells)}
 
         idx_constraints: List[Tuple[Set[int], int]] = []
@@ -225,61 +249,42 @@ class ProbabilitySolver:
                 idx_constraints.append((indices, remaining))
 
         if not idx_constraints:
-            return {cell: 0.5 for cell in cells}
+            return [], []
 
-        # Sort cells by degree (most constrained first) for efficient pruning
         degree = [0] * n
         for indices, _ in idx_constraints:
             for i in indices:
                 degree[i] += 1
         order = sorted(range(n), key=lambda i: -degree[i])
 
-        # Remap constraints to new ordering
         old_to_new = {old: new for new, old in enumerate(order)}
         ordered_constraints = []
         for indices, target in idx_constraints:
             new_indices = set(old_to_new[i] for i in indices)
             ordered_constraints.append((new_indices, target))
 
+        return ordered_constraints, order
+
+    def _run_backtracking(
+        self, n: int, ordered_constraints: List[Tuple[Set[int], int]]
+    ) -> Tuple[int, List[float]]:
+        """Execute backtracking to count valid mine configurations."""
         mine_counts = [0.0] * n
         total = [0]  # mutable counter
         assignment = [-1] * n  # -1=unassigned, 0=safe, 1=mine
 
-        def is_viable():
+        def is_viable() -> bool:
             for indices, target in ordered_constraints:
-                assigned = 0
-                unassigned = 0
-                for i in indices:
-                    if assignment[i] == 1:
-                        assigned += 1
-                    elif assignment[i] == -1:
-                        unassigned += 1
-                if assigned > target:
-                    return False
-                if assigned + unassigned < target:
+                assigned = sum(1 for i in indices if assignment[i] == 1)
+                unassigned = sum(1 for i in indices if assignment[i] == -1)
+                if assigned > target or assigned + unassigned < target:
                     return False
             return True
 
         def backtrack(pos: int):
-            if pos == n:
-                for indices, target in ordered_constraints:
-                    if sum(assignment[i] for i in indices) != target:
-                        return
-                total[0] += 1
-                for i in range(n):
-                    mine_counts[i] += assignment[i]
-                return
-
-            for val in (0, 1):
-                assignment[pos] = val
-                if is_viable():
-                    backtrack(pos + 1)
-            assignment[pos] = -1
-
-        # Limit enumeration to avoid infinite loops on pathological cases
-        def backtrack(pos: int):
             if total[0] >= 500_000:
                 return  # cap at 500K valid assignments
+            
             if pos == n:
                 for indices, target in ordered_constraints:
                     if sum(assignment[i] for i in indices) != target:
@@ -296,15 +301,4 @@ class ProbabilitySolver:
             assignment[pos] = -1
 
         backtrack(0)
-
-        if total[0] == 0:
-            return {cell: 0.5 for cell in cells}
-
-        # Map back to original cell order
-        result = {}
-        for new_pos in range(n):
-            orig_pos = order[new_pos]
-            cell = cells[orig_pos]
-            result[cell] = mine_counts[new_pos] / total[0]
-
-        return result
+        return total[0], mine_counts

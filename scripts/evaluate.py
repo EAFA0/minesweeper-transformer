@@ -13,7 +13,8 @@ import torch
 from pathlib import Path
 
 from config import TrainingConfig
-from training.evaluate import BoardPool, evaluate_model, load_model
+from training.board_pool import BoardPool
+from training.evaluate import evaluate_model, load_model
 
 
 def main():

@@ -18,8 +18,8 @@ from config import POLICY, TrainingConfig, TrainingMetrics
 from game.constants import CellState, GameStatus, MoveType
 from game.probability_solver import ProbabilitySolver
 from model.architecture import MinesweeperTransformer, ModelConfig
+from training.board_pool import TrainBoardPool
 from training.evaluate import evaluate_model as evaluate_game_model
-from training.evaluate import load_model, TrainBoardPool
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -47,22 +47,26 @@ def _compute_frontier(visible: np.ndarray) -> np.ndarray:
 # Training
 # ═══════════════════════════════════════════════════════════════════════════
 
-def train(config: TrainingConfig) -> TrainingMetrics:
-    """Online training: self-validated boards + chosen loss (BCE/MSE) + full BPTT.
+@dataclass
+class TrainingContext:
+    """Bundles training state to avoid long parameter lists."""
+    model: MinesweeperTransformer
+    model_config: ModelConfig
+    optimizer: torch.optim.Optimizer
+    scheduler: torch.optim.lr_scheduler.LRScheduler
+    metrics: TrainingMetrics
+    device: torch.device
+    save_dir: Path
+    start_game: int = 0
+    best_win_rate: float = 0.0
+    t0: float = 0.0
 
-    Uses a disk-backed board pool to avoid repeated solver calls.
-    Periodic evaluation via shared evaluate module.
-    """
-    device = torch.device(config.device)
-    print(f"Device: {device}")
-    print(f"Online {config.loss_type.upper()} — {config.n_games} games, "
-          f"{config.board_width}×{config.board_height}/{config.board_mines} mines, "
-          f"refine={config.refinement_steps}")
-
+def _setup_training_state(config: TrainingConfig, device: torch.device) -> TrainingContext:
+    """Initialize model, optimizer, scheduler, and load checkpoints if needed."""
     model_config = ModelConfig()
     model = MinesweeperTransformer(model_config).to(device)
-    start_game = 0
     metrics = TrainingMetrics()
+    start_game = 0
 
     if config.resume_from:
         ckpt = torch.load(config.resume_from, map_location=device, weights_only=False)
@@ -87,6 +91,7 @@ def train(config: TrainingConfig) -> TrainingMetrics:
         lr=config.learning_rate,
         weight_decay=config.weight_decay,
     )
+    
     if config.resume_from:
         ckpt = torch.load(config.resume_from, map_location=device, weights_only=False)
         if "optimizer_state_dict" in ckpt:
@@ -103,8 +108,147 @@ def train(config: TrainingConfig) -> TrainingMetrics:
         scheduler.step()
     print(f"LR schedule: cosine {config.learning_rate:.0e} → {config.min_lr:.0e} over {config.n_games} games")
 
-    save_dir = Path(config.save_dir)
-    save_dir.mkdir(parents=True, exist_ok=True)
+    return TrainingContext(
+        model=model,
+        model_config=model_config,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        metrics=metrics,
+        device=device,
+        save_dir=Path(config.save_dir),
+        start_game=start_game,
+        best_win_rate=metrics.best_win_rate,
+        t0=time.time()
+    )
+
+
+def _compute_loss_and_step(
+    config: TrainingConfig, 
+    ctx: TrainingContext, 
+    game: 'MinesweeperGame', 
+    pv: torch.Tensor, 
+    covered: np.ndarray
+) -> float:
+    """Compute the specified loss (BCE/MSE) and perform an optimization step."""
+    loss_val = 0.0
+    if config.loss_type == "bce":
+        # BCE loss on frontier cells
+        frontier = _compute_frontier(game.visible)
+        if frontier.any():
+            mine_mask = torch.from_numpy(game.get_mine_mask()).float().to(ctx.device)
+            frontier_t = torch.from_numpy(frontier).bool().to(ctx.device)
+
+            probs_frontier = pv[0, 0][frontier_t]
+            labels_frontier = mine_mask[frontier_t]
+
+            loss = F.binary_cross_entropy(probs_frontier, labels_frontier)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(ctx.model.parameters(), config.grad_clip_norm)
+            ctx.optimizer.step()
+            ctx.optimizer.zero_grad()
+            loss_val = loss.item()
+        else:
+            ctx.optimizer.zero_grad()
+    elif config.loss_type == "mse":
+        # MSE loss on all covered cells using ProbabilitySolver
+        covered_t = torch.from_numpy(covered).bool().to(ctx.device)
+        if covered_t.any():
+            solver = ProbabilitySolver(game)
+            solver_probs = solver.compute_probabilities()
+            solver_t = torch.from_numpy(solver_probs).float().to(ctx.device)
+
+            probs_covered = pv[0, 0][covered_t]
+            targets_covered = solver_t[covered_t]
+
+            loss = F.mse_loss(probs_covered, targets_covered)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(ctx.model.parameters(), config.grad_clip_norm)
+            ctx.optimizer.step()
+            ctx.optimizer.zero_grad()
+            loss_val = loss.item()
+        else:
+            ctx.optimizer.zero_grad()
+    else:
+        raise ValueError(f"Unknown loss_type: {config.loss_type}")
+        
+    return loss_val
+
+
+def _evaluate_and_checkpoint(
+    config: TrainingConfig, 
+    ctx: TrainingContext, 
+    game_idx: int
+) -> float:
+    """Run evaluation and save checkpoint if appropriate."""
+    wr, acc = _run_eval(ctx.model, ctx.device, config, game_idx + 1, config.n_games, ctx.t0)
+    ctx.metrics.val_action_accuracy.append(acc)
+
+    _save_checkpoint(
+        ctx.save_dir, "latest.pt",
+        ctx.model, ctx.optimizer, ctx.model_config, config, ctx.metrics,
+        game_idx + 1, ctx.best_win_rate, wr, ctx.scheduler,
+    )
+
+    if wr > ctx.best_win_rate:
+        ctx.best_win_rate = wr
+        ctx.metrics.best_epoch = game_idx + 1
+        ctx.metrics.best_win_rate = ctx.best_win_rate
+        shutil.copy2(ctx.save_dir / "latest.pt", ctx.save_dir / "best_model.pt")
+        print(f"  🏆 New best: {ctx.best_win_rate:.1%}")
+
+    return ctx.best_win_rate
+
+
+def _play_training_game(
+    config: TrainingConfig, 
+    ctx: TrainingContext, 
+    game: 'MinesweeperGame'
+) -> float:
+    """Play one game for training, computing loss and updating weights."""
+    game_loss = 0.0
+    game_steps = 0
+
+    while game.status == GameStatus.PLAYING and game_steps < config.max_game_steps:
+        channels = game.board_to_channels()
+        ch_t = torch.from_numpy(channels).unsqueeze(0).float().to(ctx.device)
+
+        # Full BPTT: CNN once → Transformer self-loop → Decoder
+        pv, _ = ctx.model.forward(ch_t)  # (B, 1, H, W) in computation graph
+
+        # Action selection (no_grad)
+        with torch.no_grad():
+            covered = game.covered_cells
+            if not covered.any():
+                break
+            probs_np = pv[0, 0].cpu().numpy()
+            masked = np.where(covered, probs_np, 2.0)
+            best_idx = int(np.argmin(masked))
+            r, c = divmod(best_idx, config.board_width)
+
+        # Loss computation
+        loss_val = _compute_loss_and_step(config, ctx, game, pv, covered)
+        game_loss += loss_val
+
+        game.make_move(r, c, MoveType.REVEAL)
+        game_steps += 1
+
+    return game_loss / max(1, game_steps)
+
+
+def train(config: TrainingConfig) -> TrainingMetrics:
+    """Online training: self-validated boards + chosen loss (BCE/MSE) + full BPTT.
+
+    Uses a disk-backed board pool to avoid repeated solver calls.
+    Periodic evaluation via shared evaluate module.
+    """
+    device = torch.device(config.device)
+    print(f"Device: {device}")
+    print(f"Online {config.loss_type.upper()} — {config.n_games} games, "
+          f"{config.board_width}×{config.board_height}/{config.board_mines} mines, "
+          f"refine={config.refinement_steps}")
+
+    ctx = _setup_training_state(config, device)
+    ctx.save_dir.mkdir(parents=True, exist_ok=True)
 
     # Board pool (disk-backed, optional multiprocessing)
     pool = TrainBoardPool(
@@ -119,118 +263,38 @@ def train(config: TrainingConfig) -> TrainingMetrics:
     # Use train mode: BN statistics adapt to data distribution over time.
     # V4 CNN runs once per forward call, so single-sample BN noise is
     # acceptable and far better than frozen statistics.
-    model.train()
+    ctx.model.train()
 
-    t0 = time.time()
-    best_win_rate = metrics.best_win_rate
-
-    for game_idx in range(start_game, start_game + config.n_games):
+    for game_idx in range(ctx.start_game, ctx.start_game + config.n_games):
         game = pool.get()
         if game is None or game.status != GameStatus.PLAYING:
             continue
 
-        game_loss = 0.0
-        game_steps = 0
-
-        while game.status == GameStatus.PLAYING and game_steps < config.max_game_steps:
-            channels = game.board_to_channels()
-            ch_t = torch.from_numpy(channels).unsqueeze(0).float().to(device)
-
-            # Full BPTT: CNN once → Transformer self-loop → Decoder
-            pv, _ = model.forward(ch_t)  # (B, 1, H, W) in computation graph
-
-            # Action selection (no_grad)
-            with torch.no_grad():
-                covered = game.covered_cells
-                if not covered.any():
-                    break
-                probs_np = pv[0, 0].cpu().numpy()
-                masked = np.where(covered, probs_np, 2.0)
-                best_idx = int(np.argmin(masked))
-                r, c = divmod(best_idx, config.board_width)
-
-            # Loss computation
-            if config.loss_type == "bce":
-                # BCE loss on frontier cells
-                frontier = _compute_frontier(game.visible)
-                if frontier.any():
-                    mine_mask = torch.from_numpy(game.get_mine_mask()).float().to(device)
-                    frontier_t = torch.from_numpy(frontier).bool().to(device)
-
-                    probs_frontier = pv[0, 0][frontier_t]
-                    labels_frontier = mine_mask[frontier_t]
-
-                    loss = F.binary_cross_entropy(probs_frontier, labels_frontier)
-                    loss.backward()
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip_norm)
-                    optimizer.step()
-                    optimizer.zero_grad()
-                    game_loss += loss.item()
-                else:
-                    optimizer.zero_grad()
-            elif config.loss_type == "mse":
-                # MSE loss on all covered cells using ProbabilitySolver
-                covered_t = torch.from_numpy(covered).bool().to(device)
-                if covered_t.any():
-                    solver = ProbabilitySolver(game)
-                    solver_probs = solver.compute_probabilities()
-                    solver_t = torch.from_numpy(solver_probs).float().to(device)
-
-                    probs_covered = pv[0, 0][covered_t]
-                    targets_covered = solver_t[covered_t]
-
-                    loss = F.mse_loss(probs_covered, targets_covered)
-                    loss.backward()
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip_norm)
-                    optimizer.step()
-                    optimizer.zero_grad()
-                    game_loss += loss.item()
-                else:
-                    optimizer.zero_grad()
-            else:
-                raise ValueError(f"Unknown loss_type: {config.loss_type}")
-
-            game.make_move(r, c, MoveType.REVEAL)
-            game_steps += 1
-
-        avg_loss = game_loss / max(1, game_steps)
-        metrics.train_loss.append(avg_loss)
-        scheduler.step()  # cosine decay each game
+        avg_loss = _play_training_game(config, ctx, game)
+        
+        ctx.metrics.train_loss.append(avg_loss)
+        ctx.scheduler.step()  # cosine decay each game
 
         # Periodic eval + checkpoint
         if (game_idx + 1) % config.eval_interval_games == 0:
-            wr, acc = _run_eval(model, device, config, game_idx + 1, config.n_games, t0)
-            metrics.val_action_accuracy.append(acc)
-
-            _save_checkpoint(
-                save_dir, "latest.pt",
-                model, optimizer, model_config, config, metrics,
-                game_idx + 1, best_win_rate, wr, scheduler,
-            )
-
-            if wr > best_win_rate:
-                best_win_rate = wr
-                metrics.best_epoch = game_idx + 1
-                metrics.best_win_rate = best_win_rate
-                shutil.copy2(save_dir / "latest.pt", save_dir / "best_model.pt")
-                print(f"  🏆 New best: {best_win_rate:.1%}")
+            _evaluate_and_checkpoint(config, ctx, game_idx)
 
         if (game_idx + 1) % 100 == 0:
-            elapsed = time.time() - t0
+            elapsed = time.time() - ctx.t0
             print(f"  Game {game_idx+1:5d} | loss={avg_loss:.4f} | "
-                  f"lr={scheduler.get_last_lr()[0]:.1e} | {elapsed:.0f}s")
+                  f"lr={ctx.scheduler.get_last_lr()[0]:.1e} | {elapsed:.0f}s")
 
-    total_time = time.time() - t0
+    total_time = time.time() - ctx.t0
     print(f"\n═══ Done in {total_time:.0f}s ═══")
-    print(f"Best win rate: {best_win_rate:.2%} at game {metrics.best_epoch}")
+    print(f"Best win rate: {ctx.best_win_rate:.2%} at game {ctx.metrics.best_epoch}")
 
     _save_checkpoint(
-        save_dir, "final_model.pt",
-        model, optimizer, model_config, config, metrics,
-        config.n_games, best_win_rate, best_win_rate, scheduler,
+        ctx.save_dir, "final_model.pt",
+        ctx.model, ctx.optimizer, ctx.model_config, config, ctx.metrics,
+        config.n_games, ctx.best_win_rate, ctx.best_win_rate, ctx.scheduler,
     )
 
-    return metrics
+    return ctx.metrics
 
 
 def _save_checkpoint(path, fname, model, optimizer, model_config, config, metrics, epoch, best_wr, wr, scheduler=None):
