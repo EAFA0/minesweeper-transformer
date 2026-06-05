@@ -26,6 +26,7 @@ def train_supervised(
     config: TrainingConfig,
     model_cfg: ModelConfig,
     device: Optional[str] = None,
+    arch: str = "V4",
     run_dir: str = "",
 ):
     """Train the model offline using TrajectoryPool's batch()."""
@@ -48,20 +49,34 @@ def train_supervised(
         compute_probs=True,
     )
     
-    model = MinesweeperTransformer(model_cfg).to(device)
+    if arch == "V1":
+        from model.architecture_v1 import MinesweeperTransformerV1
+        model = MinesweeperTransformerV1(model_cfg).to(device)
+    elif arch == "V1_5":
+        from model.architecture_v1_5 import MinesweeperTransformerV1_5
+        model = MinesweeperTransformerV1_5(model_cfg).to(device)
+    else:
+        from model.architecture import MinesweeperTransformer
+        model = MinesweeperTransformer(model_cfg).to(device)
+        
     if config.pretrained:
         print(f"Loading pretrained: {config.pretrained}")
         model.load_pretrained(config.pretrained, device=device)
         
     optimizer = optim.AdamW(model.parameters(), lr=config.learning_rate)
     
-    print(f"Training on {device} - Offline SUPERVISED mode")
+    print(f"Training on {device} - Offline SUPERVISED mode - Arch: {arch}")
     print(f"Board Config: {config.board_width}x{config.board_height} with {config.board_mines} mines")
     print(f"Run dir: {run_dir}")
     
     # Calculate batches per epoch correctly based on states, not just games
     batch_size = getattr(config, 'batch_size', 64)
-    if pool.total_states > 0:
+    if pool.total_states > 0 and not config.data_dir:
+        # Fallback if dynamic gen but some states preloaded
+        estimated_states = config.n_games * 15
+        batches_per_epoch = max(1, estimated_states // batch_size)
+        print(f"Dataset: Generating on the fly. Estimated {estimated_states} states -> {batches_per_epoch} batches/epoch")
+    elif pool.total_states > 0:
         # 1 epoch = seeing all states in the offline dataset once on average
         batches_per_epoch = max(1, pool.total_states // batch_size)
         print(f"Dataset: {pool.total_games} games, {pool.total_states} states -> {batches_per_epoch} batches/epoch")
@@ -92,7 +107,10 @@ def train_supervised(
             masks = masks.to(device)
             
             # 2. Forward pass
-            preds, _ = model(channels)
+            if arch in ("V1", "V1_5", "V2"):
+                preds = model(channels)
+            else:
+                preds, _ = model(channels)
             probs = preds[:, 0]  # (B, H, W)
             
             # 3. Compute loss (only on covered cells)
@@ -116,6 +134,7 @@ def train_supervised(
         # Periodic Evaluation
         from training.evaluate import evaluate_model
         print(f"\n  ── Evaluating Epoch {epoch} ──")
+        model.eval()
         eval_metrics = evaluate_model(
             model, device,
             n_games=config.eval_games,
@@ -132,6 +151,7 @@ def train_supervised(
         ckpt_path = os.path.join(run_dir, f"model_ep{epoch}.pt")
         torch.save({
             "epoch": epoch,
+            "arch_version": arch,
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "scheduler_state_dict": scheduler.state_dict(),

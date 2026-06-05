@@ -41,9 +41,12 @@ def pick_action(
     channels = game.board_to_channels()
     with torch.no_grad():
         x = torch.from_numpy(channels).unsqueeze(0).to(device)
-        results = model.refine(x, num_steps=refine_steps)
-        probs = results[-1].squeeze(0).squeeze(0).cpu().numpy()
-        n_refine = len(results)
+        probs = model.predict(x, max_refine_steps=refine_steps)
+        
+        probs_2d = probs.squeeze(0)  # (H, W) or (1, H, W)
+        if probs_2d.dim() == 3:
+            probs_2d = probs_2d.squeeze(0)
+        probs = probs_2d.cpu().numpy()
 
     covered = game.covered_cells
     if not covered.any():
@@ -52,7 +55,7 @@ def pick_action(
     masked_probs = np.where(covered, probs, 2.0)
     best_idx = np.argmin(masked_probs)
     best_r, best_c = divmod(int(best_idx), game.width)
-    return MoveType.REVEAL, best_r, best_c, n_refine
+    return MoveType.REVEAL, best_r, best_c, refine_steps
 
 
 def play_one_game(
@@ -89,7 +92,7 @@ def play_one_game(
         "steps": steps,
         "safe_reveals": safe_reveals,
         "mine_hits": mine_hits,
-        "refine_steps": refine_steps_used,
+        "refine_steps": refine_steps_used
     }
 
 
@@ -132,6 +135,8 @@ def evaluate_model(
             continue
 
         stats = play_one_game(model, device_t, game, refine_steps=refine_steps)
+        if not isinstance(stats.get("refine_steps"), list):
+            print(f"DEBUG stats: {stats}")
         metrics.add_result(stats)
         metrics.maybe_print(i + 1, n_games, t0)
 
@@ -245,9 +250,21 @@ def _get_game(
     return game
 
 
-def load_model(checkpoint_path: str, device: torch.device) -> MinesweeperTransformer:
+def load_model(checkpoint_path: str, device: torch.device):
     """Load a trained model from checkpoint."""
-    model = MinesweeperTransformer(ModelConfig()).to(device)
-    model.load_pretrained(checkpoint_path, device)
+    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    arch_version = ckpt.get("arch_version", "V4")
+    
+    if arch_version == "V1":
+        from model.architecture_v1 import MinesweeperTransformerV1
+        model = MinesweeperTransformerV1(ModelConfig()).to(device)
+    elif arch_version == "V1_5":
+        from model.architecture_v1_5 import MinesweeperTransformerV1_5
+        model = MinesweeperTransformerV1_5(ModelConfig()).to(device)
+    else:
+        model = MinesweeperTransformer(ModelConfig()).to(device)
+        
+    state_dict = ckpt["model_state_dict"] if "model_state_dict" in ckpt else ckpt
+    model.load_state_dict(state_dict, strict=True)
     model.eval()
     return model

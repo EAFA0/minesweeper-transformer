@@ -61,10 +61,19 @@ class TrainingContext:
     best_win_rate: float = 0.0
     t0: float = 0.0
 
-def _setup_training_state(config: TrainingConfig, device: torch.device) -> TrainingContext:
+def _setup_training_state(config: TrainingConfig, device: torch.device, arch: str) -> TrainingContext:
     """Initialize model, optimizer, scheduler, and load checkpoints if needed."""
     model_config = ModelConfig()
-    model = MinesweeperTransformer(model_config).to(device)
+    
+    if arch == "V1":
+        from model.architecture_v1 import MinesweeperTransformerV1
+        model = MinesweeperTransformerV1(model_config).to(device)
+    elif arch == "V1_5":
+        from model.architecture_v1_5 import MinesweeperTransformerV1_5
+        model = MinesweeperTransformerV1_5(model_config).to(device)
+    else:
+        model = MinesweeperTransformer(model_config).to(device)
+        
     metrics = TrainingMetrics()
     start_game = 0
 
@@ -178,7 +187,8 @@ def _compute_loss_and_step(
 def _evaluate_and_checkpoint(
     config: TrainingConfig, 
     ctx: TrainingContext, 
-    game_idx: int
+    game_idx: int,
+    arch: str
 ) -> float:
     """Run evaluation and save checkpoint if appropriate."""
     wr, acc = _run_eval(ctx.model, ctx.device, config, game_idx + 1, config.n_games, ctx.t0)
@@ -187,7 +197,7 @@ def _evaluate_and_checkpoint(
     _save_checkpoint(
         ctx.save_dir, "latest.pt",
         ctx.model, ctx.optimizer, ctx.model_config, config, ctx.metrics,
-        game_idx + 1, ctx.best_win_rate, wr, ctx.scheduler,
+        game_idx + 1, ctx.best_win_rate, wr, arch, ctx.scheduler,
     )
 
     if wr > ctx.best_win_rate:
@@ -213,7 +223,7 @@ def _play_training_game(
         channels = game.board_to_channels()
         ch_t = torch.from_numpy(channels).unsqueeze(0).float().to(ctx.device)
 
-        # Full BPTT: CNN once → Transformer self-loop → Decoder
+        # Full BPTT: CNN once → Transformer self-loop → Decoder (or V3 logic)
         pv, _ = ctx.model.forward(ch_t)  # (B, 1, H, W) in computation graph
 
         # Action selection (no_grad)
@@ -243,19 +253,19 @@ def _play_training_game(
     return game_loss / max(1, game_steps)
 
 
-def train(config: TrainingConfig) -> TrainingMetrics:
+def train(config: TrainingConfig, arch: str = "V4") -> TrainingMetrics:
     """Online training: self-validated boards + chosen loss (BCE/MSE) + full BPTT.
 
     Uses a disk-backed board pool to avoid repeated solver calls.
     Periodic evaluation via shared evaluate module.
     """
     device = torch.device(config.device)
-    print(f"Device: {device}")
+    print(f"Device: {device} | Arch: {arch}")
     print(f"Online {config.loss_type.upper()} — {config.n_games} games, "
           f"{config.board_width}×{config.board_height}/{config.board_mines} mines, "
           f"refine={config.refinement_steps}")
 
-    ctx = _setup_training_state(config, device)
+    ctx = _setup_training_state(config, device, arch)
     ctx.save_dir.mkdir(parents=True, exist_ok=True)
 
     # Initialize the unified TrajectoryPool for online mode (compute_probs=False for speed)
@@ -295,7 +305,7 @@ def train(config: TrainingConfig) -> TrainingMetrics:
 
         # Periodic eval + checkpoint
         if (game_idx + 1) % config.eval_interval_games == 0:
-            _evaluate_and_checkpoint(config, ctx, game_idx)
+            _evaluate_and_checkpoint(config, ctx, game_idx, arch)
 
         if (game_idx + 1) % 100 == 0:
             elapsed = time.time() - ctx.t0
@@ -309,16 +319,16 @@ def train(config: TrainingConfig) -> TrainingMetrics:
     _save_checkpoint(
         ctx.save_dir, "final_model.pt",
         ctx.model, ctx.optimizer, ctx.model_config, config, ctx.metrics,
-        config.n_games, ctx.best_win_rate, ctx.best_win_rate, ctx.scheduler,
+        config.n_games, ctx.best_win_rate, ctx.best_win_rate, arch, ctx.scheduler,
     )
 
     return ctx.metrics
 
 
-def _save_checkpoint(path, fname, model, optimizer, model_config, config, metrics, epoch, best_wr, wr, scheduler=None):
+def _save_checkpoint(path, fname, model, optimizer, model_config, config, metrics, epoch, best_wr, wr, arch, scheduler=None):
     data = {
         "epoch": epoch,
-        "arch_version": "V4",
+        "arch_version": arch,
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
         "model_config": model_config,

@@ -65,6 +65,8 @@ def main():
     p.add_argument("--board_pool_path", default=default_cfg.board_pool_path)
     p.add_argument("--stage", type=str, default=None, choices=["S1", "S2", "S3"],
                    help="Training stage (e.g. S1, S2, S3). Will use checkpoints/{stage} as save_dir if specified.")
+    p.add_argument("--arch", type=str, default="V4", choices=["V1", "V1_5", "V4"],
+                   help="Architecture version to use (V1 = Single Pass, V1_5 = Early Refine (w/ Conf Head), V4 = CNN Once + Transformer Loop)")
 
     args = p.parse_args()
 
@@ -116,9 +118,9 @@ def main():
 
     if args.mode == "supervised":
         from model.architecture import ModelConfig
-        train_supervised(config, ModelConfig(), run_dir=save_dir)
+        train_supervised(config, ModelConfig(), arch=args.arch, run_dir=save_dir)
     else:
-        train(config)
+        train(config, arch=args.arch)
 
 
 if __name__ == "__main__":

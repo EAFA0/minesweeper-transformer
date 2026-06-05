@@ -31,6 +31,7 @@ def main():
     p.add_argument("--board_pool", default=None,
                    help="Board pool .npz path (auto: eval_boards_WxH_M.npz)")
     p.add_argument("--device", default="auto")
+    p.add_argument("--arch", type=str, default="V4", choices=["V1", "V1_5", "V4"], help="Model architecture version")
 
     args = p.parse_args()
 

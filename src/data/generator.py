@@ -102,13 +102,13 @@ def generate_training_data(
             total_saved += 1
             
             if len(buffer) >= samples_per_file:
-                save_trajectory_buffer(buffer, output_dir, file_idx)
+                save_trajectory_buffer(buffer, output_dir, file_idx, width, height, total_mines)
                 file_idx += 1
                 buffer.clear()
                 print(f"Generated {total_saved}/{n_samples} trajectories...")
                 
     if buffer:
-        save_trajectory_buffer(buffer, output_dir, file_idx)
+        save_trajectory_buffer(buffer, output_dir, file_idx, width, height, total_mines)
         
     duration = time.time() - start_time
     print(f"Finished generating {total_saved} trajectories in {duration:.1f}s")
@@ -125,6 +125,9 @@ def save_trajectory_buffer(
     buffer: List[dict],
     output_dir: Path,
     file_idx: int,
+    width: int,
+    height: int,
+    mines: int,
 ) -> Path:
     """Save a batch of full trajectories to a compressed .npz file."""
     data = {}
@@ -135,7 +138,7 @@ def save_trajectory_buffer(
         if "probs" in traj:
             data[f"probs_{i}"] = np.array(traj["probs"], dtype=np.float32)
             
-    out_path = output_dir / f"data_{file_idx:04d}.npz"
+    out_path = output_dir / f"{width}x{height}_{mines}_{file_idx:03d}.npz"
     np.savez_compressed(out_path, **data)
     return out_path
 
@@ -144,7 +147,7 @@ if __name__ == "__main__":
     import argparse
     p = argparse.ArgumentParser()
     p.add_argument("--n_samples", type=int, default=100)
-    p.add_argument("--output", type=str, default="data/trajectories")
+    p.add_argument("--output", type=str, default="data")
     p.add_argument("--width", type=int, default=8)
     p.add_argument("--height", type=int, default=8)
     p.add_argument("--mines", type=int, default=10)

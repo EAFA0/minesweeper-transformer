@@ -63,6 +63,7 @@ def run_stage(stage_name, args):
             eval_cmd = [
                 *PYTHON_CMD, "scripts/evaluate.py",
                 str(ckpt),
+                "--arch", str(args.arch),
                 "--width", str(eval_w),
                 "--height", str(eval_h),
                 "--mines", str(eval_m),
@@ -74,7 +75,7 @@ def run_stage(stage_name, args):
             print(f"❌ No checkpoint: {ckpt}")
         return
 
-    # Train
+    # Run Training
     train_cmd = [
         *PYTHON_CMD, "scripts/train.py",
         "--board_width", str(cfg["width"]),
@@ -85,7 +86,12 @@ def run_stage(stage_name, args):
         "--device", args.device,
         "--lr", str(lr),
         "--weight_decay", str(cfg["weight_decay"]),
+        "--mode", str(args.mode),
+        "--arch", str(args.arch),
+        "--pool_workers", str(args.pool_workers),
     ]
+    if args.data_dir:
+        train_cmd.extend(["--data_dir", args.data_dir])
     if pretrained and not args.resume:
         train_cmd.extend(["--pretrained", pretrained])
     if args.resume:
@@ -102,6 +108,7 @@ def run_stage(stage_name, args):
         eval_cmd = [
             *PYTHON_CMD, "scripts/evaluate.py",
             str(ckpt),
+            "--arch", str(args.arch),
             "--width", str(eval_w),
             "--height", str(eval_h),
             "--mines", str(eval_m),
@@ -132,6 +139,10 @@ def main():
     p.add_argument("--resume", action="store_true")
     p.add_argument("--device", type=str, default="auto",
                    choices=["cpu", "cuda", "mps", "auto"])
+    p.add_argument("--mode", type=str, default="online", choices=["online", "supervised"], help="Training mode")
+    p.add_argument("--arch", type=str, default="V4", choices=["V1", "V1_5", "V4"], help="Model architecture version")
+    p.add_argument("--data_dir", type=str, default="", help="Directory for offline npz data (supervised mode)")
+    p.add_argument("--pool_workers", type=int, default=4, help="Number of background workers for data generation/loading")
     p.add_argument("--eval_games", type=int, default=200,
                    help="评估游戏数 (default: 200)")
     p.add_argument("--eval", nargs=3, type=int, metavar=("W", "H", "M"),

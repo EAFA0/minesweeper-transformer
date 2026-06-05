@@ -19,6 +19,24 @@ import torch
 from data.generator import generate_trajectory
 from game.game import MinesweeperGame
 
+def _worker_loop(queue: mp.Queue, width: int, height: int, mines: int, compute_probs: bool):
+    """Top-level worker loop for data generation."""
+    rng = np.random.default_rng()
+    while True:
+        try:
+            # Blocks if queue is full
+            traj = generate_trajectory(
+                width=width, 
+                height=height, 
+                total_mines=mines, 
+                compute_probs=compute_probs,
+                rng=rng
+            )
+            if traj:
+                queue.put(traj)
+        except Exception as e:
+            time.sleep(0.1)
+
 class TrajectoryPool:
     def __init__(
         self,
@@ -46,11 +64,12 @@ class TrajectoryPool:
         
         # Load offline data if data_dir is provided
         self._offline_buffer: List[Dict[str, Any]] = []
-        if data_dir:
-            p = Path(data_dir)
+        if self.data_dir:
+            p = Path(self.data_dir)
             if p.exists() and p.is_dir():
-                print(f"TrajectoryPool: Loading offline data from {data_dir}...")
-                for f in p.glob("*.npz"):
+                print(f"TrajectoryPool: Loading offline data from {self.data_dir}...")
+                pattern = f"{self.width}x{self.height}_{self.mines}_*.npz"
+                for f in p.glob(pattern):
                     try:
                         data = np.load(f, allow_pickle=True)
                         n = len(data.files) // 4  # assuming mines, actions, masks, probs
@@ -91,28 +110,13 @@ class TrajectoryPool:
         # Start background workers if requested
         if pool_workers > 0:
             for _ in range(pool_workers):
-                p = mp.Process(target=self._background_worker, daemon=True)
+                p = mp.Process(
+                    target=_worker_loop, 
+                    args=(self.queue, self.width, self.height, self.mines, self.compute_probs),
+                    daemon=True
+                )
                 p.start()
                 self.workers.append(p)
-
-    def _background_worker(self):
-        """Worker loop generating data and pushing to queue."""
-        # Setup local RNG seed per worker
-        rng = np.random.default_rng()
-        while True:
-            try:
-                # Blocks if queue is full
-                traj = generate_trajectory(
-                    width=self.width, 
-                    height=self.height, 
-                    total_mines=self.mines, 
-                    compute_probs=self.compute_probs,
-                    rng=rng
-                )
-                if traj:
-                    self.queue.put(traj)
-            except Exception as e:
-                time.sleep(0.1)
 
     def _get_traj(self) -> Dict[str, Any]:
         """Get one trajectory, preferring queue, fallback to offline, then sync gen."""
