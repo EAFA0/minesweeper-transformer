@@ -84,9 +84,14 @@ class MinesweeperGame:
         game.status = GameStatus.PLAYING
 
         if visible is not None:
-            game.visible = visible.copy()
+            # Convert boolean mask to CellState if needed (True=covered, False=revealed)
+            if visible.dtype == bool:
+                game.visible = np.where(visible, CellState.COVERED, 0).astype(np.int8)
+                revealed = (~visible).sum()
+            else:
+                game.visible = visible.copy()
+                revealed = (visible >= 0).sum()
             # Adjust _safe_covered: subtract already-revealed cells
-            revealed = (visible >= 0).sum()
             game._safe_covered = width * height - mine_count - revealed
         elif first_done:
             game.visible = np.full((height, width), CellState.COVERED, dtype=np.int8)
