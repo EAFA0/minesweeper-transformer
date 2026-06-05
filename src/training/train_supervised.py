@@ -36,8 +36,8 @@ def train_supervised(
             "Please specify it via CLI (e.g. --data_dir data) or ensure your config provides a default."
         )
 
-    if device is None:
-        device = config.device
+    from utils.device import get_device
+    device = get_device(device if device is not None else config.device)
         
     run_dir = run_dir or datetime.now().strftime("runs/%Y%m%d_%H%M%S")
     os.makedirs(run_dir, exist_ok=True)

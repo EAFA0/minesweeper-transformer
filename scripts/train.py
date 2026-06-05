@@ -17,14 +17,6 @@ from training.train import train
 from training.train_supervised import train_supervised
 
 
-def auto_device() -> str:
-    if torch.cuda.is_available():
-        return "cuda"
-    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
-
-
 def main():
     p = argparse.ArgumentParser(description="Minesweeper Transformer — Training")
     default_cfg = TrainingConfig()
@@ -60,7 +52,7 @@ def main():
     # Checkpoint
     p.add_argument("--pretrained", default=default_cfg.pretrained)
     p.add_argument("--resume_from", default=default_cfg.resume_from)
-    p.add_argument("--save_dir", default=None, help="Directory to save checkpoints. Defaults to checkpoints/{stage} or checkpoints/run_{timestamp}")
+    p.add_argument("--save_dir", default=default_cfg.save_dir, help="Directory to save checkpoints. Defaults to checkpoints/{stage} or checkpoints/run_{timestamp}")
     p.add_argument("--device", default="auto")
     p.add_argument("--board_pool_path", default=default_cfg.board_pool_path)
     p.add_argument("--stage", type=str, default=None, choices=["S1", "S2", "S3"],
@@ -75,13 +67,14 @@ def main():
     apply_stage_config(args, default_cfg)
 
     # Determine save_dir / run_dir
-    if args.save_dir is not None:
-        save_dir = args.save_dir
-    else:
+    if args.save_dir == default_cfg.save_dir and not args.stage:
         from datetime import datetime
         save_dir = datetime.now().strftime("checkpoints/run_%Y%m%d_%H%M%S")
+    else:
+        save_dir = args.save_dir
 
-    device = args.device if args.device != "auto" else auto_device()
+    from utils.device import get_device
+    device = get_device(args.device)
     print(f"Device: {device}")
 
     lr = args.learning_rate

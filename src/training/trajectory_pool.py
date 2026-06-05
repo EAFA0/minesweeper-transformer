@@ -38,6 +38,36 @@ def _worker_loop(queue: mp.Queue, width: int, height: int, mines: int, compute_p
             time.sleep(0.1)
 
 class TrajectoryPool:
+    def _load_eval_file(self, p: Path):
+        try:
+            data = np.load(p, allow_pickle=True)
+            n = len(data.files) // 2  # eval board cache has mines & visible
+            for i in range(n):
+                self._offline_buffer.append({
+                    "mines": data[f"mines_{i}"],
+                    "masks": [data[f"visible_{i}"]],
+                    "actions": []
+                })
+            print(f"TrajectoryPool: Loaded {len(self._offline_buffer)} eval boards from {p}")
+        except Exception as e:
+            print(f"Error loading {p}: {e}")
+
+    def _load_train_file(self, f: Path):
+        try:
+            data = np.load(f, allow_pickle=True)
+            n = len(data.files) // 4  # assuming mines, actions, masks, probs
+            for i in range(n):
+                traj = {
+                    "mines": data[f"mines_{i}"],
+                    "actions": data[f"actions_{i}"],
+                    "masks": data[f"masks_{i}"],
+                }
+                if f"probs_{i}" in data:
+                    traj["probs"] = data[f"probs_{i}"]
+                self._offline_buffer.append(traj)
+        except Exception as e:
+            print(f"Error loading {f}: {e}")
+
     def __init__(
         self,
         board_width: int,
@@ -67,39 +97,25 @@ class TrajectoryPool:
         if self.data_dir:
             p = Path(self.data_dir)
             if p.exists() and p.is_dir():
-                print(f"TrajectoryPool: Loading offline data from {self.data_dir}...")
-                pattern = f"{self.width}x{self.height}_{self.mines}_*.npz"
-                for f in p.glob(pattern):
-                    try:
-                        data = np.load(f, allow_pickle=True)
-                        n = len(data.files) // 4  # assuming mines, actions, masks, probs
-                        for i in range(n):
-                            traj = {
-                                "mines": data[f"mines_{i}"],
-                                "actions": data[f"actions_{i}"],
-                                "masks": data[f"masks_{i}"],
-                            }
-                            if f"probs_{i}" in data:
-                                traj["probs"] = data[f"probs_{i}"]
-                            self._offline_buffer.append(traj)
-                    except Exception as e:
-                        print(f"Error loading {f}: {e}")
-                print(f"TrajectoryPool: Loaded {len(self._offline_buffer)} trajectories offline.")
+                if self.eval_mode:
+                    eval_file = p / f"eval_boards_{self.width}x{self.height}_{self.mines}.npz"
+                    if eval_file.exists():
+                        self._load_eval_file(eval_file)
+                else:
+                    print(f"TrajectoryPool: Loading offline data from {self.data_dir}...")
+                    pattern = f"{self.width}x{self.height}_{self.mines}_*.npz"
+                    for f in p.glob(pattern):
+                        if "eval_boards" not in f.name:
+                            self._load_train_file(f)
+                    print(f"TrajectoryPool: Loaded {len(self._offline_buffer)} trajectories offline.")
             elif p.exists() and p.is_file():
-                # Load a single specific eval file
-                try:
-                    data = np.load(p, allow_pickle=True)
-                    n = len(data.files) // 2  # eval board cache has mines & visible
-                    for i in range(n):
-                        self._offline_buffer.append({
-                            "mines": data[f"mines_{i}"],
-                            "masks": [data[f"visible_{i}"]],
-                            "actions": []
-                        })
-                    print(f"TrajectoryPool: Loaded {len(self._offline_buffer)} eval boards from {p}")
-                except Exception as e:
-                    print(f"Error loading {p}: {e}")
+                if self.eval_mode:
+                    self._load_eval_file(p)
+                else:
+                    self._load_train_file(p)
+                    print(f"TrajectoryPool: Loaded {len(self._offline_buffer)} trajectories offline.")
                 
+            if not self.eval_mode:
                 # Pre-fill queue with offline data up to pool size
                 for t in self._offline_buffer[:pool_size]:
                     try:
@@ -108,7 +124,8 @@ class TrajectoryPool:
                         break
 
         # Start background workers if requested
-        if pool_workers > 0:
+        # Skip workers if we are in eval mode or have successfully loaded offline data (pure supervised)
+        if pool_workers > 0 and not eval_mode and len(self._offline_buffer) == 0:
             for _ in range(pool_workers):
                 p = mp.Process(
                     target=_worker_loop, 

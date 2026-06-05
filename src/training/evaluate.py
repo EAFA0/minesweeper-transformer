@@ -118,7 +118,8 @@ def evaluate_model(
         board_pool_path: .npz path for board caching (auto-generated if None)
         quiet: suppress per-game progress
     """
-    device_t = device if isinstance(device, torch.device) else torch.device(device)
+    from utils.device import get_device
+    device_t = get_device(device) if isinstance(device, str) else device
     rng = np.random.default_rng(seed)
     metrics = _EvalMetrics(n_games, quiet)
 
@@ -218,15 +219,13 @@ class _EvalMetrics:
 
 
 def _setup_board_pool(
-    path: str, width: int, height: int, mines: int
+    path: Optional[str], width: int, height: int, mines: int
 ) -> Optional[TrajectoryPool]:
-    if not path:  # None or empty string
-        path = Path(f"eval_boards_{width}x{height}_{mines}.npz")
     return TrajectoryPool(
         board_width=width,
         board_height=height,
         board_mines=mines,
-        data_dir=str(path),
+        data_dir=str(path) if path else "data",
         eval_mode=True
     )
 

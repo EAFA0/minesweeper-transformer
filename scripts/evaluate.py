@@ -29,21 +29,14 @@ def main():
     p.add_argument("--refine_steps", type=int, default=None,
                    help="Override eval refinement steps (default: from policy)")
     p.add_argument("--board_pool", default=None,
-                   help="Board pool .npz path (auto: eval_boards_WxH_M.npz)")
+                   help="Board pool .npz path (auto: data/eval_boards_WxH_M.npz)")
     p.add_argument("--device", default="auto")
     p.add_argument("--arch", type=str, default="V4", choices=["V1", "V1_5", "V4"], help="Model architecture version")
 
     args = p.parse_args()
 
-    if args.device == "auto":
-        if torch.cuda.is_available():
-            device = torch.device("cuda")
-        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            device = torch.device("mps")
-        else:
-            device = torch.device("cpu")
-    else:
-        device = torch.device(args.device)
+    from utils.device import get_device
+    device = get_device(args.device)
 
     print(f"Device: {device}")
     print(f"Board: {args.width}×{args.height}/{args.mines} mines")

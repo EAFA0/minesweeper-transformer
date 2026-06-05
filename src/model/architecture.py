@@ -42,27 +42,19 @@ class InterpolatablePositionalEncoding(nn.Module):
         self.pe = nn.Parameter(torch.randn(1, d_model, ref_grid, ref_grid) * 0.02)
         self.ref_grid = ref_grid
 
+    def get_spatial(self, H: int, W: int) -> torch.Tensor:
+        if H == self.ref_grid and W == self.ref_grid:
+            return self.pe
+        return F.interpolate(self.pe, size=(H, W), mode='bilinear', align_corners=False)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Add PE to spatial features: (B, C, H, W) → (B, C, H, W)."""
         _, _, H, W = x.shape
-        if H == self.ref_grid and W == self.ref_grid:
-            pe = self.pe
-        else:
-            pe = F.interpolate(
-                self.pe, size=(H, W), mode='bilinear', align_corners=False
-            )
-        return x + pe
+        return x + self.get_spatial(H, W)
 
     def get_seq(self, H: int, W: int) -> torch.Tensor:
         """Return PE as sequence: (1, H*W, d_model)."""
-        _, d, _, _ = self.pe.shape
-        if H == self.ref_grid and W == self.ref_grid:
-            pe = self.pe
-        else:
-            pe = F.interpolate(
-                self.pe, size=(H, W), mode='bilinear', align_corners=False,
-            )
-        return pe.flatten(2).transpose(1, 2)  # (1, H*W, d_model)
+        return self.get_spatial(H, W).flatten(2).transpose(1, 2)  # (1, H*W, d_model)
 
 
 class TransformerEncoder(nn.Module):
@@ -136,7 +128,7 @@ class MinesweeperTransformer(nn.Module):
 
         self.decoder = DecoderHead(config.d_model)
 
-    def load_pretrained(self, checkpoint_path: str, device):
+    def load_pretrained(self, checkpoint_path: str, device: torch.device):
         ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
         state_dict = ckpt["model_state_dict"] if "model_state_dict" in ckpt else ckpt
         self.load_state_dict(state_dict, strict=True)
@@ -176,6 +168,17 @@ class MinesweeperTransformer(nn.Module):
         # External residual connection to prevent state drift
         return mem_seq + self.transformer(x)
 
+    def _init_memory(self, board: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, int, int]:
+        """Run CNN and first Transformer step. Returns (mem_seq, features_seq, H, W)."""
+        _, _, H, W = board.shape
+        features = self._extract_features(board)
+        features_seq = self._to_seq(features)
+        
+        mem_seq = features_seq.clone()
+        mem_seq = self._transformer_step(mem_seq, features_seq, H, W)
+        
+        return mem_seq, features_seq, H, W
+
     # ─── Public API ──────────────────────────────────────────────────────
 
     def forward(self, board: torch.Tensor,
@@ -187,16 +190,7 @@ class MinesweeperTransformer(nn.Module):
         if num_refine_steps is None:
             num_refine_steps = self.config.refinement_steps
 
-        B, _, H, W = board.shape
-
-        # 1. CNN: board → features
-        features = self._extract_features(board)              # (B, d_model, H, W)
-        features_seq = self._to_seq(features)                 # (B, H*W, d_model)
-
-        # 2. First Transformer step from features
-        # Initialize memory with features
-        mem_seq = features_seq.clone()
-        mem_seq = self._transformer_step(mem_seq, features_seq, H, W)
+        mem_seq, features_seq, H, W = self._init_memory(board)
 
         # 3. Refinement: Transformer self-loop
         for _step in range(num_refine_steps - 1):
@@ -216,15 +210,7 @@ class MinesweeperTransformer(nn.Module):
 
         Returns list of probs at each step (for convergence tracking).
         """
-        B, _, H, W = board.shape
-
-        # 1. CNN
-        features = self._extract_features(board)
-        features_seq = self._to_seq(features)
-
-        # 2. First step
-        mem_seq = features_seq.clone()
-        mem_seq = self._transformer_step(mem_seq, features_seq, H, W)
+        mem_seq, features_seq, H, W = self._init_memory(board)
 
         mem_spatial = self._to_spatial(mem_seq, H, W)
         probs = torch.sigmoid(self.decoder(mem_spatial))
@@ -262,13 +248,9 @@ class MinesweeperTransformer(nn.Module):
                             convergence_eps: float = POLICY.refinement.convergence_eps,
                             ) -> dict:
         """Run refinement and report per-sample step statistics."""
-        B, _, H, W = x.shape
+        B = x.shape[0]
 
-        features = self._extract_features(x)
-        features_seq = self._to_seq(features)
-
-        mem_seq = features_seq.clone()
-        mem_seq = self._transformer_step(mem_seq, features_seq, H, W)
+        mem_seq, features_seq, H, W = self._init_memory(x)
 
         mem_spatial = self._to_spatial(mem_seq, H, W)
         probs = torch.sigmoid(self.decoder(mem_spatial))

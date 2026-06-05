@@ -89,7 +89,7 @@ def _setup_training_state(config: TrainingConfig, device: torch.device, arch: st
         print(f"  Resumed from game {start_game}")
     elif config.pretrained:
         print(f"Loading pretrained: {config.pretrained}")
-        model.load_pretrained(config.pretrained, device=str(device))
+        model.load_pretrained(config.pretrained, device=device)
     else:
         print("Training from scratch (cold start)")
 
@@ -259,7 +259,8 @@ def train(config: TrainingConfig, arch: str = "V4") -> TrainingMetrics:
     Uses a disk-backed board pool to avoid repeated solver calls.
     Periodic evaluation via shared evaluate module.
     """
-    device = torch.device(config.device)
+    from utils.device import get_device
+    device = get_device(config.device)
     print(f"Device: {device} | Arch: {arch}")
     print(f"Online {config.loss_type.upper()} — {config.n_games} games, "
           f"{config.board_width}×{config.board_height}/{config.board_mines} mines, "
@@ -273,9 +274,9 @@ def train(config: TrainingConfig, arch: str = "V4") -> TrainingMetrics:
         board_width=config.board_width,
         board_height=config.board_height,
         board_mines=config.board_mines,
-        pool_size=getattr(config, 'pool_size', getattr(config, 'board_pool_size', 10000)),
+        pool_size=config.pool_size,
         pool_workers=config.pool_workers,
-        mixed_mode=getattr(config, 'mixed_mode', False),
+        mixed_mode=config.mixed_mode,
         compute_probs=False,
     )
     print("Board pool: TrajectoryPool initialized")
