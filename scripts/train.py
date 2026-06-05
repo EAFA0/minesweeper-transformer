@@ -28,6 +28,10 @@ def main():
     p.add_argument("--resume_from", default=None, help="Resume training from checkpoint")
     p.add_argument("--save_dir", default=None, help="Override save directory")
     p.add_argument("--data_dir", type=str, default=None, help="Directory for offline npz data (supervised mode)")
+    p.add_argument("--refinement_steps", type=int, default=None, help="Refinement steps during training/inference (default: 4)")
+    p.add_argument("--board_width", type=int, default=None, help="Override board width")
+    p.add_argument("--board_height", type=int, default=None, help="Override board height")
+    p.add_argument("--board_mines", type=int, default=None, help="Override mine count")
 
     args = p.parse_args()
 
@@ -53,6 +57,14 @@ def main():
         config.data_dir = args.data_dir
     if args.loss_type is not None:
         config.loss_type = args.loss_type
+    if args.refinement_steps is not None:
+        config.refinement_steps = args.refinement_steps
+    if args.board_width is not None:
+        config.board_width = args.board_width
+    if args.board_height is not None:
+        config.board_height = args.board_height
+    if args.board_mines is not None:
+        config.board_mines = args.board_mines
 
     # 3. Dynamic save_dir fallback
     if config.save_dir == "checkpoints" and not args.stage:

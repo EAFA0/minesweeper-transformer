@@ -226,16 +226,21 @@ def _play_training_game(
         ch_t = torch.from_numpy(channels).unsqueeze(0).float().to(ctx.device)
 
         # Full BPTT: CNN once → Transformer self-loop → Decoder (or V3 logic)
-        if ctx.arch in ("V1", "V1_5"):
-            pv_raw = ctx.model.forward(ch_t)    # V1: (B,1,H,W) logits; V1_5: (B,2,H,W) raw
-            # Apply sigmoid so downstream code always works with probabilities
-            if ctx.arch == "V1":
-                pv = torch.sigmoid(pv_raw)       # (B,1,H,W) probabilities
-            else:
-                # V1_5: channel 0 is mine logit, channel 1 is confidence logit
-                probs = torch.sigmoid(pv_raw[:, 0:1])
-                conf = pv_raw[:, 1:2]            # confidence stays as logit
-                pv = torch.cat([probs, conf], dim=1)  # (B,2,H,W)
+        if ctx.arch == "V1":
+            pv_raw = ctx.model.forward(ch_t)    # V1: (B,1,H,W) logits
+            pv = torch.sigmoid(pv_raw)           # (B,1,H,W) probabilities
+
+        elif ctx.arch == "V1_5":
+            # V1_5: iterative refinement with full BPTT
+            refine_results = ctx.model.refine(
+                ch_t, num_steps=config.refinement_steps,
+                return_logits=True
+            )
+            raw = refine_results[-1]             # (B, 2, H, W) raw logits
+            probs = torch.sigmoid(raw[:, 0:1])    # (B, 1, H, W) mine probs
+            conf = raw[:, 1:2]                    # (B, 1, H, W) conf logit
+            pv = torch.cat([probs, conf], dim=1)  # (B, 2, H, W)
+
         else:
             pv, _ = ctx.model.forward(ch_t)      # V4: (B,2,H,W) already sigmoid'd, (B,N,d) mem_seq
 

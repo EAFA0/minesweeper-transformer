@@ -32,10 +32,8 @@ class TrainingConfig:
     weight_decay: float = 3e-4
     grad_clip_norm: float = 1.0
 
-    # Refinement (from POLICY)
-    @property
-    def refinement_steps(self) -> int:
-        return POLICY.refinement.train_max_steps
+    # Refinement — training steps override, default from POLICY
+    refinement_steps: int = 4  # default matches POLICY.refinement.train_max_steps
 
     # Logging
     save_dir: str = "checkpoints"

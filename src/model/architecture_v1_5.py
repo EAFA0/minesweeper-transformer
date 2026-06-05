@@ -188,22 +188,24 @@ class MinesweeperTransformerV1_5(nn.Module):
         return self._single_pass(x, prev)
 
     def refine(self, board: torch.Tensor, num_steps: int = 5,
-               confidence_threshold: float = 0.95) -> List[torch.Tensor]:
+               confidence_threshold: float = 0.95,
+               return_logits: bool = False) -> List[torch.Tensor]:
         """Iterative refinement: run model N times with self-feedback.
 
         Step 0: prev = uniform(0.5)
         Step k: probs_k, conf_k = model(board, probs_{k-1})
 
-        Stops early if mean confidence exceeds threshold (inference mode).
-        During training, always runs num_steps for consistent loss.
+        Full BPTT: gradients flow through all refinement steps (no detach).
 
         Args:
             board:                (B, 10, H, W) board channels
             num_steps:            max refinement iterations
             confidence_threshold: early-stop when mean(conf) > this
+            return_logits:        if True, save raw logits (for BCEWithLogitsLoss);
+                                  if False, save sigmoid'd probs/conf (for inference)
 
         Returns:
-            List of (B, 2, H, W) tensors — [probs_sigmoid, conf_sigmoid] per step
+            List of (B, 2, H, W) tensors per step.
             Last element is the final output.
         """
         B, _, H, W = board.shape
@@ -211,14 +213,22 @@ class MinesweeperTransformerV1_5(nn.Module):
         results = []
 
         for _ in range(num_steps):
-            raw = self._single_pass(board, probs)  # (B, 2, H, W)
-            probs = torch.sigmoid(raw[:, 0:1])      # P(mine)
-            conf = torch.sigmoid(raw[:, 1:2])       # confidence
-            results.append(torch.cat([probs, conf], dim=1))
+            raw = self._single_pass(board, probs)  # (B, 2, H, W) — full BPTT
 
-            # Early stop if confident enough (only during inference)
-            if not self.training and conf.mean() > confidence_threshold:
-                break
+            if return_logits:
+                results.append(raw)  # raw logits: channel 0 = mine, channel 1 = conf
+            else:
+                mine_prob = torch.sigmoid(raw[:, 0:1])
+                conf_prob = torch.sigmoid(raw[:, 1:2])
+                results.append(torch.cat([mine_prob, conf_prob], dim=1))
+
+            # Next step input: sigmoid'd mine probability (in comp graph → BPTT)
+            probs = torch.sigmoid(raw[:, 0:1])
+
+            # Early stop only during inference with non-logits mode
+            if not self.training and not return_logits:
+                if conf_prob.mean() > confidence_threshold:
+                    break
 
         return results
 

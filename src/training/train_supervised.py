@@ -124,10 +124,10 @@ def train_supervised(
             masks = masks.to(device)
 
             # 2. Forward pass
-            if arch in ("V1", "V1_5", "V2"):
+            if arch == "V1":
+                # V1: single forward pass, no refinement
                 preds = model(channels)
                 if config.loss_type == "bce":
-                    # V1/V1_5 forward returns raw logits → BCEWithLogitsLoss directly on logits
                     logits = preds[:, 0]  # (B, H, W) raw logits
                     pos_weight = torch.tensor(pos_weight_val, device=device)
                     loss = F.binary_cross_entropy_with_logits(
@@ -135,9 +135,41 @@ def train_supervised(
                         pos_weight=pos_weight
                     )
                 else:
-                    # MSE on probabilities: sigmoid logits first
                     probs = torch.sigmoid(preds[:, 0])  # (B, H, W)
                     loss = F.mse_loss(probs[masks], targets[masks])
+
+            elif arch == "V1_5":
+                # V1_5: iterative refinement with full BPTT
+                refine_results = model.refine(
+                    channels, num_steps=config.refinement_steps,
+                    return_logits=True
+                )
+                raw = refine_results[-1]  # (B, 2, H, W) — final step raw logits
+                if config.loss_type == "bce":
+                    logits = raw[:, 0]  # (B, H, W) raw logits
+                    pos_weight = torch.tensor(pos_weight_val, device=device)
+                    loss = F.binary_cross_entropy_with_logits(
+                        logits[masks], targets[masks],
+                        pos_weight=pos_weight
+                    )
+                else:
+                    probs = torch.sigmoid(raw[:, 0])  # (B, H, W)
+                    loss = F.mse_loss(probs[masks], targets[masks])
+
+            elif arch == "V2":
+                # V2: single forward pass (no refine)
+                preds = model(channels)
+                if config.loss_type == "bce":
+                    logits = preds[:, 0]
+                    pos_weight = torch.tensor(pos_weight_val, device=device)
+                    loss = F.binary_cross_entropy_with_logits(
+                        logits[masks], targets[masks],
+                        pos_weight=pos_weight
+                    )
+                else:
+                    probs = torch.sigmoid(preds[:, 0])
+                    loss = F.mse_loss(probs[masks], targets[masks])
+
             else:
                 # V4 forward returns (probs, mem_seq) with sigmoid already applied
                 preds, _ = model(channels)
