@@ -16,6 +16,7 @@ from game.game import MinesweeperGame
 from game.constants import MoveType, GameStatus, CellState
 from game.probability_solver import ProbabilitySolver
 from data.no_guess import generate_no_guess_board
+from data.writer import StateWriter
 from config import TrainingConfig
 
 _DEFAULT_CFG = TrainingConfig()
@@ -93,11 +94,15 @@ def generate_self_play_data(
     output_dir.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(seed) if seed is not None else np.random.default_rng()
 
-    buffer: list[dict] = []
-    file_idx = start_file_idx
+    writer = StateWriter(
+        output_dir=output_dir,
+        prefix=f"{width}x{height}_{total_mines}",
+        samples_per_file=2000,
+        start_file_idx=start_file_idx
+    )
+
     total_samples = 0
     total_games = 0
-    samples_per_file = 100
 
     model.eval()
 
@@ -124,7 +129,7 @@ def generate_self_play_data(
                 "probs": solver_probs.astype(np.float32),
                 "mask": covered.copy(),
             }
-            buffer.append(sample)
+            writer.append(sample)
             total_samples += 1
 
             # Model prediction
@@ -151,36 +156,13 @@ def generate_self_play_data(
 
             game.make_move(r, c, MoveType.REVEAL)
 
-        # Flush buffer when full
-        while len(buffer) >= samples_per_file:
-            _flush_buffer(buffer[:samples_per_file], output_dir, file_idx)
-            buffer = buffer[samples_per_file:]
-            file_idx += 1
+        # (Flushing is handled automatically by writer)
 
     # Flush remaining
-    if buffer:
-        _flush_buffer(buffer, output_dir, file_idx)
-        file_idx += 1
+    writer.flush()
 
     return {
         "total_games": total_games,
         "total_samples": total_samples,
-        "files_written": file_idx - start_file_idx,
+        "files_written": writer.file_idx - start_file_idx,
     }
-
-
-def _flush_buffer(buffer: list[dict], output_dir: Path, file_idx: int) -> None:
-    """Write a batch of samples to a .npz file."""
-    channels = np.stack([s["channels"] for s in buffer])
-    probs = np.stack([s["probs"] for s in buffer])
-    masks = np.stack([s["mask"] for s in buffer])
-
-    path = output_dir / f"data_{file_idx:04d}.npz"
-    np.savez_compressed(
-        path,
-        channels=channels,
-        probs=probs,
-        masks=masks,
-        n_games=np.int64(0),   # per-file game count not tracked at this level
-        n_samples=np.int64(len(buffer)),
-    )

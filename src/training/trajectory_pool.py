@@ -1,12 +1,11 @@
 """TrajectoryPool for unified offline/online data provision.
 
 Provides a unified interface (`batch()` and `pop()`) over a pool of 
-Minesweeper trajectories. Uses multiprocessing for asynchronous background
-filling to avoid blocking the main training loop.
+Minesweeper trajectories. In supervised mode, it efficiently loads `.npz` 
+files from disk and supports runtime `refresh()` to seamlessly incorporate 
+newly generated data produced by a background process.
 """
 
-import multiprocessing as mp
-import queue
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -14,28 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import torch
 
-# We will import generator functions later when Module 2 is done.
-# For now, we stub the background worker logic.
-from data.generator import generate_trajectory
 from game.game import MinesweeperGame
-
-def _worker_loop(queue: mp.Queue, width: int, height: int, mines: int, compute_probs: bool):
-    """Top-level worker loop for data generation."""
-    rng = np.random.default_rng()
-    while True:
-        try:
-            # Blocks if queue is full
-            traj = generate_trajectory(
-                width=width, 
-                height=height, 
-                total_mines=mines, 
-                compute_probs=compute_probs,
-                rng=rng
-            )
-            if traj:
-                queue.put(traj)
-        except Exception as e:
-            time.sleep(0.1)
 
 class TrajectoryPool:
     def _load_eval_file(self, p: Path):
@@ -48,7 +26,7 @@ class TrajectoryPool:
                     "masks": [data[f"visible_{i}"]],
                     "actions": []
                 })
-            print(f"TrajectoryPool: Loaded {len(self._offline_buffer)} eval boards from {p}")
+            print(f"TrajectoryPool: Loaded {n} eval boards from {p}")
         except Exception as e:
             print(f"Error loading {p}: {e}")
 
@@ -56,6 +34,9 @@ class TrajectoryPool:
         try:
             data = np.load(f, allow_pickle=True)
             n = len(data.files) // 4  # assuming mines, actions, masks, probs
+            if n == 0:
+                # If there are no actions, it might just be empty, safely ignore
+                return
             for i in range(n):
                 traj = {
                     "mines": data[f"mines_{i}"],
@@ -88,74 +69,52 @@ class TrajectoryPool:
         self.eval_mode = eval_mode
         self.data_dir = data_dir or "data"
         
-        # Multiprocessing setup
-        self.queue = mp.Queue(maxsize=pool_size)
-        self.workers: List[mp.Process] = []
+        self._offline_buffer: List[Dict[str, Any]] = []
+        self._loaded_files = set()
         
         # Load offline data if data_dir is provided
-        self._offline_buffer: List[Dict[str, Any]] = []
-        if self.data_dir:
-            p = Path(self.data_dir)
-            if p.exists() and p.is_dir():
-                if self.eval_mode:
-                    eval_file = p / f"eval_boards_{self.width}x{self.height}_{self.mines}.npz"
-                    if eval_file.exists():
-                        self._load_eval_file(eval_file)
-                else:
-                    print(f"TrajectoryPool: Loading offline data from {self.data_dir}...")
-                    pattern = f"{self.width}x{self.height}_{self.mines}_*.npz"
-                    for f in p.glob(pattern):
-                        if "eval_boards" not in f.name:
-                            self._load_train_file(f)
-                    print(f"TrajectoryPool: Loaded {len(self._offline_buffer)} trajectories offline.")
-            elif p.exists() and p.is_file():
-                if self.eval_mode:
-                    self._load_eval_file(p)
-                else:
-                    self._load_train_file(p)
-                    print(f"TrajectoryPool: Loaded {len(self._offline_buffer)} trajectories offline.")
-                
-            if not self.eval_mode:
-                # Pre-fill queue with offline data up to pool size
-                for t in self._offline_buffer[:pool_size]:
-                    try:
-                        self.queue.put_nowait(t)
-                    except queue.Full:
-                        break
-
-        # Start background workers if requested
-        # Skip workers if we are in eval mode or have successfully loaded offline data (pure supervised)
-        if pool_workers > 0 and not eval_mode and len(self._offline_buffer) == 0:
-            for _ in range(pool_workers):
-                p = mp.Process(
-                    target=_worker_loop, 
-                    args=(self.queue, self.width, self.height, self.mines, self.compute_probs),
-                    daemon=True
-                )
-                p.start()
-                self.workers.append(p)
+        self.refresh()
+        
+    def refresh(self):
+        """Scan data_dir for new .npz files and load them into the buffer."""
+        if not self.data_dir:
+            return
+            
+        p = Path(self.data_dir)
+        if not p.exists():
+            return
+            
+        if p.is_dir():
+            if self.eval_mode:
+                eval_file = p / f"eval_boards_{self.width}x{self.height}_{self.mines}.npz"
+                if eval_file.exists() and eval_file not in self._loaded_files:
+                    self._load_eval_file(eval_file)
+                    self._loaded_files.add(eval_file)
+            else:
+                pattern = f"{self.width}x{self.height}_{self.mines}_*.npz"
+                new_files = [f for f in p.glob(pattern) if f not in self._loaded_files and "eval_boards" not in f.name]
+                if new_files:
+                    print(f"TrajectoryPool: Found {len(new_files)} new data files. Loading...")
+                    for f in sorted(new_files):
+                        self._load_train_file(f)
+                        self._loaded_files.add(f)
+                    print(f"TrajectoryPool: Total trajectories loaded: {len(self._offline_buffer)}")
+        elif p.is_file() and p not in self._loaded_files:
+            if self.eval_mode:
+                self._load_eval_file(p)
+            else:
+                self._load_train_file(p)
+            self._loaded_files.add(p)
 
     def _get_traj(self) -> Dict[str, Any]:
-        """Get one trajectory, preferring queue, fallback to offline, then sync gen."""
-        try:
-            return self.queue.get_nowait()
-        except queue.Empty:
-            if self._offline_buffer:
-                idx = np.random.randint(len(self._offline_buffer))
-                return self._offline_buffer[idx]
-            else:
-                # Sync fallback — retry for high-density boards where solver may fail
-                for _ in range(200):
-                    traj = generate_trajectory(
-                        self.width, self.height, self.mines,
-                        compute_probs=self.compute_probs
-                    )
-                    if traj is not None:
-                        return traj
-                raise RuntimeError(
-                    f"generate_trajectory returned None 200 times — "
-                    f"solver may not support {self.width}x{self.height}/{self.mines}"
-                )
+        """Get one trajectory randomly from the loaded offline buffer. Wait if empty."""
+        while not self._offline_buffer:
+            print("TrajectoryPool: Buffer empty, waiting for background data generation...")
+            time.sleep(2)
+            self.refresh()
+            
+        idx = np.random.randint(len(self._offline_buffer))
+        return self._offline_buffer[idx]
 
     def pop(self) -> Tuple[np.ndarray, np.ndarray]:
         """Return (mines, visible) for online training initialization."""
@@ -164,12 +123,7 @@ class TrajectoryPool:
         return traj["mines"], traj["masks"][0]
 
     def batch(self, batch_size: int, target_type: str = "probs") -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Return (channels, targets, mask) batch for supervised training.
-
-        Args:
-            batch_size: number of samples in batch
-            target_type: "probs" (solver probability distillation) or "binary" (ground truth mine locations)
-        """
+        """Return (channels, targets, mask) batch for supervised training."""
         b_channels, b_targets, b_masks = [], [], []
 
         for _ in range(batch_size):

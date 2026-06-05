@@ -18,6 +18,7 @@ from game.game import MinesweeperGame
 from game.constants import CellState, MoveType, GameStatus
 from game.probability_solver import ProbabilitySolver
 from config import TrainingConfig
+from data.writer import TrajectoryWriter
 
 _DEFAULT_CFG = TrainingConfig()
 
@@ -84,63 +85,56 @@ def generate_training_data(
     total_mines: int = 10,
     seed: int = 42,
     samples_per_file: int = 2000,
+    start_file_idx: int = 0,
+    show_progress: bool = True,
+    existing_stats: Optional[dict] = None,
 ) -> dict:
     """Generate and save trajectory dataset sequentially."""
-    output_dir.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(seed)
     
-    total_saved = 0
-    file_idx = 0
-    buffer = []
+    writer = TrajectoryWriter(
+        output_dir=output_dir,
+        prefix=f"{width}x{height}_{total_mines}",
+        samples_per_file=samples_per_file,
+        start_file_idx=start_file_idx
+    )
     
+    total_saved = 0
+    total_attempts = 0
+    total_steps = 0
     start_time = time.time()
     
     while total_saved < n_samples:
+        total_attempts += 1
         traj = generate_trajectory(width, height, total_mines, compute_probs=True, rng=rng)
         if traj is not None:
-            buffer.append(traj)
+            writer.append(traj)
             total_saved += 1
-            
-            if len(buffer) >= samples_per_file:
-                save_trajectory_buffer(buffer, output_dir, file_idx, width, height, total_mines)
-                file_idx += 1
-                buffer.clear()
+            total_steps += len(traj["actions"])
+            if total_saved % samples_per_file == 0:
                 print(f"Generated {total_saved}/{n_samples} trajectories...")
                 
-    if buffer:
-        save_trajectory_buffer(buffer, output_dir, file_idx, width, height, total_mines)
+    writer.flush()
         
     duration = time.time() - start_time
     print(f"Finished generating {total_saved} trajectories in {duration:.1f}s")
     
+    if existing_stats:
+        total_attempts += existing_stats.get("attempts", 0)
+        total_saved += existing_stats.get("generated", 0)
+        total_steps += existing_stats.get("total_steps", 0)
+        duration += existing_stats.get("elapsed_seconds", 0.0)
+
     return {
-        "n_trajectories": total_saved,
-        "width": width,
-        "height": height,
-        "mines": total_mines,
-        "duration": duration,
+        "generated": total_saved,
+        "attempts": total_attempts,
+        "total_steps": total_steps,
+        "avg_steps_per_game": total_steps / max(1, total_saved),
+        "elapsed_seconds": duration,
+        "output_files": writer.file_idx,
     }
 
-def save_trajectory_buffer(
-    buffer: List[dict],
-    output_dir: Path,
-    file_idx: int,
-    width: int,
-    height: int,
-    mines: int,
-) -> Path:
-    """Save a batch of full trajectories to a compressed .npz file."""
-    data = {}
-    for i, traj in enumerate(buffer):
-        data[f"mines_{i}"] = traj["mines"]
-        data[f"actions_{i}"] = np.array(traj["actions"], dtype=np.int32)
-        data[f"masks_{i}"] = np.array(traj["masks"], dtype=bool)
-        if "probs" in traj:
-            data[f"probs_{i}"] = np.array(traj["probs"], dtype=np.float32)
-            
-    out_path = output_dir / f"{width}x{height}_{mines}_{file_idx:03d}.npz"
-    np.savez_compressed(out_path, **data)
-    return out_path
+
 
 if __name__ == "__main__":
     # Simple CLI for testing/generation

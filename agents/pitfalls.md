@@ -13,7 +13,7 @@
 
 - **症状**: 10K 样本生成耗时 ~180 秒
 - **原因**: 忘记使用 `generate_data.py` 内置并行 worker
-- **正确做法**: 用 `python scripts/generate_data.py --workers 0` 自动使用可用核心；需要固定核心数时用 `--workers 16`
+- **正确做法**: 用 `python scripts/generate_data.py --workers 0` 自动使用可用核心；需要固定核心数时使用 `--workers 16`
 - **记录日期**: 2026-05-30
 
 ## 坑 #3: SSH 远程操作时忘记 venv 路径

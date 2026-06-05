@@ -2,7 +2,7 @@
 
 ### 架构与代码重构
 - **统一数据管道 (Unified Data Pipeline)**: 引入 `TrajectoryPool` (`src/training/trajectory_pool.py`) 彻底替代并移除了 `Dataset` 和 `BoardPool` (`TrainBoardPool`)。
-- **重构生成器**: 将 `scripts/generate_data.py` 和底层的生成器收敛为单一的 `src/data/generator.py`，支持生成完整的对局时间序列轨迹 (Trajectory) 并按需计算 Probs。
+- 移除了冗余的 `src/data/generation/` 目录结构，统一到 `src/data/generator.py` 和 `scripts/generate_data.py`
 - **后台异步经验池**: `TrajectoryPool` 现在通过 `multiprocessing` 后台守护进程预先推演并存储完整轨迹。前端暴露 `pop()` (提供 `(mines, visible)` 供在线探索) 和 `batch()` (提供 `(channels, probs, mask)` 供离线蒸馏)，彻底打通 Online 与 Offline 的界限，并解决容量不足时的阻塞问题。
 - **统一训练入口**: `scripts/train.py` 作为单一 CLI 入口，通过 `--mode online|supervised` 和 `--loss_type bce|mse` 动态路由到 `train.py`(Online BCE) 或 `train_supervised.py`(Offline npz)。
 - **数据管线模块化**: `TrajectoryPool` (`trajectory_pool.py`) 统一离线/在线数据生产；`EvalBoardPool` (`eval_pool.py`) 负责评估缓存。旧 `board_pool.py` 和 `Dataset` 已移除。

@@ -10,6 +10,9 @@ class ModelConfig:
     # Input
     in_channels: int = 10       # covered + flagged + 8 number channels
 
+    # Output
+    num_classes: int = 1        # 1 for BCE loss (P(mine))
+
     # Channels
     d_model: int = 64           # CNN output = Transformer dim
     cnn_layers: int = 3         # number of Conv layers

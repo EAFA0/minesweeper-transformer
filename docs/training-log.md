@@ -28,7 +28,7 @@
 | Val Acc | — (待跑) |
 | 胜率 | — (待评估) |
 | Checkpoint | `checkpoints/S1/` |
-| 备注 | 三阶段首步. 并行生成已整合到 generate_data.py |
+| 备注 | 三阶段首步. 并行生成已整合到 scripts/generate_data.py |
 
 ### S2 — 8×8/20雷 密度变化
 

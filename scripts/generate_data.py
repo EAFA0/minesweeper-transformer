@@ -15,17 +15,17 @@ import numpy as np
 
 from data.generator import (
     generate_training_data,
-    record_game_trajectory,
-    save_trajectory_buffer,
+    generate_trajectory,
 )
+from data.writer import TrajectoryWriter
 from data.mixed_generator import generate_mixed_data
 
 
 def _parallel_worker(seed, width, height, total_mines):
-    """Wrapper for multiprocessing: seed → record_game_trajectory."""
+    """Wrapper for multiprocessing: seed → generate_trajectory."""
     rng = np.random.default_rng(seed)
-    return record_game_trajectory(width=width, height=height,
-                                  total_mines=total_mines, rng=rng)
+    return generate_trajectory(width=width, height=height,
+                               total_mines=total_mines, rng=rng)
 
 
 def generate_training_data_parallel(
@@ -53,38 +53,37 @@ def generate_training_data_parallel(
     except ImportError:
         pbar = None
 
-    buffer = []
-    file_idx = start_file_idx
     total_attempts = 0
     total_generated = 0
     total_steps = 0
     total_ambiguous = 0
     chunksize = max(1, n_samples // (workers * 10))
 
+    writer = TrajectoryWriter(
+        output_dir=output_dir,
+        prefix=f"{width}x{height}_{total_mines}",
+        samples_per_file=samples_per_file,
+        start_file_idx=start_file_idx
+    )
+
     with multiprocessing.Pool(processes=workers) as pool:
         for result in pool.imap_unordered(worker_func, seeds, chunksize=chunksize):
             total_attempts += 1
             if result is not None:
                 total_generated += 1
-                total_steps += result["n_steps"]
-                for step in result["trajectory"]:
-                    total_ambiguous += step["n_ambiguous"]
-                buffer.append(result)
+                total_steps += len(result["actions"])
+                writer.append(result)
                 if pbar:
                     pbar.update(1)
-                if len(buffer) >= samples_per_file:
-                    save_trajectory_buffer(
-                        buffer, output_dir, file_idx, include_counts=False
-                    )
-                    buffer = []
-                    file_idx += 1
+                    
                 if total_generated >= n_samples:
-                    pool.terminate()
                     break
 
-    if buffer:
-        save_trajectory_buffer(buffer, output_dir, file_idx, include_counts=False)
-        file_idx += 1
+    if pool:
+        pool.terminate()
+
+    writer.flush()
+    file_idx = writer.file_idx
 
     elapsed = time.time() - start
     if pbar:
@@ -133,8 +132,8 @@ def main():
     parser.add_argument("--mines", type=int, default=10, help="Number of mines (default: 10)")
     parser.add_argument("--seed", type=int, default=42, help="Random seed (default: 42)")
     parser.add_argument("--no_progress", action="store_true", help="Disable progress bar")
-    parser.add_argument("--samples_per_file", type=int, default=100,
-                        help="Number of games per .npz file (default: 100)")
+    parser.add_argument("--samples_per_file", type=int, default=2000,
+                        help="Number of games per .npz file (default: 2000)")
     parser.add_argument("--force", action="store_true",
                         help="Force regeneration even if data already exists")
     parser.add_argument("--mixed", action="store_true",
@@ -163,9 +162,9 @@ def main():
             try:
                 with open(stats_file) as f:
                     existing_stats = json.load(f)
-                data_files = list(output_dir.glob("data_*.npz"))
+                data_files = list(output_dir.glob(f"{args.width}x{args.height}_{args.mines}_*.npz"))
                 if data_files:
-                    indices = [int(p.stem.split('_')[1]) for p in data_files]
+                    indices = [int(p.stem.split('_')[-1]) for p in data_files]
                     start_file_idx = max(indices) + 1
                 
                 already_generated = existing_stats.get("generated", 0)

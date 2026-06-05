@@ -21,7 +21,7 @@ import numpy as np
 from game.game import MinesweeperGame
 from game.constants import CellState, MoveType, GameStatus
 from game.probability_solver import ProbabilitySolver
-from data.generator import save_trajectory_buffer
+from data.writer import TrajectoryWriter
 
 
 def generate_mixed_data(
@@ -32,7 +32,7 @@ def generate_mixed_data(
     min_density: float = 0.1,
     max_density: float = 0.5,
     seed: int = 42,
-    samples_per_file: int = 100,
+    samples_per_file: int = 2000,
     show_progress: bool = True,
     start_file_idx: int = 0,
     existing_stats: Optional[dict] = None,
@@ -59,8 +59,13 @@ def generate_mixed_data(
         },
     }
 
-    buffer: list = []
-    file_idx = start_file_idx
+    writer = TrajectoryWriter(
+        output_dir=output_dir,
+        prefix=f"mixed_{max_size}x{max_size}",
+        samples_per_file=samples_per_file,
+        start_file_idx=start_file_idx
+    )
+
     pbar = None
     if show_progress:
         try:
@@ -78,6 +83,11 @@ def generate_mixed_data(
         density = rng.uniform(min_density, max_density)
         mines = max(1, int(w * h * density))
 
+        # We need to adapt the returned trajectory to fit TrajectoryWriter.
+        # Wait, TrajectoryWriter expects 'mines', 'actions', 'masks', 'probs'
+        # The mixed generator creates padded states. It is a bit different.
+        # Let's fix this cleanly.
+
         trajectory = _record_padded_trajectory(
             w=w, h=h, mines=mines, pad_to=max_size, rng=rng,
         )
@@ -91,7 +101,15 @@ def generate_mixed_data(
         for step in trajectory["trajectory"]:
             stats["total_ambiguous_cells"] += step["n_ambiguous"]
 
-        buffer.append(trajectory)
+        # Convert to TrajectoryWriter format
+        # padded mines, actions, masks, probs
+        actions = trajectory["actions"]
+        writer.append({
+            "mines": trajectory["mines_pad"],
+            "actions": actions,
+            "masks": trajectory["masks_pad"],
+            "probs": trajectory["probs_pad"],
+        })
 
         if pbar:
             pbar.update(1)
@@ -100,14 +118,7 @@ def generate_mixed_data(
                 "ok": stats["generated"],
             })
 
-        if len(buffer) >= samples_per_file:
-            _save_padded_buffer(buffer, output_dir, file_idx)
-            buffer = []
-            file_idx += 1
-
-    if buffer:
-        _save_padded_buffer(buffer, output_dir, file_idx)
-        file_idx += 1
+    writer.flush()
 
     stats["end_time"] = time.time()
     stats["elapsed_seconds"] = stats["end_time"] - stats["start_time"]
@@ -120,7 +131,7 @@ def generate_mixed_data(
         stats["elapsed_seconds"] += existing_stats.get("elapsed_seconds", 0.0)
 
     stats["avg_steps_per_game"] = stats["total_steps"] / max(1, stats["generated"])
-    stats["output_files"] = file_idx
+    stats["output_files"] = writer.file_idx
 
     with open(output_dir / "stats.json", "w") as f:
         json.dump(stats, f, indent=2, default=str)
@@ -147,50 +158,51 @@ def _record_padded_trajectory(
         return None
 
     mine_mask = game.get_mine_mask()
+    mines_pad = np.zeros((pad_to, pad_to), dtype=bool)
+    mines_pad[:h, :w] = mine_mask
+
     steps = []
+    actions = []
+    masks_pad = []
+    probs_pad_list = []
 
     while game.status == GameStatus.PLAYING and len(steps) < 300:
-        # Compute probabilities
         solver = ProbabilitySolver(game)
         probs = solver.compute_probabilities()
         if probs is None:
             break
 
-        # Record padded state
-        channels = game.board_to_channels()
         mask = game.covered_cells
-
-        # Pad to pad_to × pad_to
-        channels_pad = np.zeros((10, pad_to, pad_to), dtype=np.float32)
-        channels_pad[:, :h, :w] = channels
-        # Padded area: mark as covered (channel 0=1)
-        channels_pad[0, h:, :] = 1.0
-        channels_pad[0, :, w:] = 1.0
-
-        probs_pad = np.zeros((pad_to, pad_to), dtype=np.float32)
-        probs_pad[:h, :w] = probs
-
-        mask_pad = np.zeros((pad_to, pad_to), dtype=bool)
+        
+        # Padded mask: True means covered. Pad area is covered.
+        mask_pad = np.ones((pad_to, pad_to), dtype=bool)
         mask_pad[:h, :w] = mask
+        masks_pad.append(mask_pad)
+
+        prob_pad = np.zeros((pad_to, pad_to), dtype=np.float32)
+        prob_pad[:h, :w] = probs
+        probs_pad_list.append(prob_pad)
 
         n_ambig = int((probs[mask] > 0.01).sum())
         steps.append({
-            "channels": channels_pad,
-            "probs": probs_pad,
-            "mask": mask_pad,
             "n_ambiguous": n_ambig,
-            "orig_size": (h, w),
         })
 
-        # Reveal cell with lowest P(mine)
         covered = game.covered_cells
         masked_probs = np.where(covered, probs, 2.0)
         best_idx = np.argmin(masked_probs)
         best_r, best_c = divmod(int(best_idx), w)
+        
+        # Action index in padded coordinate space
+        actions.append(best_r * pad_to + best_c)
+        
         game.make_move(best_r, best_c, MoveType.REVEAL)
 
     return {
-        "mine_mask": mine_mask,
+        "mines_pad": mines_pad,
+        "actions": actions,
+        "masks_pad": masks_pad,
+        "probs_pad": probs_pad_list,
         "trajectory": steps,
         "n_steps": len(steps),
         "board_size": (h, w),
@@ -198,5 +210,4 @@ def _record_padded_trajectory(
     }
 
 
-def _save_padded_buffer(buffer: list, output_dir: Path, file_idx: int) -> None:
-    save_trajectory_buffer(buffer, output_dir, file_idx, include_counts=True)
+
