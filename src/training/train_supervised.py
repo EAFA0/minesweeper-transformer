@@ -25,10 +25,13 @@ from training.trajectory_pool import TrajectoryPool
 def train_supervised(
     config: TrainingConfig,
     model_cfg: ModelConfig,
-    device: str = "cuda" if torch.cuda.is_available() else "cpu",
+    device: Optional[str] = None,
     run_dir: str = "",
 ):
     """Train the model offline using TrajectoryPool's batch()."""
+    if device is None:
+        device = config.device
+        
     run_dir = run_dir or datetime.now().strftime("runs/%Y%m%d_%H%M%S")
     os.makedirs(run_dir, exist_ok=True)
     
@@ -46,14 +49,33 @@ def train_supervised(
     )
     
     model = MinesweeperTransformer(model_cfg).to(device)
+    if config.pretrained:
+        print(f"Loading pretrained: {config.pretrained}")
+        model.load_pretrained(config.pretrained, device=device)
+        
     optimizer = optim.AdamW(model.parameters(), lr=config.learning_rate)
     
     print(f"Training on {device} - Offline SUPERVISED mode")
+    print(f"Board Config: {config.board_width}x{config.board_height} with {config.board_mines} mines")
     print(f"Run dir: {run_dir}")
     
-    # Calculate rough number of batches per epoch (assuming n_games as total samples)
+    # Calculate batches per epoch correctly based on states, not just games
     batch_size = getattr(config, 'batch_size', 64)
-    batches_per_epoch = max(1, config.n_games // batch_size)
+    if pool.total_states > 0:
+        # 1 epoch = seeing all states in the offline dataset once on average
+        batches_per_epoch = max(1, pool.total_states // batch_size)
+        print(f"Dataset: {pool.total_games} games, {pool.total_states} states -> {batches_per_epoch} batches/epoch")
+    else:
+        # Fallback if generating on the fly (assume ~15 states per game)
+        estimated_states = config.n_games * 15
+        batches_per_epoch = max(1, estimated_states // batch_size)
+        print(f"Dataset: Generating on the fly. Estimated {estimated_states} states -> {batches_per_epoch} batches/epoch")
+        
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=batches_per_epoch * config.epochs, eta_min=config.min_lr
+    )
+    
+    best_wr = 0.0
     
     for epoch in range(1, config.epochs + 1):
         model.train()
@@ -81,16 +103,44 @@ def train_supervised(
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip_norm)
             optimizer.step()
+            scheduler.step()
             
             total_loss += loss.item()
             pbar.update(1)
-            pbar.set_postfix({"loss": f"{loss.item():.4f}"})
+            pbar.set_postfix({"loss": f"{loss.item():.4f}", "lr": f"{scheduler.get_last_lr()[0]:.1e}"})
             
         pbar.close()
         avg_loss = total_loss / batches_per_epoch
         print(f"Epoch {epoch} complete - Avg Loss: {avg_loss:.4f}")
         
-        # Save checkpoint
+        # Periodic Evaluation
+        from training.evaluate import evaluate_model
+        print(f"\n  ── Evaluating Epoch {epoch} ──")
+        eval_metrics = evaluate_model(
+            model, device,
+            n_games=config.eval_games,
+            width=config.board_width,
+            height=config.board_height,
+            total_mines=config.board_mines,
+            board_pool_path=config.board_pool_path,
+            refine_steps=config.refinement_steps,
+            quiet=False
+        )
+        wr = eval_metrics["win_rate"]
+        
+        # Save checkpoint with full metadata
         ckpt_path = os.path.join(run_dir, f"model_ep{epoch}.pt")
-        torch.save(model.state_dict(), ckpt_path)
+        torch.save({
+            "epoch": epoch,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict(),
+            "model_config": model_cfg,
+            "win_rate": wr,
+        }, ckpt_path)
         print(f"Saved checkpoint to {ckpt_path}")
+        
+        if wr > best_wr:
+            best_wr = wr
+            shutil.copy2(ckpt_path, os.path.join(run_dir, "best_model.pt"))
+            print(f"  🏆 New best model! Win rate: {best_wr:.1%}")

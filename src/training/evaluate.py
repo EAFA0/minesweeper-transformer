@@ -19,7 +19,7 @@ from data.self_validated import generate_self_validated_board
 from game.constants import GameStatus, MoveType
 from game.game import MinesweeperGame
 from model.architecture import MinesweeperTransformer, ModelConfig
-from training.eval_pool import EvalBoardPool
+from training.trajectory_pool import TrajectoryPool
 
 _DEFAULT_CFG = TrainingConfig()
 
@@ -120,8 +120,8 @@ def evaluate_model(
     metrics = _EvalMetrics(n_games, quiet)
 
     pool = _setup_board_pool(board_pool_path, width, height, total_mines)
-    if pool and pool.size > 0 and not quiet:
-        print(f"Board pool: {pool.size} boards cached in {pool.path}")
+    if pool and pool.eval_size > 0 and not quiet:
+        print(f"Board pool: {pool.eval_size} boards cached in {pool.data_dir}")
 
     t0 = time.time()
 
@@ -136,7 +136,7 @@ def evaluate_model(
         metrics.maybe_print(i + 1, n_games, t0)
 
     if pool:
-        pool.save_pending()
+        pool.save_eval_cache()
 
     return metrics.summary(n_games, time.time() - t0)
 
@@ -214,14 +214,20 @@ class _EvalMetrics:
 
 def _setup_board_pool(
     path: str, width: int, height: int, mines: int
-) -> Optional[EvalBoardPool]:
+) -> Optional[TrajectoryPool]:
     if not path:  # None or empty string
         path = Path(f"eval_boards_{width}x{height}_{mines}.npz")
-    return EvalBoardPool(path, width, height, mines)
+    return TrajectoryPool(
+        board_width=width,
+        board_height=height,
+        board_mines=mines,
+        data_dir=str(path),
+        eval_mode=True
+    )
 
 
 def _get_game(
-    pool: Optional[EvalBoardPool],
+    pool: Optional[TrajectoryPool],
     idx: int,
     rng: np.random.Generator,
     width: int,
@@ -229,7 +235,7 @@ def _get_game(
     mines: int,
 ) -> Optional[MinesweeperGame]:
     if pool:
-        return pool.get(idx, rng)
+        return pool.get_eval_game(idx, rng)
     game = generate_self_validated_board(
         width=width, height=height, total_mines=mines,
         rng=rng, max_attempts=200,

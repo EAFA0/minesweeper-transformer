@@ -17,6 +17,7 @@ import torch
 # We will import generator functions later when Module 2 is done.
 # For now, we stub the background worker logic.
 from data.generator import generate_trajectory
+from game.game import MinesweeperGame
 
 class TrajectoryPool:
     def __init__(
@@ -29,12 +30,15 @@ class TrajectoryPool:
         data_dir: str = "",
         mixed_mode: bool = False,
         compute_probs: bool = False,
+        eval_mode: bool = False,
     ):
         self.width = board_width
         self.height = board_height
         self.mines = board_mines
         self.pool_size = pool_size
         self.compute_probs = compute_probs
+        self.eval_mode = eval_mode
+        self.data_dir = data_dir
         
         # Multiprocessing setup
         self.queue = mp.Queue(maxsize=pool_size)
@@ -62,6 +66,20 @@ class TrajectoryPool:
                     except Exception as e:
                         print(f"Error loading {f}: {e}")
                 print(f"TrajectoryPool: Loaded {len(self._offline_buffer)} trajectories offline.")
+            elif p.exists() and p.is_file():
+                # Load a single specific eval file
+                try:
+                    data = np.load(p, allow_pickle=True)
+                    n = len(data.files) // 2  # eval board cache has mines & visible
+                    for i in range(n):
+                        self._offline_buffer.append({
+                            "mines": data[f"mines_{i}"],
+                            "masks": [data[f"visible_{i}"]],
+                            "actions": []
+                        })
+                    print(f"TrajectoryPool: Loaded {len(self._offline_buffer)} eval boards from {p}")
+                except Exception as e:
+                    print(f"Error loading {p}: {e}")
                 
                 # Pre-fill queue with offline data up to pool size
                 for t in self._offline_buffer[:pool_size]:
@@ -158,3 +176,72 @@ class TrajectoryPool:
             torch.from_numpy(np.stack(b_probs)),
             torch.from_numpy(np.stack(b_masks)),
         )
+
+    # ── Evaluation Support ──────────────────────────────────────────────────
+    
+    def get_eval_game(self, idx: int, rng: np.random.Generator) -> Optional[MinesweeperGame]:
+        """Get a specific game instance for deterministic evaluation.
+        
+        If we have offline data loaded, and idx is within range, use it.
+        Otherwise, generate a new deterministic game and append it to our buffer.
+        """
+        # 1. Return from memory buffer if available
+        if idx < len(self._offline_buffer):
+            traj = self._offline_buffer[idx]
+            return MinesweeperGame.from_mine_mask(
+                self.width, self.height, traj["mines"],
+                first_done=True, visible=traj["masks"][0]
+            )
+            
+        # 2. Generate new deterministic game
+        from data.self_validated import generate_self_validated_board
+        game = generate_self_validated_board(
+            width=self.width, height=self.height, total_mines=self.mines,
+            rng=rng, max_attempts=200
+        )
+        
+        from game.constants import GameStatus
+        if game is None or game.status != GameStatus.PLAYING:
+            return None
+            
+        # 3. Cache it in buffer (minimal trajectory info needed for eval)
+        self._offline_buffer.append({
+            "mines": game.get_mine_mask(),
+            "masks": [game.visible.copy()],
+            "actions": [], # Unused for eval setup
+        })
+        
+        return game
+        
+    @property
+    def total_states(self) -> int:
+        """Total number of states (steps) loaded in the offline buffer."""
+        return sum(len(t["masks"]) for t in self._offline_buffer)
+        
+    @property
+    def total_games(self) -> int:
+        """Total number of games (trajectories) loaded in the offline buffer."""
+        return len(self._offline_buffer)
+        
+    def save_eval_cache(self) -> None:
+        """Save any dynamically generated evaluation boards to disk."""
+        if not self.data_dir or not self._offline_buffer:
+            return
+            
+        p = Path(self.data_dir)
+        # Avoid overwriting training data npz, use a specific name for eval cache
+        if p.is_dir():
+            out_path = p / f"eval_boards_{self.width}x{self.height}_{self.mines}.npz"
+        else:
+            out_path = p
+            
+        save_dict = {}
+        for i, traj in enumerate(self._offline_buffer):
+            save_dict[f"mines_{i}"] = traj["mines"]
+            save_dict[f"visible_{i}"] = traj["masks"][0]
+            
+        np.savez_compressed(out_path, **save_dict)
+        
+    @property
+    def eval_size(self) -> int:
+        return len(self._offline_buffer)

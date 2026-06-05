@@ -60,11 +60,24 @@ def main():
     # Checkpoint
     p.add_argument("--pretrained", default=default_cfg.pretrained)
     p.add_argument("--resume_from", default=default_cfg.resume_from)
-    p.add_argument("--save_dir", default=default_cfg.save_dir)
+    p.add_argument("--save_dir", default=None, help="Directory to save checkpoints. Defaults to checkpoints/{stage} or checkpoints/run_{timestamp}")
     p.add_argument("--device", default="auto")
     p.add_argument("--board_pool_path", default=default_cfg.board_pool_path)
+    p.add_argument("--stage", type=str, default=None, choices=["S1", "S2", "S3"],
+                   help="Training stage (e.g. S1, S2, S3). Will use checkpoints/{stage} as save_dir if specified.")
 
     args = p.parse_args()
+
+    # Apply stage config if specified (overrides defaults but respects CLI overrides)
+    from config.stage_config import apply_stage_config
+    apply_stage_config(args, default_cfg)
+
+    # Determine save_dir / run_dir
+    if args.save_dir is not None:
+        save_dir = args.save_dir
+    else:
+        from datetime import datetime
+        save_dir = datetime.now().strftime("checkpoints/run_%Y%m%d_%H%M%S")
 
     device = args.device if args.device != "auto" else auto_device()
     print(f"Device: {device}")
@@ -93,7 +106,7 @@ def main():
         learning_rate=lr,
         weight_decay=args.weight_decay,
         grad_clip_norm=args.grad_clip_norm,
-        save_dir=args.save_dir,
+        save_dir=save_dir,
         device=device,
         pretrained=args.pretrained,
         resume_from=args.resume_from,
@@ -103,7 +116,7 @@ def main():
 
     if args.mode == "supervised":
         from model.architecture import ModelConfig
-        train_supervised(config, ModelConfig())
+        train_supervised(config, ModelConfig(), run_dir=save_dir)
     else:
         train(config)
 

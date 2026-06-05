@@ -13,7 +13,6 @@ import torch
 from pathlib import Path
 
 from config import TrainingConfig
-from training.eval_pool import EvalBoardPool
 from training.evaluate import evaluate_model, load_model
 
 
