@@ -30,6 +30,12 @@ def train_supervised(
     run_dir: str = "",
 ):
     """Train the model offline using TrajectoryPool's batch()."""
+    if not config.data_dir:
+        raise ValueError(
+            "Offline SUPERVISED mode strictly requires a valid 'data_dir' to load .npz files. "
+            "Please specify it via CLI (e.g. --data_dir data) or ensure your config provides a default."
+        )
+
     if device is None:
         device = config.device
         
@@ -71,8 +77,8 @@ def train_supervised(
     
     # Calculate batches per epoch correctly based on states, not just games
     batch_size = getattr(config, 'batch_size', 64)
-    if pool.total_states > 0 and not config.data_dir:
-        # Fallback if dynamic gen but some states preloaded
+    if pool.total_states > 0 and config.data_dir == "data":
+        # Fallback if dynamic gen but some states preloaded from default dir
         estimated_states = config.n_games * 15
         batches_per_epoch = max(1, estimated_states // batch_size)
         print(f"Dataset: Generating on the fly. Estimated {estimated_states} states -> {batches_per_epoch} batches/epoch")

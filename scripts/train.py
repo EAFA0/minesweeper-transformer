@@ -31,7 +31,7 @@ def main():
 
     p.add_argument("--mode", type=str, default="online", choices=["online", "supervised"],
                    help="Training mode: online (self-play) or supervised (offline npz)")
-    p.add_argument("--data_dir", type=str, default=default_cfg.data_dir,
+    p.add_argument("--data_dir", type=str, default="data",
                    help="Directory for offline npz data (used in supervised mode)")
     p.add_argument("--epochs", type=int, default=default_cfg.epochs,
                    help="Number of epochs for supervised mode")

@@ -141,7 +141,7 @@ def main():
                    choices=["cpu", "cuda", "mps", "auto"])
     p.add_argument("--mode", type=str, default="online", choices=["online", "supervised"], help="Training mode")
     p.add_argument("--arch", type=str, default="V4", choices=["V1", "V1_5", "V4"], help="Model architecture version")
-    p.add_argument("--data_dir", type=str, default="", help="Directory for offline npz data (supervised mode)")
+    p.add_argument("--data_dir", type=str, default="data", help="Directory for offline npz data (supervised mode)")
     p.add_argument("--pool_workers", type=int, default=4, help="Number of background workers for data generation/loading")
     p.add_argument("--eval_games", type=int, default=200,
                    help="评估游戏数 (default: 200)")

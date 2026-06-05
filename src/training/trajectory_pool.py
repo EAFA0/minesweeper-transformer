@@ -56,7 +56,7 @@ class TrajectoryPool:
         self.pool_size = pool_size
         self.compute_probs = compute_probs
         self.eval_mode = eval_mode
-        self.data_dir = data_dir
+        self.data_dir = data_dir or "data"
         
         # Multiprocessing setup
         self.queue = mp.Queue(maxsize=pool_size)

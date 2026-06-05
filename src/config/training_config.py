@@ -16,7 +16,7 @@ class TrainingConfig:
     # Pool
     pool_size: int = 100
     pool_workers: int = 2         # 0 = serial, >=1 = multiprocessing background workers
-    data_dir: str = ""            # optional offline npz dir
+    data_dir: str = "data"        # offline npz dir (default "data")
     mixed_mode: bool = False      # if True, randomizes board size and mine density
 
     # Training
