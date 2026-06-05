@@ -25,7 +25,6 @@ Iterative Refinement mode:
 Supports variable board sizes via bilinear PE interpolation (ViT-style).
 """
 
-from dataclasses import dataclass
 from typing import List, Optional
 from config import ModelConfig
 

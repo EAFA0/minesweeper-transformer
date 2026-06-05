@@ -1,5 +1,4 @@
 import argparse
-import torch
 
 from config import TrainingConfig
 from training.train import train
@@ -77,7 +76,7 @@ def main():
     # Auto-reduce lr when fine-tuning
     if config.pretrained and config.learning_rate == 3e-4:
         config.learning_rate = 1e-4
-        print(f"Fine-tuning mode: auto-lowering lr 3e-4 → 1e-4")
+        print("Fine-tuning mode: auto-lowering lr 3e-4 → 1e-4")
     elif config.pretrained and config.learning_rate >= 3e-4:
         print(f"⚠ Fine-tuning with lr={config.learning_rate:.0e} — consider using lower lr for stability")
 

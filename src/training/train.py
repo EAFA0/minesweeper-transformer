@@ -6,16 +6,16 @@ on frontier (determined) cells with full BPTT refinement.
 
 import shutil
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 
-from config import POLICY, TrainingConfig, TrainingMetrics
+from config import TrainingConfig, TrainingMetrics
 from game.constants import CellState, GameStatus, MoveType
+from game.game import MinesweeperGame
 from game.probability_solver import ProbabilitySolver
 from model.architecture import MinesweeperTransformer, ModelConfig
 from training.trajectory_pool import TrajectoryPool
@@ -138,7 +138,6 @@ def _compute_loss_and_step(
     ctx: TrainingContext, 
     game: 'MinesweeperGame', 
     pv: torch.Tensor, 
-    covered: np.ndarray
 ) -> float:
     """Compute the specified loss (BCE/MSE) and perform an optimization step."""
     loss_val = 0.0
@@ -267,7 +266,7 @@ def _play_training_game(
             r, c = divmod(best_idx, config.board_width)
 
         # Loss computation
-        loss_val = _compute_loss_and_step(config, ctx, game, pv, covered)
+        loss_val = _compute_loss_and_step(config, ctx, game, pv)
         game_loss += loss_val
 
         game.make_move(r, c, MoveType.REVEAL)

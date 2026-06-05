@@ -14,7 +14,6 @@ Supports variable board sizes via bilinear PE interpolation (ViT-style).
 CNN and transformer layers are size-agnostic — only PE adapts to input size.
 """
 
-from dataclasses import dataclass
 from typing import Optional
 from config import ModelConfig
 

@@ -55,7 +55,7 @@ def main():
         refine_steps=args.refine_steps,
     )
 
-    print(f"\n═══ Results ═══")
+    print("\n═══ Results ═══")
     print(f"Games: {result['n_games']} (gen_failed: {result['gen_failed']})")
     print(f"Win:  {result['won']:4d} ({result['win_rate']:.2%})")
     print(f"Loss: {result['lost']:4d}")

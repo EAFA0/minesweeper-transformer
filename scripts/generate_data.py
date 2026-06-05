@@ -216,7 +216,6 @@ def main():
             total_mines=args.mines,
             seed=args.seed,
             samples_per_file=args.samples_per_file,
-            show_progress=not args.no_progress,
             start_file_idx=start_file_idx,
             existing_stats=existing_stats,
         )

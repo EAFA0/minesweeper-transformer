@@ -13,6 +13,46 @@ from .game import MinesweeperGame
 from .constants import CellState
 
 
+# ── Shared constraint utilities (used by ConstraintSolver & ProbabilitySolver) ──
+
+def build_constraints(game: MinesweeperGame) -> List[Tuple[Set[Tuple[int, int]], int]]:
+    """Build constraint set from the current visible board."""
+    constraints: List[Tuple[Set[Tuple[int, int]], int]] = []
+    for r in range(game.height):
+        for c in range(game.width):
+            v = game.visible[r, c]
+            if not (isinstance(v, (int, np.integer)) and 1 <= v <= 8):
+                continue
+            covered = set()
+            flagged = 0
+            for nr, nc in game._neighbors(r, c):
+                sv = game.visible[nr, nc]
+                if sv == CellState.COVERED:
+                    covered.add((nr, nc))
+                elif sv == CellState.FLAGGED:
+                    flagged += 1
+            remaining = int(v) - flagged
+            if covered:
+                constraints.append((covered, remaining))
+    return constraints
+
+
+def normalize_constraints(
+    constraints: List[Tuple[Set[Tuple[int, int]], int]],
+    safe: Set[Tuple[int, int]],
+    mines: Set[Tuple[int, int]],
+) -> List[Tuple[Set[Tuple[int, int]], int]]:
+    """Remove deduced cells from constraints, adjusting remaining counts."""
+    result = []
+    for cells, remaining in constraints:
+        known_mines = len(cells & mines)
+        cells = cells - mines - safe
+        remaining -= known_mines
+        if cells and remaining >= 0:
+            result.append((cells, remaining))
+    return result
+
+
 class ConstraintSolver:
     """Deterministic constraint propagation solver.
 
@@ -33,7 +73,7 @@ class ConstraintSolver:
         safe: Set[Tuple[int, int]] = set()
         mines: Set[Tuple[int, int]] = set()
 
-        constraints = self._build_constraints()
+        constraints = build_constraints(self.game)
         if not constraints:
             return [], []
 
@@ -57,54 +97,6 @@ class ConstraintSolver:
 
     # ─── Internal ──────────────────────────────────────────────────────────
 
-    def _build_constraints(self) -> List[Tuple[Set[Tuple[int, int]], int]]:
-        """Build constraint set from the current visible board."""
-        constraints: List[Tuple[Set[Tuple[int, int]], int]] = []
-
-        for r in range(self.height):
-            for c in range(self.width):
-                v = self.game.visible[r, c]
-                if not (isinstance(v, (int, np.integer)) and 1 <= v <= 8):
-                    continue
-
-                covered = set()
-                flagged = 0
-                for nr, nc in self.game._neighbors(r, c):
-                    sv = self.game.visible[nr, nc]
-                    if sv == CellState.COVERED:
-                        covered.add((nr, nc))
-                    elif sv == CellState.FLAGGED:
-                        flagged += 1
-
-                remaining = int(v) - flagged
-                if covered:
-                    constraints.append((covered, remaining))
-
-        return constraints
-
-    @staticmethod
-    def _normalize_constraints(
-        constraints: List[Tuple[Set[Tuple[int, int]], int]],
-        safe: Set[Tuple[int, int]],
-        mines: Set[Tuple[int, int]],
-    ) -> List[Tuple[Set[Tuple[int, int]], int]]:
-        """Remove deduced cells from constraints, adjusting remaining counts.
-
-        For each constraint: if we already know some cells in its set are mines/safe,
-        remove them and decrement remaining by the number of known mines removed.
-        Discard constraints that become empty.
-        """
-        result = []
-        for cells, remaining in constraints:
-            # Count how many known mines are in this constraint's cells
-            known_mines_in_cells = len(cells & mines)
-            # Remove known mines and known safe cells
-            cells = cells - mines - safe
-            remaining = remaining - known_mines_in_cells
-            if cells and remaining >= 0:
-                result.append((cells, remaining))
-        return result
-
     @staticmethod
     def _apply_trivial(
         constraints: List[Tuple[Set[Tuple[int, int]], int]],
@@ -118,7 +110,7 @@ class ConstraintSolver:
         changed = False
 
         # First normalize to remove already-known cells
-        constraints = ConstraintSolver._normalize_constraints(constraints, safe, mines)
+        constraints = normalize_constraints(constraints, safe, mines)
 
         new_constraints = []
         for cells, remaining in constraints:
@@ -135,7 +127,7 @@ class ConstraintSolver:
 
         if changed:
             # Re-normalize after deductions
-            new_constraints = ConstraintSolver._normalize_constraints(
+            new_constraints = normalize_constraints(
                 new_constraints, safe, mines
             )
 
@@ -177,7 +169,7 @@ class ConstraintSolver:
                         changed = True
 
         if changed:
-            constraints = ConstraintSolver._normalize_constraints(constraints, safe, mines)
+            constraints = normalize_constraints(constraints, safe, mines)
 
         return constraints, safe, mines, changed
 

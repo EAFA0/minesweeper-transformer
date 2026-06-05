@@ -21,16 +21,14 @@ from typing import Optional
 import numpy as np
 
 from game.game import MinesweeperGame
-from game.constants import CellState, MoveType, GameStatus
+from game.constants import CellState, MoveType, GameStatus, DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_MINES
 from game.probability_solver import ProbabilitySolver
-from config import TrainingConfig
 
-_DEFAULT_CFG = TrainingConfig()
 
 def generate_self_validated_board(
-    width: int = _DEFAULT_CFG.board_width,
-    height: int = _DEFAULT_CFG.board_height,
-    total_mines: int = _DEFAULT_CFG.board_mines,
+    width: int = DEFAULT_WIDTH,
+    height: int = DEFAULT_HEIGHT,
+    total_mines: int = DEFAULT_MINES,
     rng: Optional[np.random.Generator] = None,
     max_attempts: int = 50,
     max_steps: int = 300,

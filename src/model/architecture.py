@@ -4,7 +4,6 @@ Breaking change from V3: CNN runs ONCE, Transformer self-loops N times,
 decode happens only at the end.  V3 checkpoints are NOT compatible.
 """
 
-from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 import torch

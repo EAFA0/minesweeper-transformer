@@ -14,12 +14,11 @@ Usage:
 import json
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 import numpy as np
 
-from game.game import MinesweeperGame
-from game.constants import CellState, MoveType, GameStatus
+from game.constants import MoveType, GameStatus
 from game.probability_solver import ProbabilitySolver
 from data.writer import TrajectoryWriter
 

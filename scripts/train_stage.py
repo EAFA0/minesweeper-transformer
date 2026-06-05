@@ -41,7 +41,7 @@ def run_stage(stage_name, args):
     pretrained = cfg.get("pretrained")
     if pretrained and not Path(pretrained).exists():
         print(f"❌ Pretrained checkpoint not found: {pretrained}")
-        print(f"   Run the previous stage first.")
+        print("   Run the previous stage first.")
         return
 
     ckpt = Path(cfg["save_dir"]) / "best_model.pt"

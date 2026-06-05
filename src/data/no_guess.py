@@ -5,20 +5,18 @@ Falls back to constraint-solver-based filtering when ms-toollib fails
 (e.g., at very high mine density).
 """
 
-from typing import Optional, Tuple
+from typing import Optional
 
 import numpy as np
 
-from game.constants import GameStatus, MoveType
+from game.constants import MoveType, DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_MINES
 from game.game import MinesweeperGame
-from config import TrainingConfig
 
-_DEFAULT_CFG = TrainingConfig()
 
 def generate_no_guess_board(
-    width: int = _DEFAULT_CFG.board_width,
-    height: int = _DEFAULT_CFG.board_height,
-    total_mines: int = _DEFAULT_CFG.board_mines,
+    width: int = DEFAULT_WIDTH,
+    height: int = DEFAULT_HEIGHT,
+    total_mines: int = DEFAULT_MINES,
     rng: Optional[np.random.Generator] = None,
     max_attempts: int = 100,
 ) -> Optional[MinesweeperGame]:

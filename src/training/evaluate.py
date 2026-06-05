@@ -14,14 +14,13 @@ from typing import Optional, Tuple
 import numpy as np
 import torch
 
-from config import POLICY, TrainingConfig
+from config import POLICY
 from data.self_validated import generate_self_validated_board
-from game.constants import GameStatus, MoveType
+from game.constants import GameStatus, MoveType, DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_MINES
 from game.game import MinesweeperGame
 from model.architecture import MinesweeperTransformer, ModelConfig
 from training.trajectory_pool import TrajectoryPool
 
-_DEFAULT_CFG = TrainingConfig()
 
 # ── Inference ───────────────────────────────────────────────────────────────
 
@@ -102,9 +101,9 @@ def evaluate_model(
     model: MinesweeperTransformer,
     device: torch.device,
     n_games: int = 1000,
-    width: int = _DEFAULT_CFG.board_width,
-    height: int = _DEFAULT_CFG.board_height,
-    total_mines: int = _DEFAULT_CFG.board_mines,
+    width: int = DEFAULT_WIDTH,
+    height: int = DEFAULT_HEIGHT,
+    total_mines: int = DEFAULT_MINES,
     seed: int = 42,
     board_pool_path: Optional[Path] = None,
     refine_steps: int = None,

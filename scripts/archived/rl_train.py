@@ -235,7 +235,6 @@ def compute_solver_targets(
     targets = torch.zeros(N, H, W)
 
     for i in range(N):
-        ch = states[i].cpu().numpy()
         solver = ProbabilitySolver(game)
         try:
             probs = solver.compute_probabilities()
@@ -429,7 +428,7 @@ def reinforce_step(
 def train_rl(config: RLConfig) -> dict:
     """Run REINFORCE training. Returns metrics dict."""
     device = torch.device(config.device)
-    print(f"=== RL Fine-tuning (REINFORCE) ===")
+    print("=== RL Fine-tuning (REINFORCE) ===")
     print(f"Board: {config.width}×{config.height}, {config.total_mines} mines")
     print(f"Mine-continue: {config.mine_continue} | Refine: {config.refine_steps} steps")
     print(

@@ -11,9 +11,8 @@ from typing import Dict, List, Set, Tuple
 
 import numpy as np
 
-from .constants import CellState
 from .game import MinesweeperGame
-from .solver import ConstraintSolver
+from .solver import ConstraintSolver, build_constraints, normalize_constraints
 
 # Maximum component size for exact enumeration (2^20 = 1M assignments max)
 MAX_ENUM_CELLS = 20
@@ -56,13 +55,13 @@ class ProbabilitySolver:
         probs[revealed_mask] = 0.0
 
         # ── Step 2: Build constraints ─────────────────────────────────
-        constraints = self._build_constraints()
+        constraints = build_constraints(self.game)
         if not constraints:
             # No constraints: all covered cells are isolated
             self._fill_isolated_uniform(probs)
             return probs
 
-        constraints = self._normalize_constraints(constraints, safe_set, mine_set)
+        constraints = normalize_constraints(constraints, safe_set, mine_set)
         if not constraints:
             # All resolved by deduction — remaining cells are isolated
             self._fill_isolated_uniform(probs)
@@ -113,45 +112,6 @@ class ProbabilitySolver:
     def _uniform_fallback(cells: List[Tuple[int, int]]) -> Dict[Tuple[int, int], float]:
         """Fallback: assign 0.5 to all cells in a large component."""
         return {cell: 0.5 for cell in cells}
-
-    # ─── Constraint Building ──────────────────────────────────────────────
-
-    def _build_constraints(self) -> List[Tuple[Set[Tuple[int, int]], int]]:
-        """Build constraints from revealed number cells."""
-        constraints: List[Tuple[Set[Tuple[int, int]], int]] = []
-        for r in range(self.height):
-            for c in range(self.width):
-                v = self.game.visible[r, c]
-                if not (isinstance(v, (int, np.integer)) and 1 <= v <= 8):
-                    continue
-                covered = set()
-                flagged = 0
-                for nr, nc in self.game._neighbors(r, c):
-                    sv = self.game.visible[nr, nc]
-                    if sv == CellState.COVERED:
-                        covered.add((nr, nc))
-                    elif sv == CellState.FLAGGED:
-                        flagged += 1
-                remaining = int(v) - flagged
-                if covered:
-                    constraints.append((covered, remaining))
-        return constraints
-
-    @staticmethod
-    def _normalize_constraints(
-        constraints: List[Tuple[Set[Tuple[int, int]], int]],
-        safe: Set[Tuple[int, int]],
-        mines: Set[Tuple[int, int]],
-    ) -> List[Tuple[Set[Tuple[int, int]], int]]:
-        """Remove deduced cells from constraints, adjusting remaining counts."""
-        result = []
-        for cells, remaining in constraints:
-            known_mines = len(cells & mines)
-            cells = cells - mines - safe
-            remaining -= known_mines
-            if cells and remaining >= 0:
-                result.append((cells, remaining))
-        return result
 
     # ─── Component Detection ──────────────────────────────────────────────
 

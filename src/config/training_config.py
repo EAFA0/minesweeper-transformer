@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass, field
 from typing import List
-from .training_policy import POLICY
 
 
 @dataclass

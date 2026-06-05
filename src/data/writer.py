@@ -1,6 +1,6 @@
 import numpy as np
 from pathlib import Path
-from typing import List, Dict
+from typing import List
 
 class BaseDataWriter:
     """Base class for handling chunked data saving and atomic writes."""
@@ -50,7 +50,7 @@ class BaseDataWriter:
         self.buffer.clear()
         self.file_idx += 1
         
-    def _format_buffer(self, buffer: List[dict]) -> dict:
+    def _format_buffer(self, _buffer: List[dict]) -> dict:
         """Format the buffer into a dict of arrays for np.savez_compressed."""
         raise NotImplementedError
 
@@ -67,15 +67,3 @@ class TrajectoryWriter(BaseDataWriter):
             if "probs" in traj:
                 data[f"probs_{i}"] = np.array(traj["probs"], dtype=np.float32)
         return data
-
-
-class StateWriter(BaseDataWriter):
-    """Writes individual states (channels, probs, masks). Used by DAgger self-play."""
-    
-    def _format_buffer(self, buffer: List[dict]) -> dict:
-        return {
-            "channels": np.stack([s["channels"] for s in buffer]),
-            "probs": np.stack([s["probs"] for s in buffer]),
-            "masks": np.stack([s["mask"] for s in buffer]),
-            "n_samples": np.int64(len(buffer)),
-        }

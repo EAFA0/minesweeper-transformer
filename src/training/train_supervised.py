@@ -7,20 +7,15 @@ import os
 import shutil
 import subprocess
 import sys
-import time
 from datetime import datetime
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
-import numpy as np
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
 from tqdm import tqdm
 
-from config import POLICY, TrainingConfig, TrainingMetrics, ModelConfig
-from model.architecture import MinesweeperTransformer
+from config import TrainingConfig, ModelConfig
 from training.trajectory_pool import TrajectoryPool
 
 
@@ -102,7 +97,7 @@ def train_supervised(
         print(f"BCE Loss with binary (ground-truth) targets, pos_weight={pos_weight_val:.2f}")
     else:
         pos_weight_val = None
-        print(f"MSE Loss with solver probability targets (distillation)")
+        print("MSE Loss with solver probability targets (distillation)")
     
     # Calculate batches per epoch correctly based on states, not just games
     batch_size = getattr(config, 'batch_size', 64)
