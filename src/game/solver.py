@@ -5,7 +5,7 @@ Simplified to pure constraint propagation — no brute force, no guessing.
 Used to filter boards that are "no-guess" solvable.
 """
 
-from typing import List, Optional, Set, Tuple
+from typing import List, Set, Tuple
 
 import numpy as np
 

@@ -21,7 +21,7 @@ from typing import Optional
 import numpy as np
 
 from game.game import MinesweeperGame
-from game.constants import CellState, MoveType, GameStatus, DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_MINES
+from game.constants import MoveType, GameStatus, DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_MINES
 from game.probability_solver import ProbabilitySolver
 
 

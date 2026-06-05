@@ -5,7 +5,6 @@
 import argparse
 import json
 import multiprocessing
-import sys
 import time
 from functools import partial
 from pathlib import Path

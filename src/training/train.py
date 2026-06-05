@@ -11,15 +11,16 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 
-from config import TrainingConfig, TrainingMetrics
+from config import TrainingConfig, TrainingMetrics, ModelConfig
 from game.constants import CellState, GameStatus, MoveType
 from game.game import MinesweeperGame
 from game.probability_solver import ProbabilitySolver
-from model.architecture import MinesweeperTransformer, ModelConfig
 from training.trajectory_pool import TrajectoryPool
 from training.evaluate import evaluate_model as evaluate_game_model
+from training.utils import build_model, save_checkpoint
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -50,7 +51,7 @@ def _compute_frontier(visible: np.ndarray) -> np.ndarray:
 @dataclass
 class TrainingContext:
     """Bundles training state to avoid long parameter lists."""
-    model: MinesweeperTransformer
+    model: nn.Module
     model_config: ModelConfig
     optimizer: torch.optim.Optimizer
     scheduler: torch.optim.lr_scheduler.LRScheduler
@@ -65,16 +66,8 @@ class TrainingContext:
 def _setup_training_state(config: TrainingConfig, device: torch.device, arch: str) -> TrainingContext:
     """Initialize model, optimizer, scheduler, and load checkpoints if needed."""
     model_config = ModelConfig()
-    
-    if arch == "V1":
-        from model.architecture_v1 import MinesweeperTransformerV1
-        model = MinesweeperTransformerV1(model_config).to(device)
-    elif arch == "V1_5":
-        from model.architecture_v1_5 import MinesweeperTransformerV1_5
-        model = MinesweeperTransformerV1_5(model_config).to(device)
-    else:
-        model = MinesweeperTransformer(model_config).to(device)
-        
+    model = build_model(arch, model_config, device)
+
     metrics = TrainingMetrics()
     start_game = 0
 
@@ -195,10 +188,11 @@ def _evaluate_and_checkpoint(
     wr, acc = _run_eval(ctx.model, ctx.device, config, game_idx + 1, config.n_games, ctx.t0)
     ctx.metrics.val_action_accuracy.append(acc)
 
-    _save_checkpoint(
+    save_checkpoint(
         ctx.save_dir, "latest.pt",
-        ctx.model, ctx.optimizer, ctx.model_config, config, ctx.metrics,
-        game_idx + 1, ctx.best_win_rate, wr, arch, ctx.scheduler,
+        ctx.model, ctx.optimizer, ctx.model_config, config.loss_type, arch,
+        game_idx + 1, wr, ctx.best_win_rate, ctx.metrics.best_epoch,
+        ctx.metrics.train_loss, ctx.metrics.val_action_accuracy, ctx.scheduler,
     )
 
     if wr > ctx.best_win_rate:
@@ -339,32 +333,14 @@ def train(config: TrainingConfig, arch: str = "V4") -> TrainingMetrics:
     print(f"\n═══ Done in {total_time:.0f}s ═══")
     print(f"Best win rate: {ctx.best_win_rate:.2%} at game {ctx.metrics.best_epoch}")
 
-    _save_checkpoint(
+    save_checkpoint(
         ctx.save_dir, "final_model.pt",
-        ctx.model, ctx.optimizer, ctx.model_config, config, ctx.metrics,
-        config.n_games, ctx.best_win_rate, ctx.best_win_rate, arch, ctx.scheduler,
+        ctx.model, ctx.optimizer, ctx.model_config, config.loss_type, arch,
+        config.n_games, ctx.best_win_rate, ctx.best_win_rate, ctx.metrics.best_epoch,
+        ctx.metrics.train_loss, ctx.metrics.val_action_accuracy, ctx.scheduler,
     )
 
     return ctx.metrics
-
-
-def _save_checkpoint(path, fname, model, optimizer, model_config, config, metrics, epoch, best_wr, wr, arch, scheduler=None):
-    data = {
-        "epoch": epoch,
-        "arch_version": arch,
-        "model_state_dict": model.state_dict(),
-        "optimizer_state_dict": optimizer.state_dict(),
-        "model_config": model_config,
-        "loss_type": config.loss_type,
-        "train_loss": metrics.train_loss,
-        "val_action_accuracy": metrics.val_action_accuracy,
-        "best_win_rate": best_wr,
-        "best_epoch": metrics.best_epoch,
-        "win_rate": wr,
-    }
-    if scheduler is not None:
-        data["scheduler_state_dict"] = scheduler.state_dict()
-    torch.save(data, Path(path) / fname)
 
 
 def _run_eval(model, device, config, game_idx, n_games, t0):
