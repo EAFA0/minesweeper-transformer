@@ -144,10 +144,17 @@ class TrajectoryPool:
                 idx = np.random.randint(len(self._offline_buffer))
                 return self._offline_buffer[idx]
             else:
-                # Sync fallback
-                return generate_trajectory(
-                    self.width, self.height, self.mines, 
-                    compute_probs=self.compute_probs
+                # Sync fallback — retry for high-density boards where solver may fail
+                for _ in range(200):
+                    traj = generate_trajectory(
+                        self.width, self.height, self.mines,
+                        compute_probs=self.compute_probs
+                    )
+                    if traj is not None:
+                        return traj
+                raise RuntimeError(
+                    f"generate_trajectory returned None 200 times — "
+                    f"solver may not support {self.width}x{self.height}/{self.mines}"
                 )
 
     def pop(self) -> Tuple[np.ndarray, np.ndarray]:
