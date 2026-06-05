@@ -1,45 +1,43 @@
-"""Standalone evaluation script.
-
-Evaluates a trained model by playing N games on self-validated boards.
-Uses the shared training.evaluate module for consistency with training-time eval.
-
-Examples:
-  python scripts/evaluate.py checkpoints/S1/best_model.pt --n_games 1000
-  python scripts/evaluate.py checkpoints/S3/best_model.pt --width 12 --height 12 --mines 40
-"""
-
 import argparse
-import torch
 from pathlib import Path
 
 from config import TrainingConfig
 from training.evaluate import evaluate_model, load_model
+from utils.device import get_device
 
 
 def main():
     p = argparse.ArgumentParser(description="Evaluate Minesweeper Transformer model")
-    default_cfg = TrainingConfig()
-
+    
     p.add_argument("checkpoint", help="Path to model checkpoint (.pt)")
+    p.add_argument("--stage", type=str, default=None, choices=["S1", "S2", "S3"],
+                   help="Evaluate using specific stage's board settings")
     p.add_argument("--n_games", type=int, default=1000)
-    p.add_argument("--width", type=int, default=default_cfg.board_width)
-    p.add_argument("--height", type=int, default=default_cfg.board_height)
-    p.add_argument("--mines", type=int, default=default_cfg.board_mines)
-    p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--refine_steps", type=int, default=None,
-                   help="Override eval refinement steps (default: from policy)")
-    p.add_argument("--board_pool", default=None,
-                   help="Board pool .npz path (auto: data/eval_boards_WxH_M.npz)")
     p.add_argument("--device", default="auto")
     p.add_argument("--arch", type=str, default="V4", choices=["V1", "V1_5", "V4"], help="Model architecture version")
+    
+    # Optional overrides for zero-shot testing
+    p.add_argument("--width", type=int, default=None, help="Override board width")
+    p.add_argument("--height", type=int, default=None, help="Override board height")
+    p.add_argument("--mines", type=int, default=None, help="Override board mines")
+    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--refine_steps", type=int, default=None)
+    p.add_argument("--board_pool", default=None)
 
     args = p.parse_args()
+    
+    config = TrainingConfig()
+    if args.stage:
+        from config.stage_config import apply_stage_config
+        apply_stage_config(config, args.stage)
+        
+    width = args.width if args.width is not None else config.board_width
+    height = args.height if args.height is not None else config.board_height
+    mines = args.mines if args.mines is not None else config.board_mines
 
-    from utils.device import get_device
     device = get_device(args.device)
-
     print(f"Device: {device}")
-    print(f"Board: {args.width}×{args.height}/{args.mines} mines")
+    print(f"Board: {width}×{height}/{mines} mines")
     print(f"Eval games: {args.n_games}")
 
     model = load_model(args.checkpoint, device)
@@ -50,8 +48,8 @@ def main():
     result = evaluate_model(
         model, device,
         n_games=args.n_games,
-        width=args.width, height=args.height,
-        total_mines=args.mines,
+        width=width, height=height,
+        total_mines=mines,
         seed=args.seed,
         board_pool_path=board_pool_path,
         refine_steps=args.refine_steps,

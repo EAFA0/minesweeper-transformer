@@ -119,7 +119,7 @@ def evaluate_model(
         quiet: suppress per-game progress
     """
     from utils.device import get_device
-    device_t = get_device(device) if isinstance(device, str) else device
+    device_t = get_device(device)
     rng = np.random.default_rng(seed)
     metrics = _EvalMetrics(n_games, quiet)
 

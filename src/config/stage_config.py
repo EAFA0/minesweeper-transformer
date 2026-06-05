@@ -24,17 +24,14 @@ STAGES = {
     },
 }
 
-def apply_stage_config(args, default_cfg):
-    """Apply stage-specific configuration from STAGES to the args namespace.
-    
-    Overrides defaults with stage settings, but respects explicit user CLI inputs.
-    """
-    if not args.stage or args.stage not in STAGES:
+def apply_stage_config(config, stage_name: str):
+    """Apply stage-specific configuration to a TrainingConfig object."""
+    if not stage_name or stage_name not in STAGES:
         return
         
-    stage_cfg = STAGES[args.stage]
+    stage_cfg = STAGES[stage_name]
     
-    # Mapping from stage config key to args attribute
+    # Mapping from stage config key to TrainingConfig attribute
     mapping = {
         "width": "board_width",
         "height": "board_height",
@@ -46,11 +43,9 @@ def apply_stage_config(args, default_cfg):
         "save_dir": "save_dir"
     }
     
-    for cfg_key, arg_key in mapping.items():
+    for cfg_key, attr_key in mapping.items():
         if cfg_key in stage_cfg:
-            # If user didn't explicitly override it on CLI, apply stage config
-            if getattr(args, arg_key) == getattr(default_cfg, arg_key):
-                setattr(args, arg_key, stage_cfg[cfg_key])
-                
-    print(f"Applied stage config for {args.stage}: {stage_cfg.get('desc', '')}")
+            setattr(config, attr_key, stage_cfg[cfg_key])
+            
+    print(f"Applied stage config for {stage_name}: {stage_cfg.get('desc', '')}")
 
