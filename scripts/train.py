@@ -17,6 +17,8 @@ def main():
                    help="Training stage (e.g. S1, S2, S3). Applies stage-specific board/optimizer configs.")
     p.add_argument("--arch", type=str, default="V4", choices=["V1", "V1_5", "V4"],
                    help="Architecture version to use")
+    p.add_argument("--loss_type", type=str, default="bce", choices=["bce", "mse"],
+                   help="Loss function: bce (binary cross-entropy on ground-truth mines) or mse (probability distillation)")
     p.add_argument("--device", default="auto")
 
     # Explicit overrides (optional)
@@ -49,6 +51,8 @@ def main():
         config.save_dir = args.save_dir
     if args.data_dir is not None:
         config.data_dir = args.data_dir
+    if args.loss_type is not None:
+        config.loss_type = args.loss_type
 
     # 3. Dynamic save_dir fallback
     if config.save_dir == "checkpoints" and not args.stage:

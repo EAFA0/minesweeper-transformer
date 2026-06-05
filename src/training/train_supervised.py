@@ -71,9 +71,20 @@ def train_supervised(
         
     optimizer = optim.AdamW(model.parameters(), lr=config.learning_rate)
     
-    print(f"Training on {device} - Offline SUPERVISED mode - Arch: {arch}")
+    print(f"Training on {device} - Offline SUPERVISED mode - Arch: {arch} - Loss: {config.loss_type}")
     print(f"Board Config: {config.board_width}x{config.board_height} with {config.board_mines} mines")
     print(f"Run dir: {run_dir}")
+
+    # ── Loss setup ──────────────────────────────────────────────────────────
+    target_type = "binary" if config.loss_type == "bce" else "probs"
+    if config.loss_type == "bce":
+        total_cells = config.board_width * config.board_height
+        mines = config.board_mines
+        pos_weight_val = (total_cells - mines) / max(mines, 1)
+        print(f"BCE Loss with binary (ground-truth) targets, pos_weight={pos_weight_val:.2f}")
+    else:
+        pos_weight_val = None
+        print(f"MSE Loss with solver probability targets (distillation)")
     
     # Calculate batches per epoch correctly based on states, not just games
     batch_size = getattr(config, 'batch_size', 64)
@@ -106,24 +117,36 @@ def train_supervised(
         
         for _ in range(batches_per_epoch):
             # 1. Fetch batch from unified pool
-            channels, targets, masks = pool.batch(batch_size)
-            
+            channels, targets, masks = pool.batch(batch_size, target_type=target_type)
+
             channels = channels.to(device)
             targets = targets.to(device)
             masks = masks.to(device)
-            
+
             # 2. Forward pass
             if arch in ("V1", "V1_5", "V2"):
                 preds = model(channels)
-                # V1/V1_5 forward returns raw logits → apply sigmoid for probability targets
-                probs = torch.sigmoid(preds[:, 0])  # (B, H, W)
+                if config.loss_type == "bce":
+                    # V1/V1_5 forward returns raw logits → BCEWithLogitsLoss directly on logits
+                    logits = preds[:, 0]  # (B, H, W) raw logits
+                    pos_weight = torch.tensor(pos_weight_val, device=device)
+                    loss = F.binary_cross_entropy_with_logits(
+                        logits[masks], targets[masks],
+                        pos_weight=pos_weight
+                    )
+                else:
+                    # MSE on probabilities: sigmoid logits first
+                    probs = torch.sigmoid(preds[:, 0])  # (B, H, W)
+                    loss = F.mse_loss(probs[masks], targets[masks])
             else:
                 # V4 forward returns (probs, mem_seq) with sigmoid already applied
                 preds, _ = model(channels)
                 probs = preds[:, 0]  # (B, H, W) — already probabilities
-
-            # 3. Compute loss (only on covered cells)
-            loss = F.mse_loss(probs[masks], targets[masks])
+                if config.loss_type == "bce":
+                    # V4 already sigmoid'd → use BCE on probabilities
+                    loss = F.binary_cross_entropy(probs[masks], targets[masks])
+                else:
+                    loss = F.mse_loss(probs[masks], targets[masks])
             
             # 4. Backward
             optimizer.zero_grad()

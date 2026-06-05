@@ -156,24 +156,29 @@ class TrajectoryPool:
         # Initial visible state is masks[0]
         return traj["mines"], traj["masks"][0]
 
-    def batch(self, batch_size: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Return (channels, probs, mask) batch for supervised training."""
-        b_channels, b_probs, b_masks = [], [], []
-        
+    def batch(self, batch_size: int, target_type: str = "probs") -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Return (channels, targets, mask) batch for supervised training.
+
+        Args:
+            batch_size: number of samples in batch
+            target_type: "probs" (solver probability distillation) or "binary" (ground truth mine locations)
+        """
+        b_channels, b_targets, b_masks = [], [], []
+
         for _ in range(batch_size):
             traj = self._get_traj()
             # Pick a random step from the trajectory
             t = np.random.randint(len(traj["masks"]))
-            
+
             # Construct channels (C, H, W)
             mask = traj["masks"][t]
             mines = traj["mines"]
-            
+
             # Simplified channel construction (similar to old dataset)
             channels = np.zeros((10, self.height, self.width), dtype=np.float32)
             channels[0] = mask  # covered
             # channels[1] is flagged, assuming 0 for now in dataset
-            
+
             # Count adjacent mines for revealed cells
             for r in range(self.height):
                 for c in range(self.width):
@@ -183,18 +188,23 @@ class TrajectoryPool:
                         adj = np.sum(mines[rmin:rmax, cmin:cmax])
                         if adj > 0:
                             channels[1 + int(adj), r, c] = 1.0
-                            
+
             b_channels.append(channels)
             b_masks.append(mask)
-            
-            if "probs" in traj:
-                b_probs.append(traj["probs"][t])
+
+            if target_type == "binary":
+                # Ground truth: 1=mine, 0=safe (binary labels)
+                b_targets.append(mines.astype(np.float32))
             else:
-                b_probs.append(np.zeros_like(mask, dtype=np.float32))
+                # Solver probability distillation (default)
+                if "probs" in traj:
+                    b_targets.append(traj["probs"][t])
+                else:
+                    b_targets.append(np.zeros_like(mask, dtype=np.float32))
 
         return (
             torch.from_numpy(np.stack(b_channels)),
-            torch.from_numpy(np.stack(b_probs)),
+            torch.from_numpy(np.stack(b_targets)),
             torch.from_numpy(np.stack(b_masks)),
         )
 
