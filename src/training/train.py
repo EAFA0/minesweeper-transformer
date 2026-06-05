@@ -242,7 +242,12 @@ def _play_training_game(
             pv = torch.cat([probs, conf], dim=1)  # (B, 2, H, W)
 
         else:
-            pv, _ = ctx.model.forward(ch_t)      # V4: (B,2,H,W) already sigmoid'd, (B,N,d) mem_seq
+            # V4: iterative refinement with full BPTT (grounding + residual)
+            refine_results = ctx.model.refine(ch_t, num_steps=config.refinement_steps)
+            # refine() returns sigmoid'd probs for both channels
+            probs = refine_results[-1][:, 0:1]  # (B, 1, H, W) mine probs
+            conf = refine_results[-1][:, 1:2]   # (B, 1, H, W) conf probs
+            pv = torch.cat([probs, conf], dim=1)  # (B, 2, H, W)
 
         # Action selection (no_grad)
         with torch.no_grad():

@@ -238,9 +238,9 @@ class MinesweeperTransformer(nn.Module):
     @torch.no_grad()
     def predict(self, x: torch.Tensor,
                 max_refine_steps: int = POLICY.refinement.eval_max_steps) -> torch.Tensor:
-        """Return final P(mine) with adaptive refinement."""
+        """Return final P(mine) with adaptive refinement — mine channel only (B, 1, H, W)."""
         results = self.refine(x, num_steps=max_refine_steps)
-        return results[-1]
+        return results[-1][:, 0:1]  # (B, 1, H, W) — mine probs only
 
     @torch.no_grad()
     def diagnose_refinement(self, x: torch.Tensor,

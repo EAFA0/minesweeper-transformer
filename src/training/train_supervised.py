@@ -171,11 +171,11 @@ def train_supervised(
                     loss = F.mse_loss(probs[masks], targets[masks])
 
             else:
-                # V4 forward returns (probs, mem_seq) with sigmoid already applied
-                preds, _ = model(channels)
-                probs = preds[:, 0]  # (B, H, W) — already probabilities
+                # V4: iterative refinement with full BPTT (grounding + residual)
+                refine_results = model.refine(channels, num_steps=config.refinement_steps)
+                probs = refine_results[-1][:, 0]  # (B, H, W) — sigmoid'd mine probs
                 if config.loss_type == "bce":
-                    # V4 already sigmoid'd → use BCE on probabilities
+                    # V4 refine returns sigmoid'd → use BCE on probabilities
                     loss = F.binary_cross_entropy(probs[masks], targets[masks])
                 else:
                     loss = F.mse_loss(probs[masks], targets[masks])

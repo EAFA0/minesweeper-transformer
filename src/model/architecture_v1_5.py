@@ -172,7 +172,7 @@ class MinesweeperTransformerV1_5(nn.Module):
         features = seq.transpose(1, 2).reshape(B, self.config.d_model, H, W)
 
         # Output
-        return self.output_head(features)  # (B, 1, H, W)
+        return self.output_head(features)  # (B, 2, H, W)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Single-pass forward (standard mode).
