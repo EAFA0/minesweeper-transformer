@@ -115,10 +115,13 @@ def train_supervised(
             # 2. Forward pass
             if arch in ("V1", "V1_5", "V2"):
                 preds = model(channels)
+                # V1/V1_5 forward returns raw logits → apply sigmoid for probability targets
+                probs = torch.sigmoid(preds[:, 0])  # (B, H, W)
             else:
+                # V4 forward returns (probs, mem_seq) with sigmoid already applied
                 preds, _ = model(channels)
-            probs = preds[:, 0]  # (B, H, W)
-            
+                probs = preds[:, 0]  # (B, H, W) — already probabilities
+
             # 3. Compute loss (only on covered cells)
             loss = F.mse_loss(probs[masks], targets[masks])
             

@@ -57,6 +57,7 @@ class TrainingContext:
     metrics: TrainingMetrics
     device: torch.device
     save_dir: Path
+    arch: str = "V4"
     start_game: int = 0
     best_win_rate: float = 0.0
     t0: float = 0.0
@@ -125,6 +126,7 @@ def _setup_training_state(config: TrainingConfig, device: torch.device, arch: st
         metrics=metrics,
         device=device,
         save_dir=Path(config.save_dir),
+        arch=arch,
         start_game=start_game,
         best_win_rate=metrics.best_win_rate,
         t0=time.time()
@@ -224,7 +226,18 @@ def _play_training_game(
         ch_t = torch.from_numpy(channels).unsqueeze(0).float().to(ctx.device)
 
         # Full BPTT: CNN once → Transformer self-loop → Decoder (or V3 logic)
-        pv, _ = ctx.model.forward(ch_t)  # (B, 1, H, W) in computation graph
+        if ctx.arch in ("V1", "V1_5"):
+            pv_raw = ctx.model.forward(ch_t)    # V1: (B,1,H,W) logits; V1_5: (B,2,H,W) raw
+            # Apply sigmoid so downstream code always works with probabilities
+            if ctx.arch == "V1":
+                pv = torch.sigmoid(pv_raw)       # (B,1,H,W) probabilities
+            else:
+                # V1_5: channel 0 is mine logit, channel 1 is confidence logit
+                probs = torch.sigmoid(pv_raw[:, 0:1])
+                conf = pv_raw[:, 1:2]            # confidence stays as logit
+                pv = torch.cat([probs, conf], dim=1)  # (B,2,H,W)
+        else:
+            pv, _ = ctx.model.forward(ch_t)      # V4: (B,2,H,W) already sigmoid'd, (B,N,d) mem_seq
 
         # Action selection (no_grad)
         with torch.no_grad():
