@@ -19,6 +19,7 @@ class TrainingConfig:
     mixed_mode: bool = False      # if True, randomizes board size and mine density
 
     # Training
+    mode: str = "online"  # "online" or "supervised"
     n_games: int = 5000
     eval_interval_games: int = 200
     eval_games: int = 100

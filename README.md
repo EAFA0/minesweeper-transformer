@@ -90,7 +90,7 @@ src/
   game/             扫雷引擎、求解器
   config/          训练/评估策略配置
   data/            数据生成模块（含 generator.py CLI）
-  model/           CNN + Transformer + iterative refinement (V3 hidden state)
+  model/           CNN + Transformer + constraint residual refinement (V5)
   training/        训练循环（MSE + online BCE）+ 共享评估模块
 
 scripts/
