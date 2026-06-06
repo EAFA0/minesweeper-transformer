@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Minesweeper Transformer — 多阶段密度课程训练（Online BCE）
+"""Minesweeper Transformer — 多阶段密度课程训练
 
-核心路线 S1 → S2 → S3:
+核心路线 S1 → S2 → S3 → S4:
   S1 (规则):  8×8 / 10雷
-  S2 (密度):  8×8 / 20雷
-  S3 (高密度): 8×8 / 32雷
+  S2 (低中密度): 8×8 / 15雷
+  S3 (中密度): 8×8 / 20雷
+  S4 (高密度): 8×8 / 25雷
 
 Recipe 模式:
   uv run python3 scripts/train_stage.py --recipe v5_s1 --arch V5
@@ -12,8 +13,8 @@ Recipe 模式:
 用法:
   uv run python3 scripts/train_stage.py --all
   uv run python3 scripts/train_stage.py --stage S1
-  uv run python3 scripts/train_stage.py --stage S3 --eval 10 10 40
-  uv run python3 scripts/train_stage.py --recipe v5_s1 --arch V5
+  uv run python3 scripts/train_stage.py --stage S4 --eval 10 10 40
+  uv run python3 scripts/train_stage.py --recipe v5_curriculum --arch V5
 """
 
 import argparse
@@ -231,7 +232,7 @@ def main():
     p.add_argument("--stage", choices=list(STAGES.keys()),
                    help="训练阶段: " + " | ".join(STAGES.keys()))
     p.add_argument("--recipe", type=str, default=None,
-                   help="Recipe name (e.g. v5_s1). Runs all phases sequentially.")
+                   help="Recipe name (e.g. v5_s1, v5_curriculum). Runs all phases sequentially.")
     p.add_argument("--all", action="store_true",
                    help="运行主线全部: " + " → ".join(STAGES.keys()))
     p.add_argument("--n_games", type=int, default=None, help="覆盖默认训练游戏数")
@@ -264,7 +265,7 @@ def main():
     else:
         print(f"\n核心路线: {' → '.join(STAGES.keys())}")
         print(f"Recipes: {', '.join(RECIPES.keys())}")
-        print("\n--all  运行全部  |  --stage S1  指定阶段  |  --recipe v5_s1  Recipe模式  |  --eval_only 仅评估")
+        print("\n--all  运行全部  |  --stage S1  指定阶段  |  --recipe v5_curriculum  Recipe模式  |  --eval_only 仅评估")
         sys.exit(0)
 
     for stage in stages_to_run:

@@ -43,20 +43,18 @@ python -m src.data.generator --n_samples 10000 --workers 0 --force
 ### 训练
 ```bash
 # 三阶段预训练（统一入口）
-python scripts/train_stage.py --stage S1          # 从头训练 (2 epochs)
-python scripts/train_stage.py --stage S2          # 继承 S1 → 密度提升 (2 epochs)
-python scripts/train_stage.py --stage S3          # 继承 S2 → 高密度泛化 (5 epochs)
-python scripts/train_stage.py --all               # S1 → S2 → S3
+python scripts/train_stage.py --stage S1          # 从头训练 8x8/10
+python scripts/train_stage.py --stage S2          # 继承 S1 → 8x8/15
+python scripts/train_stage.py --stage S3          # 继承 S2 → 8x8/20
+python scripts/train_stage.py --stage S4          # 继承 S3 → 8x8/25
+python scripts/train_stage.py --recipe v5_curriculum --arch V5  # S1 → S2 → S3 → S4
 
 # 带强制数据重新生成
 python scripts/train_stage.py --stage S1 --force_data
 
 # 仅评估
-python scripts/train_stage.py --stage S3 --eval_only
-python scripts/train_stage.py --stage S3 --eval 10 10 40  # 零样本评估
-
-# 历史/实验阶段
-python scripts/train_stage.py --legacy_stage S1.5
+python scripts/train_stage.py --stage S4 --eval_only
+python scripts/train_stage.py --stage S4 --eval 10 10 40  # 零样本评估
 
 # Recipe 模式
 python scripts/train_stage.py --recipe v5_s1 --arch V5

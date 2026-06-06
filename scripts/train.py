@@ -28,8 +28,8 @@ def main():
     # High-level configuration
     p.add_argument("--mode", type=str, default="online", choices=["online", "supervised"],
                    help="Training mode: online (self-play) or supervised (offline npz)")
-    p.add_argument("--stage", type=str, default=None, choices=["S1", "S2", "S3"],
-                   help="Training stage (e.g. S1, S2, S3). Applies stage-specific board/optimizer configs.")
+    p.add_argument("--stage", type=str, default=None, choices=["S1", "S2", "S3", "S4"],
+                   help="Training stage (e.g. S1, S2, S3, S4). Applies stage-specific board/optimizer configs.")
     p.add_argument("--recipe", type=str, default=None,
                    help="Training recipe name (e.g. v5_s1). Overrides --stage/--mode/--loss_type.")
     p.add_argument("--arch", type=str, default="V5", choices=["V5"],

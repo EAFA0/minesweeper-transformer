@@ -49,6 +49,39 @@ RECIPES: Dict[str, TrainingRecipe] = {
             ),
         ],
     ),
+    "v5_curriculum": TrainingRecipe(
+        name="v5_curriculum",
+        phases=[
+            RecipePhase(
+                mode="supervised", loss_type="deep_mse", n_games=10000,
+                board_width=8, board_height=8, board_mines=10,
+                lr=3e-4, save_dir="checkpoints/v5_S1",
+                data_dir="data/S1",
+                desc="S1 supervised Deep-MSE — 8x8/10",
+            ),
+            RecipePhase(
+                mode="supervised", loss_type="deep_mse", n_games=10000,
+                board_width=8, board_height=8, board_mines=15,
+                lr=3e-4, save_dir="checkpoints/v5_S2",
+                data_dir="data/S2",
+                desc="S2 supervised Deep-MSE — 8x8/15",
+            ),
+            RecipePhase(
+                mode="supervised", loss_type="deep_mse", n_games=10000,
+                board_width=8, board_height=8, board_mines=20,
+                lr=3e-4, save_dir="checkpoints/v5_S3",
+                data_dir="data/S3",
+                desc="S3 supervised Deep-MSE — 8x8/20",
+            ),
+            RecipePhase(
+                mode="supervised", loss_type="deep_mse", n_games=10000,
+                board_width=8, board_height=8, board_mines=25,
+                lr=3e-4, save_dir="checkpoints/v5_S4",
+                data_dir="data/S4",
+                desc="S4 supervised Deep-MSE — 8x8/25",
+            ),
+        ],
+    ),
     "v5_s1_mse": TrainingRecipe(
         name="v5_s1_mse",
         phases=[

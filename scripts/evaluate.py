@@ -10,7 +10,7 @@ def main():
     p = argparse.ArgumentParser(description="Evaluate Minesweeper Transformer model")
     
     p.add_argument("checkpoint", help="Path to model checkpoint (.pt)")
-    p.add_argument("--stage", type=str, default=None, choices=["S1", "S2", "S3"],
+    p.add_argument("--stage", type=str, default=None, choices=["S1", "S2", "S3", "S4"],
                    help="Evaluate using specific stage's board settings")
     p.add_argument("--n_games", type=int, default=1000)
     p.add_argument("--device", default="auto")

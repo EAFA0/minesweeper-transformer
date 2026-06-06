@@ -22,6 +22,7 @@
 - **收紧 no-guess 合同**: `generate_no_guess_board()` 现在会额外验证本项目 `ProbabilitySolver` 能无猜解完；训练轨迹生成遇到 `min(P_mine) > 0` 的状态会拒绝该棋盘。
 - **统一数据目录**: 默认训练目录保持为 `data/`，eval cache 保持 `eval_boards_{W}x{H}_{M}.npz`；no-guess 是全局默认语义，不通过额外目录名表达。
 - **Recipe 显式绑定数据目录**: `RecipePhase` 新增 `data_dir`，`v5_s1` / `v5_s1_mse` 固定读写 `data/`。
+- **V5 四阶段课程命名**: 新增 `v5_curriculum`，阶段统一命名为 `S1 → S2 → S3 → S4`，分别对应 8×8/10、15、20、25 雷；不再使用 `S1.5`/`S2.5` 这类小数阶段名。
 
 ## [未发布] - 2026-06-05
 
@@ -93,7 +94,7 @@
 - **refine 策略**: 监督训练 `k ∈ [1, 16]`，评估上限 16 且收敛早停，RL 固定 16 步
 - **CLI 参数**: 移除 `scripts/train.py` 和 `scripts/train_rl.py` 的 `--refine`，禁止局部覆盖
 - **RL 环境**: 训练 `mine_continue=True`, 评估 `False` (分别优化信号和测量)
-- **阶段入口**: `train_stage.py --stage` 只暴露 S1/S2/S3，历史阶段改用 `--legacy_stage`
+- **阶段入口**: `train_stage.py --stage` 暴露 S1/S2/S3/S4；历史小数阶段不再作为主线入口
 
 ### Bug 修复
 - `generate_data` 并行 worker 参数冲突 (partial 导致 seed→width)
