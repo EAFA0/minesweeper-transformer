@@ -5,13 +5,23 @@
 - **删除 archived 脚本**: `scripts/archived/` 目录已删除。RL 和旧训练脚本历史追溯使用 git。
 - **CLI 收敛**: `--arch` 默认值从 V4 改为 V5，choices 仅保留 `["V5"]`。
 - **训练/评估去分支**: `train.py` 移除 V1/V4 分支，`evaluate.py` 的 `load_model()` 移除 arch 分发，`utils.py` 的 `build_model()`/`model_forward()` 简化为 V5-only。
+- **移除未监督 confidence head**: V5 输出头从 2ch 收敛为 1ch mine logit；refinement early-stop 改为 `max|P_t - P_{t-1}| < convergence_eps`，评估日志记录真实执行步数。
+- **修复训练入口 mode 路由**: `scripts/train.py` legacy 分支现在会应用 `--mode`，避免 recipe phase 传入 `--mode supervised` 时被默认 `online` 覆盖。
 - **文档同步**: AGENTS.md、README.md、architecture.md、conventions.md、metrics.md、training-log.md、docs/README.md 均已更新。
 
 ### 训练 Recipe 系统
 - **新增 `src/config/recipe_config.py`**: `RecipePhase` + `TrainingRecipe` dataclass，将训练策略抽象为可命名的多阶段 recipe。
-- **预定义 `v5_s1` recipe**: MSE warmup (supervised, 8×8/10) → online BCE finetune，替代手动组合 `--mode`/`--loss_type`。
+- **收敛 `v5_s1` recipe**: 默认仅保留 supervised calibration (8×8/10, 5000 games)；实测 pure online BCE finetune 会将 83% WR checkpoint 退化到约 15% WR，已从默认 recipe 移除。
+- **新增 Deep-MSE 主线**: `v5_s1` 改为 `deep_mse`，对每个 refinement step 都监督 solver probability；S1 200局评估 81.5% WR，高于普通 MSE baseline 的 79.5% WR。
+- **保留 MSE baseline recipe**: 新增 `v5_s1_mse` 用于复现实验对照；Rank-MSE 试验未带来收益，未纳入默认 recipe。
 - **`scripts/train.py`**: 新增 `--recipe` 和 `--dry_run` 参数，支持单 phase 执行；不传 `--recipe` 时向后兼容。
-- **`scripts/train_stage.py`**: 新增 `--recipe` 参数，自动编排多 phase 顺序执行 + 每 phase 后评估；自动解析 pretrained checkpoint 链。
+- **`scripts/train_stage.py`**: 新增 `--recipe` 参数，自动编排 recipe phase 顺序执行 + 每 phase 后评估；自动解析 pretrained checkpoint 链。
+
+### No-Guess 数据链路修复
+- **恢复严格 no-guess 默认生成器**: `src/data/generator.py`、`training/evaluate.py`、`TrajectoryPool.get_eval_game()` 重新使用 `generate_no_guess_board()`；主训练/评估不再使用带 safe hint 的 `generate_self_validated_board()`。
+- **收紧 no-guess 合同**: `generate_no_guess_board()` 现在会额外验证本项目 `ProbabilitySolver` 能无猜解完；训练轨迹生成遇到 `min(P_mine) > 0` 的状态会拒绝该棋盘。
+- **统一数据目录**: 默认训练目录保持为 `data/`，eval cache 保持 `eval_boards_{W}x{H}_{M}.npz`；no-guess 是全局默认语义，不通过额外目录名表达。
+- **Recipe 显式绑定数据目录**: `RecipePhase` 新增 `data_dir`，`v5_s1` / `v5_s1_mse` 固定读写 `data/`。
 
 ## [未发布] - 2026-06-05
 

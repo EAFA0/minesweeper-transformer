@@ -1,7 +1,7 @@
-"""Training recipe: named multi-phase training strategies.
+"""Training recipe: named training strategies.
 
 A recipe replaces the manual combination of --mode/--loss_type/--stage by
-encoding a sequence of phases (e.g. MSE warmup -> online BCE finetune).
+encoding one or more reproducible training phases.
 """
 
 from dataclasses import dataclass, field
@@ -13,7 +13,7 @@ class RecipePhase:
     """A single phase within a training recipe."""
 
     mode: str = "online"          # "online" | "supervised"
-    loss_type: str = "bce"        # "bce" | "mse"
+    loss_type: str = "bce"        # "bce" | "mse" | "deep_mse"
     n_games: int = 5000
     lr: float = 3e-4
     board_width: int = 8
@@ -22,6 +22,7 @@ class RecipePhase:
     refinement_steps: int = 4
     pretrained: str = ""
     save_dir: str = ""
+    data_dir: str = "data"
     desc: str = ""
 
 
@@ -40,17 +41,23 @@ RECIPES: Dict[str, TrainingRecipe] = {
         name="v5_s1",
         phases=[
             RecipePhase(
+                mode="supervised", loss_type="deep_mse", n_games=5000,
+                board_width=8, board_height=8, board_mines=10,
+                lr=3e-4, save_dir="checkpoints/v5_s1_deep",
+                data_dir="data",
+                desc="S1 supervised Deep-MSE (all refinement steps)",
+            ),
+        ],
+    ),
+    "v5_s1_mse": TrainingRecipe(
+        name="v5_s1_mse",
+        phases=[
+            RecipePhase(
                 mode="supervised", loss_type="mse", n_games=5000,
                 board_width=8, board_height=8, board_mines=10,
                 lr=3e-4, save_dir="checkpoints/v5_s1_mse",
-                desc="S1 MSE warmup (probability calibration)",
-            ),
-            RecipePhase(
-                mode="online", loss_type="bce", n_games=3000,
-                board_width=8, board_height=8, board_mines=10,
-                lr=1e-4, pretrained="checkpoints/v5_s1_mse/best_model.pt",
-                save_dir="checkpoints/v5_s1_bce",
-                desc="S1 online BCE finetune (on-policy alignment)",
+                data_dir="data",
+                desc="S1 supervised MSE baseline (final refinement step)",
             ),
         ],
     ),
@@ -71,3 +78,5 @@ def apply_recipe_phase(phase: RecipePhase, config) -> None:
         config.pretrained = phase.pretrained
     if phase.save_dir:
         config.save_dir = phase.save_dir
+    if phase.data_dir:
+        config.data_dir = phase.data_dir

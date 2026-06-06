@@ -14,6 +14,27 @@
 
 ---
 
+## 2026-06-06: V5 S1 strict no-guess rerun
+
+| 项目 | 值 |
+|------|-----|
+| Recipe | `v5_s1` |
+| 架构 | V5 constraint residual, 15ch input, 1ch mine logit |
+| 设备 | Mac MPS |
+| 数据 | `data/`, 8×8/10, 5000 局 strict no-guess |
+| 生成命令 | `PYTHONPATH=src uv run python3 scripts/generate_data.py --n_samples 5000 --output data --width 8 --height 8 --mines 10 --workers 8 --samples_per_file 2000 --force` |
+| 数据校验 | 5000/5014 accepted, `total_ambiguous_cells=0`, `avg_ambig_per_game=0.0` |
+| 训练命令 | `PYTHONPATH=src uv run python3 scripts/train_stage.py --recipe v5_s1 --arch V5 --device auto --eval_games 200` |
+| 超参 | supervised `deep_mse`, lr=3e-4, epochs=5, batch=64, refine=4 |
+| Epoch 5 loss | 0.0033 |
+| 训练内评估 | 94/100 WR, action_acc=0.997 |
+| 独立评估 | 187/200 WR = 93.50%, action_acc=0.9963, avg_steps=17.6, avg_refine=4.0 |
+| Eval cache oracle | `data/eval_boards_8x8_10.npz`: 200/200 WR, `forced_guess_steps=0` |
+| Checkpoint | `checkpoints/v5_s1_deep/best_model.pt` |
+| 备注 | `generate_no_guess_board()` 现额外要求本项目 `ProbabilitySolver` 可无猜解完；外部 no-guess 但本 solver 会遇到非零最小概率的棋盘会被拒绝。 |
+
+---
+
 ## 🆕 当前主线 (2026-05-30/31 重整)
 
 ### S1 — 8×8/10雷 规则学习

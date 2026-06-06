@@ -226,10 +226,9 @@ def _play_training_game(
             ch_t, num_steps=config.refinement_steps,
             return_logits=True
         )
-        raw = refine_results[-1]             # (B, 2, H, W) raw logits
+        raw = refine_results[-1]             # (B, 1, H, W) raw mine logits
         probs = torch.sigmoid(raw[:, 0:1])    # (B, 1, H, W) mine probs
-        conf = raw[:, 1:2]                    # (B, 1, H, W) conf logit
-        pv = torch.cat([probs, conf], dim=1)  # (B, 2, H, W)
+        pv = probs
         pv_logits = raw
 
         # Action selection (no_grad)

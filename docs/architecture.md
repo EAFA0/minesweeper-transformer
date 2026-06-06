@@ -59,7 +59,7 @@
 扫雷同时需要局部模式识别（CNN 擅长的数字-邻域关系）和全局约束推理（Transformer 擅长的远距离依赖）。
 
 ### 当前架构: V5 Constraint Residual
-CNN (3层 3×3 Conv, 64ch) → InterpolatablePE → Transformer (4层, d=64, 4头) → 2ch 输出 (mine + confidence)。
+CNN (3层 3×3 Conv, 64ch) → InterpolatablePE → Transformer (4层, d=64, 4头) → 1ch 输出 (mine logit)。
 
 输入: 10 board + 1 prev_probs + 4 constraint channels = 15 channels
 
@@ -196,8 +196,8 @@ win_reward       = none
 - `first_done=True`: 模型从 after-first-click 态出发（与训练数据一致），避免 OOD 全覆棋盘
 
 #### 提前退出：收敛检测
-- 推理时 `max|P_t - P_{t-1}| < 1e-3` → 停止
-- 替代置信度方案（confidence head 无显式监督，无法可靠达到 0.95）
+- 推理时 `max|P_t - P_{t-1}| < 0.01` → 停止
+- 不再维护 confidence head；未监督 confidence 会污染 early-stop 决策
 - 实测 S3 模型 90% 样本在 5 步内收敛（max 16）
 
 #### Advantage
@@ -238,7 +238,8 @@ win_reward       = none
 - **日期**: 2026-06-06
 
 ### 背景
-训练策略（MSE warmup → online BCE finetune → hybrid）之前分散在 `--mode`/`--loss_type`/`--stage` 等 CLI 参数中手动组合，容易出错且难以复现。
+训练策略之前分散在 `--mode`/`--loss_type`/`--stage` 等 CLI 参数中手动组合，容易出错且难以复现。
+2026-06-06 实测显示 pure online BCE finetune 会把 S1 MSE checkpoint 从 83% WR 破坏到约 15% WR，因此不再作为默认 recipe 阶段。
 
 ### 决策
 引入 **Recipe 系统**：将训练策略抽象为可命名的多阶段 recipe。
@@ -249,7 +250,12 @@ TrainingRecipe: {name, phases: [RecipePhase, ...]}
 ```
 
 预定义 recipe 示例：
-- `v5_s1`: supervised MSE warmup (8×8/10, 5000 games) → online BCE finetune (8×8/10, 3000 games)
+- `v5_s1`: supervised Deep-MSE calibration (8×8/10, 5000 games)，对每个 refinement step 都监督 solver probability，数据目录 `data/`
+- `v5_s1_mse`: supervised MSE baseline，仅监督最后一个 refinement step，数据目录 `data/`
+
+数据生成与评估默认使用 `generate_no_guess_board()`。`generate_self_validated_board()` 允许 safe hint，只能用于显式标注的 hint-solvable 探索，不得作为主训练/评估 benchmark。项目默认假设 `data/` 下的训练和评估数据均为 no-guess。
+
+项目 no-guess 合同以本仓库的 `ProbabilitySolver` 为准：生成出的棋盘必须能在每一步找到 `P(mine)=0` 的 covered cell，直到胜利。外部生成器声称 no-guess 但本 solver 无法无猜推进的棋盘会被拒绝。
 
 ### 使用方式
 
@@ -257,7 +263,7 @@ TrainingRecipe: {name, phases: [RecipePhase, ...]}
 # 查看 recipe 内容
 uv run python3 scripts/train.py --recipe v5_s1 --dry_run
 
-# 执行完整 recipe（多阶段自动编排）
+# 执行 recipe（当前 v5_s1 为单阶段）
 uv run python3 scripts/train_stage.py --recipe v5_s1 --arch V5
 
 # 单 phase 执行（调试用）
@@ -267,7 +273,7 @@ uv run python3 scripts/train.py --recipe v5_s1 --arch V5
 ### 设计原则
 1. Recipe 与 stage 并存，`--recipe` 优先于 `--stage`/`--mode`/`--loss_type`
 2. 不传 `--recipe` 时完全向后兼容
-3. `train_stage.py` 自动编排多 phase 顺序执行，每 phase 后自动评估
+3. `train_stage.py` 自动编排 recipe phase 顺序执行，每 phase 后自动评估
 4. Pretrained checkpoint 链自动解析（phase N 默认继承 phase N-1 的 best_model.pt）
 
 ---

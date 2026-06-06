@@ -85,7 +85,7 @@ python scripts/evaluate.py checkpoints/S1/best_model.pt \
 - **Checkpoint 目录**: `checkpoints/{stage}/` (如 `S1`, `S3`, `rl`)
 - **数据目录**: `data/{stage}/` (如 `data/S1/`, `data/mixed/`)
 - **RL Pool**: `rl_boards_{W}x{H}_{M}.npz` (如 `rl_boards_10x10_40.npz`)
-- **并行生成数据**: `data/training/` (默认输出)
+- **并行生成数据**: `data/` (默认输出，严格 no-guess)
 - **gitignore**: `data/` 和 `checkpoints/` 均不入库
 
 ## 安全规则

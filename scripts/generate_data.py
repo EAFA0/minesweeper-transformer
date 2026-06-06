@@ -1,6 +1,6 @@
 # pyright: reportMissingImports=false
 # Minesweeper Transformer — Training Data Generation (Probability Distillation)
-# Usage: python scripts/generate_data.py [--n_samples 1000] [--output data/training]
+# Usage: python scripts/generate_data.py [--n_samples 1000] [--output data]
 
 import argparse
 import json
@@ -71,6 +71,7 @@ def generate_training_data_parallel(
             if result is not None:
                 total_generated += 1
                 total_steps += len(result["actions"])
+                total_ambiguous += int(result.get("ambiguous_steps", 0))
                 writer.append(result)
                 if pbar:
                     pbar.update(1)
@@ -124,8 +125,8 @@ def main():
     )
     parser.add_argument("--n_samples", type=int, default=10000,
                         help="Number of game trajectories to generate (default: 10000)")
-    parser.add_argument("--output", type=Path, default="data/training",
-                        help="Output directory (default: data/training)")
+    parser.add_argument("--output", type=Path, default="data",
+                        help="Output directory (default: data)")
     parser.add_argument("--width", type=int, default=8, help="Board width (default: 8)")
     parser.add_argument("--height", type=int, default=8, help="Board height (default: 8)")
     parser.add_argument("--mines", type=int, default=10, help="Number of mines (default: 10)")

@@ -15,7 +15,7 @@ import numpy as np
 import torch
 
 from config import POLICY
-from data.self_validated import generate_self_validated_board
+from data.no_guess import generate_no_guess_board
 from game.constants import GameStatus, MoveType, DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_MINES
 from game.game import MinesweeperGame
 from model.architecture import MinesweeperTransformer, ModelConfig
@@ -40,7 +40,17 @@ def pick_action(
     channels = game.board_to_channels()
     with torch.no_grad():
         x = torch.from_numpy(channels).unsqueeze(0).to(device)
-        probs = model.predict(x, max_refine_steps=refine_steps)
+        if refine_steps <= 1:
+            probs = model.predict(x, max_refine_steps=1)
+            n_refine_steps = 1
+        else:
+            refine_results = model.refine(
+                x,
+                num_steps=refine_steps,
+                convergence_epsilon=POLICY.refinement.convergence_eps,
+            )
+            probs = refine_results[-1]
+            n_refine_steps = len(refine_results)
         
         probs_2d = probs.squeeze(0)  # (H, W) or (1, H, W)
         if probs_2d.dim() == 3:
@@ -54,7 +64,7 @@ def pick_action(
     masked_probs = np.where(covered, probs, 2.0)
     best_idx = np.argmin(masked_probs)
     best_r, best_c = divmod(int(best_idx), game.width)
-    return MoveType.REVEAL, best_r, best_c, refine_steps
+    return MoveType.REVEAL, best_r, best_c, n_refine_steps
 
 
 def play_one_game(
@@ -239,7 +249,7 @@ def _get_game(
 ) -> Optional[MinesweeperGame]:
     if pool:
         return pool.get_eval_game(idx, rng)
-    game = generate_self_validated_board(
+    game = generate_no_guess_board(
         width=width, height=height, total_mines=mines,
         rng=rng, max_attempts=200,
     )

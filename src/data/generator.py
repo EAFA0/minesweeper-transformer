@@ -37,9 +37,11 @@ def generate_trajectory(
     if rng is None:
         rng = np.random.default_rng()
 
-    # Generate self-validated board
-    from data.self_validated import generate_self_validated_board
-    game = generate_self_validated_board(width, height, total_mines, rng=rng)
+    # Generate a strict no-guess board. Do not use self_validated here:
+    # self_validated allows safe hints when stuck, which contaminates the
+    # supervised/eval benchmark with guess-required states.
+    from data.no_guess import NO_GUESS_EPS, generate_no_guess_board
+    game = generate_no_guess_board(width, height, total_mines, rng=rng)
     if game is None:
         return None
         
@@ -49,6 +51,7 @@ def generate_trajectory(
         "mines": mine_mask.copy(),
         "actions": [],
         "masks": [],
+        "ambiguous_steps": 0,
     }
     if compute_probs:
         traj["probs"] = []
@@ -64,6 +67,10 @@ def generate_trajectory(
             traj["probs"].append(probs.astype(np.float32))
             
         masked_probs = np.where(covered, probs, 2.0)
+        if float(masked_probs.min()) > NO_GUESS_EPS:
+            traj["ambiguous_steps"] += 1
+            return None
+
         best_idx = int(np.argmin(masked_probs))
         r, c = divmod(best_idx, width)
         
@@ -97,6 +104,7 @@ def generate_training_data(
     total_saved = 0
     total_attempts = 0
     total_steps = 0
+    total_ambiguous = 0
     start_time = time.time()
     
     while total_saved < n_samples:
@@ -106,6 +114,7 @@ def generate_training_data(
             writer.append(traj)
             total_saved += 1
             total_steps += len(traj["actions"])
+            total_ambiguous += int(traj.get("ambiguous_steps", 0))
             if total_saved % samples_per_file == 0:
                 print(f"Generated {total_saved}/{n_samples} trajectories...")
                 
@@ -118,13 +127,16 @@ def generate_training_data(
         total_attempts += existing_stats.get("attempts", 0)
         total_saved += existing_stats.get("generated", 0)
         total_steps += existing_stats.get("total_steps", 0)
+        total_ambiguous += existing_stats.get("total_ambiguous_cells", 0)
         duration += existing_stats.get("elapsed_seconds", 0.0)
 
     return {
         "generated": total_saved,
         "attempts": total_attempts,
         "total_steps": total_steps,
+        "total_ambiguous_cells": total_ambiguous,
         "avg_steps_per_game": total_steps / max(1, total_saved),
+        "avg_ambig_per_game": total_ambiguous / max(1, total_saved),
         "elapsed_seconds": duration,
         "output_files": writer.file_idx,
     }

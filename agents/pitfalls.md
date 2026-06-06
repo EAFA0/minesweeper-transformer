@@ -23,24 +23,24 @@
 - **正确做法**: 训练机上统一用 `source .venv/bin/activate`
 - **记录日期**: 2026-05-30
 
-## 坑 #4: confidence 头被清零导致 RL 退化
+## 坑 #4: 未监督 confidence 头污染 refinement
 
-- **症状**: 旧混合 checkpoint 监督训练 94% → RL 微调后暴跌至 73%
-- **原因**: checkpoint 迁移时 `model.load_state_dict(checkpoint)` 与当前模型结构不匹配，confidence 头 (channel 1) 的权重被清零
-- **正确做法**: 严格匹配模型结构和 checkpoint 的 key 列表；训练前打印 `model.state_dict().keys()` 验证
-- **记录日期**: 2026-05-30
+- **症状**: 胜率低、refinement 行为不可解释，日志显示的步数与真实 early-stop 行为可能不一致
+- **原因**: confidence channel 没有监督信号，却被用于控制 early-stop；旧 checkpoint 迁移还可能让该通道随机或清零
+- **正确做法**: V5 只保留 1ch mine logit；提前退出统一使用 `max|P_t - P_{t-1}| < convergence_eps`
+- **记录日期**: 2026-06-06
 
 ## 坑 #5: 数据目录混乱
 
 - **症状**: `train_stage.py` 报 "Data already exists" 但数据不完整（曾被中途 kill）
-- **原因**: 多进程/单进程生成到不同目录 (`data/S1/` vs `data/training/`)，`--force_data` 检查逻辑可能误判
-- **正确做法**: 生成数据时指定正确的 `--output`，与 `train_stage.py` 期望的目录一致
+- **原因**: 多进程/单进程生成到不同目录 (`data/S1/` vs `data/`)，`--force_data` 检查逻辑可能误判
+- **正确做法**: 主线训练统一使用 `data/`；`data/` 下默认全是 no-guess 样本，不要混入 hint-solvable 数据
 - **记录日期**: 2026-05-30
 
 ## 预防原则
 
 1. **操作前检查环境**: `nvidia-smi`, `ps aux`, `ls data/`
-2. **统一数据目录**: 分阶段训练用 `data/{stage}/` 而非 `data/training/`
+2. **统一数据目录**: 主线训练用 `data/`，并保证默认生成器只产 no-guess 数据
 3. **验证 checkpoint**: 训练完成后立即评估，确认效果
 4. **git 为唯一真相源**: 本地改代码 → push → 训练机 pull
 
@@ -88,6 +88,13 @@
 ## 坑 #11: V4 架构缺少 grounding 和残差 — 状态漂移导致高密度失败
 
 > **状态**: 已解决。V4 latent loop 路线已废弃，V5 使用显式反馈 + constraint channels 替代。
+
+## 坑 #12: self_validated 不是 no-guess
+
+- **症状**: S1 胜率卡在 80% 左右，`ProbabilitySolver` oracle 也到不了 99%
+- **原因**: `generate_self_validated_board()` 的验证过程允许 safe hint，它生成的是 hint-solvable board，不是严格 no-guess board
+- **正确做法**: 主训练/评估默认使用 `generate_no_guess_board()`；该函数必须通过本项目 `ProbabilitySolver` 无猜验证；eval cache 使用 `eval_boards_{W}x{H}_{M}.npz`；`self_validated` 只能用于明确标注的 hint-solvable 实验
+- **记录日期**: 2026-06-06
 
 - **症状**: 6×6/18 (50%密度) Online BCE 胜率 6.5%，蒸馏 BCE 胜率 12%；格点准确率峰值 82.5%，远低于所需 99%+
 - **根因排查**: 审计 V4 代码发现两个设计缺陷：

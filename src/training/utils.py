@@ -33,7 +33,7 @@ def model_forward(
     Returns (B, 1, H, W) sigmoid'd mine probabilities.
     """
     results = model.refine(x, num_steps=refine_steps, return_logits=True)
-    raw = results[-1]                     # (B, 2, H, W) raw logits
+    raw = results[-1]                     # (B, 1, H, W) raw mine logits
     return torch.sigmoid(raw[:, 0:1])     # (B, 1, H, W) mine probs
 
 

@@ -37,6 +37,7 @@ def run(cmd, desc=""):
 
 def _build_train_cmd(phase, arch: str, device: str, extra: dict | None = None) -> list[str]:
     """Build a train.py command from a RecipePhase."""
+    data_dir = extra.get("data_dir") if extra and extra.get("data_dir") else phase.data_dir
     cmd = [
         *PYTHON_CMD, "scripts/train.py",
         "--mode", phase.mode,
@@ -46,6 +47,7 @@ def _build_train_cmd(phase, arch: str, device: str, extra: dict | None = None) -
         "--n_games", str(phase.n_games),
         "--lr", str(phase.lr),
         "--save_dir", phase.save_dir,
+        "--data_dir", data_dir,
         "--board_width", str(phase.board_width),
         "--board_height", str(phase.board_height),
         "--board_mines", str(phase.board_mines),
@@ -54,8 +56,6 @@ def _build_train_cmd(phase, arch: str, device: str, extra: dict | None = None) -
     if phase.pretrained:
         cmd.extend(["--pretrained", phase.pretrained])
     if extra:
-        if extra.get("data_dir"):
-            cmd.extend(["--data_dir", extra["data_dir"]])
         if extra.get("resume_from"):
             cmd.extend(["--resume_from", extra["resume_from"]])
     return cmd
@@ -122,6 +122,7 @@ def run_recipe(recipe_name: str, args):
             refinement_steps=phase.refinement_steps,
             pretrained=pretrained,
             save_dir=phase.save_dir,
+            data_dir=phase.data_dir,
             desc=phase.desc,
         )
 

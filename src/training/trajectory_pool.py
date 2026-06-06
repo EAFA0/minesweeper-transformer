@@ -16,6 +16,8 @@ import torch
 from game.game import MinesweeperGame
 
 class TrajectoryPool:
+    eval_cache_prefix = "eval_boards"
+
     def _load_eval_file(self, p: Path):
         try:
             data = np.load(p, allow_pickle=True)
@@ -86,7 +88,7 @@ class TrajectoryPool:
             
         if p.is_dir():
             if self.eval_mode:
-                eval_file = p / f"eval_boards_{self.width}x{self.height}_{self.mines}.npz"
+                eval_file = p / f"{self.eval_cache_prefix}_{self.width}x{self.height}_{self.mines}.npz"
                 if eval_file.exists() and eval_file not in self._loaded_files:
                     self._load_eval_file(eval_file)
                     self._loaded_files.add(eval_file)
@@ -186,8 +188,8 @@ class TrajectoryPool:
             )
             
         # 2. Generate new deterministic game
-        from data.self_validated import generate_self_validated_board
-        game = generate_self_validated_board(
+        from data.no_guess import generate_no_guess_board
+        game = generate_no_guess_board(
             width=self.width, height=self.height, total_mines=self.mines,
             rng=rng, max_attempts=200
         )
@@ -222,10 +224,11 @@ class TrajectoryPool:
             
         p = Path(self.data_dir)
         # Avoid overwriting training data npz, use a specific name for eval cache
-        if p.is_dir():
-            out_path = p / f"eval_boards_{self.width}x{self.height}_{self.mines}.npz"
-        else:
+        if p.suffix == ".npz":
             out_path = p
+        else:
+            p.mkdir(parents=True, exist_ok=True)
+            out_path = p / f"{self.eval_cache_prefix}_{self.width}x{self.height}_{self.mines}.npz"
             
         save_dict = {}
         for i, traj in enumerate(self._offline_buffer):

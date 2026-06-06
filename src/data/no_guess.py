@@ -1,16 +1,19 @@
-"""ms-toollib integration for no-guess board generation.
+"""No-guess board generation.
 
-Provides guaranteed solvable boards via ms-toollib's laymine_solvable.
-Falls back to constraint-solver-based filtering when ms-toollib fails
-(e.g., at very high mine density).
+The project-level no-guess contract is stricter than "solvable by some
+external solver": a generated board must be solvable by this repository's
+ProbabilitySolver without ever selecting a non-zero mine-probability cell.
 """
 
 from typing import Optional
 
 import numpy as np
 
-from game.constants import MoveType, DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_MINES
+from game.constants import GameStatus, MoveType, DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_MINES
 from game.game import MinesweeperGame
+
+
+NO_GUESS_EPS = 1e-6
 
 
 def generate_no_guess_board(
@@ -72,7 +75,8 @@ def generate_no_guess_board(
         # Make first click — guaranteed safe by ms-toollib
         game.make_move(r, c, MoveType.REVEAL)
 
-        return game
+        if is_solver_no_guess(game):
+            return game
 
     # All attempts exhausted
     if max_attempts > 0:
@@ -123,3 +127,35 @@ def _generate_fallback(
             return game
 
     return None
+
+
+def is_solver_no_guess(game: MinesweeperGame, max_steps: int = 300) -> bool:
+    """Return True if ProbabilitySolver can finish the board without guessing."""
+    from game.probability_solver import ProbabilitySolver
+
+    probe = MinesweeperGame.from_mine_mask(
+        game.width,
+        game.height,
+        game.get_mine_mask(),
+        first_done=True,
+        visible=game.visible.copy(),
+    )
+
+    steps = 0
+    while probe.status == GameStatus.PLAYING and steps < max_steps:
+        probs = ProbabilitySolver(probe).compute_probabilities()
+        covered = probe.covered_cells
+        if not covered.any():
+            return True
+
+        safe_mask = covered & (probs <= NO_GUESS_EPS)
+        if not safe_mask.any():
+            return False
+
+        for r, c in zip(*np.where(safe_mask)):
+            if probe.status != GameStatus.PLAYING:
+                break
+            probe.make_move(int(r), int(c), MoveType.REVEAL)
+        steps += 1
+
+    return probe.status == GameStatus.WON

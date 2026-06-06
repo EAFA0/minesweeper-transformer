@@ -93,6 +93,9 @@ def train_supervised(
         mines = config.board_mines
         pos_weight_val = (total_cells - mines) / max(mines, 1)
         print(f"BCE Loss with binary (ground-truth) targets, pos_weight={pos_weight_val:.2f}")
+    elif config.loss_type == "deep_mse":
+        pos_weight_val = None
+        print("Deep-MSE Loss with solver probability targets at every refinement step")
     else:
         pos_weight_val = None
         print("MSE Loss with solver probability targets (distillation)")
@@ -125,17 +128,29 @@ def train_supervised(
             targets = targets.to(device)
             masks = masks.to(device)
 
-            # 2. Forward pass. BCE uses raw logits; MSE uses probabilities.
-            if config.loss_type == "bce":
+            # 2. Forward pass. BCE uses raw logits; MSE variants use probabilities.
+            if config.loss_type == "deep_mse":
+                refine_logits = model.refine(
+                    channels, num_steps=config.refinement_steps, return_logits=True
+                )
+                step_losses = []
+                for logits in refine_logits:
+                    step_preds = torch.sigmoid(logits)[:, 0]
+                    step_losses.append(
+                        compute_loss("mse", step_preds, targets, masks, pos_weight_val, device)
+                    )
+                loss = torch.stack(step_losses).mean()
+                preds = torch.sigmoid(refine_logits[-1])[:, 0]
+            elif config.loss_type == "bce":
                 preds = model_forward_logits(
                     arch, model, channels, config.refinement_steps
                 )
+                preds = preds[:, 0]  # (B, H, W)
+                loss = compute_loss(config.loss_type, preds, targets, masks, pos_weight_val, device)
             else:
                 preds = model_forward(arch, model, channels, config.refinement_steps)
-            preds = preds[:, 0]  # (B, H, W)
-
-            # 3. Loss
-            loss = compute_loss(config.loss_type, preds, targets, masks, pos_weight_val, device)
+                preds = preds[:, 0]  # (B, H, W)
+                loss = compute_loss(config.loss_type, preds, targets, masks, pos_weight_val, device)
             
             # 4. Backward
             optimizer.zero_grad()

@@ -19,6 +19,7 @@ def _print_recipe_dry_run(recipe_name: str) -> None:
         if phase.pretrained:
             print(f"    pretrained={phase.pretrained}")
         print(f"    save_dir={phase.save_dir}")
+        print(f"    data_dir={phase.data_dir}")
 
 
 def main():
@@ -33,8 +34,8 @@ def main():
                    help="Training recipe name (e.g. v5_s1). Overrides --stage/--mode/--loss_type.")
     p.add_argument("--arch", type=str, default="V5", choices=["V5"],
                    help="Architecture version to use")
-    p.add_argument("--loss_type", type=str, default="bce", choices=["bce", "mse"],
-                   help="Loss function: bce (binary cross-entropy on ground-truth mines) or mse (probability distillation)")
+    p.add_argument("--loss_type", type=str, default="bce", choices=["bce", "mse", "deep_mse"],
+                   help="Loss function: bce, mse, or deep_mse")
     p.add_argument("--device", default="auto")
     p.add_argument("--dry_run", action="store_true",
                    help="Print recipe phases without training (requires --recipe)")
@@ -94,6 +95,8 @@ def main():
         if args.stage:
             from config.stage_config import apply_stage_config
             apply_stage_config(config, args.stage)
+
+        config.mode = args.mode
 
         if args.n_games is not None:
             config.n_games = args.n_games

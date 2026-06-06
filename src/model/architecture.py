@@ -148,7 +148,7 @@ class MinesweeperTransformer(nn.Module):
 
     Single-pass (refinement_steps=1):
         Input:  (B, 10, H, W)
-        Output: (B, 2, H, W) — raw logits [mine, confidence]
+        Output: (B, 1, H, W) — raw mine logits
 
     Iterative refinement (refinement_steps=N):
         Internally feeds own output back as prev_probs + constraint channels,
@@ -183,7 +183,7 @@ class MinesweeperTransformer(nn.Module):
             dropout=config.dropout,
         )
 
-        self.output_head = nn.Conv2d(config.d_model, 2, kernel_size=1)
+        self.output_head = nn.Conv2d(config.d_model, 1, kernel_size=1)
 
     def _single_pass(
         self,
@@ -209,7 +209,7 @@ class MinesweeperTransformer(nn.Module):
         return self._single_pass(x, prev)
 
     def refine(self, board: torch.Tensor, num_steps: int = 5,
-               confidence_threshold: float = 0.95,
+               convergence_epsilon: float = 0.01,
                return_logits: bool = False) -> List[torch.Tensor]:
         B, _, H, W = board.shape
         probs = torch.full((B, 1, H, W), 0.5, device=board.device, dtype=board.dtype)
@@ -217,19 +217,20 @@ class MinesweeperTransformer(nn.Module):
 
         for _ in range(num_steps):
             raw = self._single_pass(board, probs)
+            mine_logits = raw[:, 0:1]
+            mine_prob = torch.sigmoid(mine_logits)
 
             if return_logits:
-                results.append(raw)
+                results.append(mine_logits)
             else:
-                mine_prob = torch.sigmoid(raw[:, 0:1])
-                conf_prob = torch.sigmoid(raw[:, 1:2])
-                results.append(torch.cat([mine_prob, conf_prob], dim=1))
-
-            probs = torch.sigmoid(raw[:, 0:1])
+                results.append(mine_prob)
 
             if not self.training and not return_logits:
-                if conf_prob.mean() > confidence_threshold:
+                delta = (mine_prob - probs).abs().amax()
+                if delta < convergence_epsilon:
                     break
+
+            probs = mine_prob
 
         return results
 

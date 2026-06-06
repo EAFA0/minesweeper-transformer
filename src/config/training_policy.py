@@ -16,7 +16,7 @@ class RefinementPolicy:
     """
 
     train_max_steps: int = 4
-    eval_max_steps: int = 4     # Deep Inference: allow up to 16 steps
+    eval_max_steps: int = 4     # Match training by default; raise explicitly for deep inference
     convergence_eps: float = 0.01  # stop when max|ΔP| < 1%
 
 
