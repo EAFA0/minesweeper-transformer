@@ -94,10 +94,9 @@ src/
   training/        训练循环（MSE + online BCE）+ 共享评估模块
 
 scripts/
-  train.py           统一训练入口 (支持 --loss_type bce|mse)
-  train_stage.py     分阶段编排 (S1→S2→S3)
+  train.py           统一训练入口 (支持 --loss_type bce|mse, --recipe)
+  train_stage.py     分阶段编排 (S1→S2→S3, --recipe)
   evaluate.py        独立评估 CLI
-  archived/          RL 代码（已归档）
 ```
 
 ## 文档体系
@@ -113,4 +112,4 @@ scripts/
 
 - 使用 `uv` 管理依赖，所有命令通过 `uv run python3 scripts/...` 执行。
 - `data/`、`checkpoints/`、eval board pool 文件不入库。
-- RL 代码已归档至 `scripts/archived/`，优先用监督/online BCE 复现 99%+ 胜率。
+- 旧架构 (V1/V1_5/V4) 和 RL 代码已从 main 移除，历史追溯使用 git。

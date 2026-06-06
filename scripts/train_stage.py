@@ -238,7 +238,7 @@ def main():
     p.add_argument("--resume", action="store_true")
     p.add_argument("--device", type=str, default="auto")
     p.add_argument("--mode", type=str, default="online", choices=["online", "supervised"])
-    p.add_argument("--arch", type=str, default="V4", choices=["V1", "V1_5", "V4", "V5"])
+    p.add_argument("--arch", type=str, default="V5", choices=["V5"])
     p.add_argument("--data_dir", type=str, default=None)
     p.add_argument("--eval_games", type=int, default=200)
     p.add_argument("--eval", nargs=3, type=int, metavar=("W", "H", "M"), default=None)

@@ -1,7 +1,6 @@
 """Shared training utilities — model construction, forward pass, loss, checkpointing.
 
-Used by both online (train.py) and offline (train_supervised.py) training loops
-to eliminate duplicated arch/loss dispatch logic.
+Used by both online (train.py) and offline (train_supervised.py) training loops.
 """
 
 from pathlib import Path
@@ -15,71 +14,41 @@ from config import ModelConfig
 
 # ── Model Construction ──────────────────────────────────────────────────────
 
-def build_model(arch: str, model_config: ModelConfig, device: torch.device) -> nn.Module:
+def build_model(arch: str, model_config: ModelConfig, device: torch.device) -> nn.Module:  # noqa: ARG001
     """Instantiate the model for a given architecture version."""
-    if arch == "V1":
-        from model.architecture_v1 import MinesweeperTransformerV1
-        return MinesweeperTransformerV1(model_config).to(device)
-    elif arch == "V1_5":
-        from model.architecture_v1_5 import MinesweeperTransformerV1_5
-        return MinesweeperTransformerV1_5(model_config).to(device)
-    elif arch == "V5":
-        from model.architecture_v5 import MinesweeperTransformerV5
-        return MinesweeperTransformerV5(model_config).to(device)
-    else:
-        from model.architecture import MinesweeperTransformer
-        return MinesweeperTransformer(model_config).to(device)
+    from model.architecture import MinesweeperTransformer
+    return MinesweeperTransformer(model_config).to(device)
 
 
 # ── Forward Pass ────────────────────────────────────────────────────────────
 
 def model_forward(
-    arch: str,
+    arch: str,  # noqa: ARG001
     model: nn.Module,
     x: torch.Tensor,
     refine_steps: int,
 ) -> torch.Tensor:
-    """Unified forward pass across all architectures.
+    """Unified forward pass.
 
     Returns (B, 1, H, W) sigmoid'd mine probabilities.
     """
-    if arch == "V1":
-        logits = model.forward(x)            # (B, 1, H, W) raw logits
-        return torch.sigmoid(logits)
-
-    elif arch in {"V1_5", "V5"}:
-        results = model.refine(x, num_steps=refine_steps, return_logits=True)
-        raw = results[-1]                     # (B, 2, H, W) raw logits
-        return torch.sigmoid(raw[:, 0:1])     # (B, 1, H, W) mine probs
-
-    else:  # V4
-        results = model.refine(x, num_steps=refine_steps)
-        return results[-1][:, 0:1]            # (B, 1, H, W) sigmoid'd mine probs
+    results = model.refine(x, num_steps=refine_steps, return_logits=True)
+    raw = results[-1]                     # (B, 2, H, W) raw logits
+    return torch.sigmoid(raw[:, 0:1])     # (B, 1, H, W) mine probs
 
 
 def model_forward_logits(
-    arch: str,
+    arch: str,  # noqa: ARG001
     model: nn.Module,
     x: torch.Tensor,
     refine_steps: int,
 ) -> torch.Tensor:
     """Unified forward pass for BCE loss.
 
-    Returns raw mine logits with shape (B, 1, H, W). Use this only for
-    numerically stable BCEWithLogits loss; action selection and MSE use
-    model_forward() probabilities.
+    Returns raw mine logits with shape (B, 1, H, W).
     """
-    if arch == "V1":
-        return model.forward(x)
-
-    if arch in {"V1_5", "V5"}:
-        results = model.refine(x, num_steps=refine_steps, return_logits=True)
-        return results[-1][:, 0:1]
-
-    if hasattr(model, "forward_logits"):
-        return model.forward_logits(x, num_refine_steps=refine_steps)[:, 0:1]
-
-    raise ValueError(f"Architecture {arch} does not expose raw logits for BCE loss")
+    results = model.refine(x, num_steps=refine_steps, return_logits=True)
+    return results[-1][:, 0:1]
 
 
 # ── Loss Computation ────────────────────────────────────────────────────────

@@ -1,5 +1,12 @@
 ## [未发布] - 2026-06-06
 
+### V5 单架构清理
+- **删除旧模型**: `architecture_v1.py`, `architecture_v1_5.py`, `architecture_v5.py` 已删除。V5 提升为唯一 `architecture.py`，类名 `MinesweeperTransformer`。
+- **删除 archived 脚本**: `scripts/archived/` 目录已删除。RL 和旧训练脚本历史追溯使用 git。
+- **CLI 收敛**: `--arch` 默认值从 V4 改为 V5，choices 仅保留 `["V5"]`。
+- **训练/评估去分支**: `train.py` 移除 V1/V4 分支，`evaluate.py` 的 `load_model()` 移除 arch 分发，`utils.py` 的 `build_model()`/`model_forward()` 简化为 V5-only。
+- **文档同步**: AGENTS.md、README.md、architecture.md、conventions.md、metrics.md、training-log.md、docs/README.md 均已更新。
+
 ### 训练 Recipe 系统
 - **新增 `src/config/recipe_config.py`**: `RecipePhase` + `TrainingRecipe` dataclass，将训练策略抽象为可命名的多阶段 recipe。
 - **预定义 `v5_s1` recipe**: MSE warmup (supervised, 8×8/10) → online BCE finetune，替代手动组合 `--mode`/`--loss_type`。

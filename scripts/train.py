@@ -31,7 +31,7 @@ def main():
                    help="Training stage (e.g. S1, S2, S3). Applies stage-specific board/optimizer configs.")
     p.add_argument("--recipe", type=str, default=None,
                    help="Training recipe name (e.g. v5_s1). Overrides --stage/--mode/--loss_type.")
-    p.add_argument("--arch", type=str, default="V4", choices=["V1", "V1_5", "V4", "V5"],
+    p.add_argument("--arch", type=str, default="V5", choices=["V5"],
                    help="Architecture version to use")
     p.add_argument("--loss_type", type=str, default="bce", choices=["bce", "mse"],
                    help="Loss function: bce (binary cross-entropy on ground-truth mines) or mse (probability distillation)")

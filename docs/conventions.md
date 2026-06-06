@@ -58,9 +58,8 @@ python scripts/train_stage.py --stage S3 --eval 10 10 40  # 零样本评估
 # 历史/实验阶段
 python scripts/train_stage.py --legacy_stage S1.5
 
-# RL (已归档至 scripts/archived/)
-python scripts/archived/generate_rl_pool.py --width 10 --height 10 --mines 40 --target_size 12000 --workers 16
-python scripts/archived/train_rl.py --pretrained checkpoints/S3/best_model.pt --width 10 --height 10 --mines 40
+# Recipe 模式
+python scripts/train_stage.py --recipe v5_s1 --arch V5
 
 # 直接调 train.py（调试用）
 # Online BCE（自我探索，默认）
@@ -108,4 +107,4 @@ python scripts/evaluate.py checkpoints/S1/best_model.pt \
 
 ---
 
-*最后更新: 2026-06-01*
+*最后更新: 2026-06-06 (V5 单架构清理, archived 移除)*

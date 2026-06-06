@@ -251,20 +251,9 @@ def _get_game(
 def load_model(checkpoint_path: str, device: torch.device):
     """Load a trained model from checkpoint."""
     ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
-    arch_version = ckpt.get("arch_version", "V4")
     model_config = ckpt.get("model_config", ModelConfig())
 
-    if arch_version == "V1":
-        from model.architecture_v1 import MinesweeperTransformerV1
-        model = MinesweeperTransformerV1(model_config).to(device)
-    elif arch_version == "V1_5":
-        from model.architecture_v1_5 import MinesweeperTransformerV1_5
-        model = MinesweeperTransformerV1_5(model_config).to(device)
-    elif arch_version == "V5":
-        from model.architecture_v5 import MinesweeperTransformerV5
-        model = MinesweeperTransformerV5(model_config).to(device)
-    else:
-        model = MinesweeperTransformer(model_config).to(device)
+    model = MinesweeperTransformer(model_config).to(device)
 
     state_dict = ckpt["model_state_dict"] if "model_state_dict" in ckpt else ckpt
     model.load_state_dict(state_dict, strict=True)

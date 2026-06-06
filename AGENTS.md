@@ -28,7 +28,7 @@
 ## 🚦 项目现状
 
 - **当前路线**: Online BCE 三阶段训练 — S1(规则) → S2(密度) → S3(高密度泛化)
-- **最新结果**: S3 (8×8/25雷) 零样本 10×10/40 曾达 74%；后续目标为复现 99%+ 胜率，再考虑 RL
+- **当前架构**: V5 (constraint residual channels, 15 input channels)
 - **训练设备**: RTX 4070 SUPER (CUDA)，ssh ubuntu@FAEX1.local
 - **开发环境**: 本机 Linux + uv 包管理
 - **全局策略**: `src/config/training_policy.py` 统一训练/RL/评估 refine 与 reward 默认值
@@ -48,15 +48,15 @@
 
 | 模块 | 路径 | 说明 |
 |------|------|------|
-| 模型架构 | `src/model/architecture.py` | CNN + Transformer + Refinement (V4: grounding + residual) |
+| 模型架构 | `src/model/architecture.py` | CNN + Transformer + constraint residual refinement (V5) |
 | 全局策略 | `src/config/training_policy.py` | 统一 refine 默认策略 |
 | 训练核心 | `src/training/train.py` | Online BCE (frontier loss, 全 BPTT) |
 | 棋盘池 | `src/training/trajectory_pool.py` | TrajectoryPool (统一数据管道: online & offline) |
 | 评估核心 | `src/training/evaluate.py` | 模型评估循环逻辑 |
 | 评估 | `scripts/evaluate.py` | 独立评估 CLI |
 | **训练** | `scripts/train.py` | 训练入口 |
-| **分阶段** | `scripts/train_stage.py` | S1→S2→S3 编排 |
-| RL/旧代码 | `scripts/archived/` | RL、MSE 监督训练、data gen 等 |
+| **分阶段** | `scripts/train_stage.py` | S1→S2→S3 编排 + recipe 模式 |
+| **Recipe** | `src/config/recipe_config.py` | 训练 recipe 定义 (MSE warmup → BCE finetune) |
 
 ## 🎯 Agent 开发约束
 

@@ -46,55 +46,48 @@
 理由:
 1. One-hot 数字通道让 CNN 可以独立学习每种数字的邻域模式
 2. 简化设计，移除 `mines_remaining_ratio` 以降低初始训练复杂度
-3. 10 通道更符合当前 V4 架构的输入层定义
+3. 10 通道符合当前 V5 架构的输入层定义
 
 ---
 
-## ADR-003: 模型架构 (CNN + Transformer 混合 V4)
+## ADR-003: 模型架构 (CNN + Transformer 混合 V5)
 
-- **状态**: ✅ 接受
-- **日期**: 2026-05-27 (更新: 2026-06-04)
+- **状态**: ✅ 接受 (V5 为唯一活跃架构)
+- **日期**: 2026-05-27 (原始), 2026-06-06 (V5 单架构清理)
 
 ### 背景
 扫雷同时需要局部模式识别（CNN 擅长的数字-邻域关系）和全局约束推理（Transformer 擅长的远距离依赖）。
 
-### 决策
-CNN (3层 3×3 Conv, 64ch) → InterpolatablePE → Transformer (4层, d=64, 4头) → 1ch 输出。
+### 当前架构: V5 Constraint Residual
+CNN (3层 3×3 Conv, 64ch) → InterpolatablePE → Transformer (4层, d=64, 4头) → 2ch 输出 (mine + confidence)。
 
-理由:
-1. **CNN 编码器 (Once)**: CNN 只在初始阶段运行一次，将 10 通道棋盘编码为 64 维特征图。
-2. **Transformer 隐式记忆 (Loop)**: Transformer 在 64 维 `mem_state` 上进行 N 次自循环迭代。
-3. **解码器**: 1x1 Conv (bias=True) 将最终 `mem_state` 映射为雷概率。
+输入: 10 board + 1 prev_probs + 4 constraint channels = 15 channels
 
-### V4 改进与消融实验 (2026-06-04 实施, 2026-06-05 消融)
+### 历史架构对比 (已从 main 移除)
 
-| 实验 | 改动 | S1 胜率 | action_acc |
-|------|------|---------|------------|
-| baseline | V4 原始 (1ch, 无 LayerNorm, features_seq 注入) | 63.5% | 0.978 |
-| +2ch | DecoderHead 输出 2ch (mine+confidence) | 70.5% | 0.983 |
-| +LayerNorm | Transformer 末层加回 LayerNorm | 64.0% | 0.978 |
-| -features_seq | 移除 `_transformer_step` 中的 features_seq 注入 | 68.0% | 0.980 |
-| **V1_5 对照** | CNN 重跑 + prev_probs 显式反馈 | **83.0%** | **0.990** |
-| **V1 对照** | 无 refinement，单次前向 | **74.0%** | **0.985** |
+| 架构 | 描述 | 8×8/10 胜率 | 动作准确率 |
+|------|------|------------|-----------|
+| V1_5 | CNN 重跑 + prev_probs 显式反馈 | 83.0% | 0.990 |
+| V1 | 无 refinement | 74.0% | 0.985 |
+| V4 baseline | latent loop | 63.5% | 0.978 |
 
-**结论**: V4 的 latent loop refinement 在所有消融实验中均未超过 V1（无 refinement），说明 latent loop 不仅无益反而有害。根因是 Transformer 在抽象 latent 空间自循环，永远看不到 decoder 输出，无法进行矛盾检测和修正。V1_5 的显式反馈（每步 CNN 重跑 + prev_probs 作为输入通道）是当前唯一有效的 refinement 机制。
+V4 的 latent loop refinement 在所有消融实验中均未超过 V1（无 refinement），说明 latent loop 不仅无益反而有害。根因是 Transformer 在抽象 latent 空间自循环，永远看不到 decoder 输出，无法进行矛盾检测和修正。
 
-**V4 状态**: 代码保留但标记为实验性架构，不作为主力训练路线。
+V1/V1_5/V4 代码已从 main 移除，历史追溯使用 git。
 
 ---
 
 ## ADR-004: 迭代 Refinement
 
-- **状态**: 🔄 修订中 (V5 constraint residual 路线新增，V4 latent loop 路线废弃)
+- **状态**: ✅ 接受 (V5 constraint residual 为唯一活跃路线)
 - **日期**: 2026-05-28 (更新: 2026-06-06)
 
 ### 背景
 单次前向推理可能产生不一致的预测。迭代 refinement 让模型反复修正自己的预测。
 
 ### 决策
-- **主力实验路线 (V5)**: 保留 V1_5 的 `prev_probs` 显式反馈，并新增 4 个由棋盘规则直接计算的 constraint channels。每步 refinement 根据上一轮概率计算数字约束残差，再喂回 CNN + Transformer，全 BPTT。
-- **有效基线 (V1_5)**: 每步 refinement 将上一轮概率预测作为额外输入通道喂回 CNN，模型显式看到自己的预测与 board 的矛盾，学会修正。CNN 每步重跑，Transformer 每步重跑，全 BPTT。
-- **废弃路线 (V4 latent loop)**: CNN 只跑一次，Transformer 在抽象 latent 空间自循环，decoder 只在最后输出。消融实验表明此路线在所有变体中均未超过 V1（无 refinement），latent loop 不仅无益反而有害。
+- **主力路线 (V5)**: 保留 V1_5 的 `prev_probs` 显式反馈，并新增 4 个由棋盘规则直接计算的 constraint channels。每步 refinement 根据上一轮概率计算数字约束残差，再喂回 CNN + Transformer，全 BPTT。
+- **废弃路线 (V4 latent loop)**: CNN 只跑一次，Transformer 在抽象 latent 空间自循环。消融实验表明此路线在所有变体中均未超过 V1（无 refinement）。
 
 ### V5 constraint residual channels (2026-06-06)
 
@@ -128,19 +121,15 @@ residual = target_remaining - predicted
 |------|----------------|------|------------|
 | V1_5 | CNN 重跑 + prev_probs 显式反馈 | 83.0% | 0.990 |
 | V1 | 无 refinement | 74.0% | 0.985 |
-| V4 baseline | latent loop (1ch, 无 LN, +features_seq) | 63.5% | 0.978 |
-| V4 +2ch | latent loop + confidence 通道 | 70.5% | 0.983 |
-| V4 +LayerNorm | latent loop + Transformer 末层 LN | 64.0% | 0.978 |
-| V4 -features_seq | latent loop 移除 features_seq 注入 | 68.0% | 0.980 |
+| V4 baseline | latent loop | 63.5% | 0.978 |
 
 ### 根因分析
-V4 的 Transformer 在抽象 latent 空间自循环，永远看不到 decoder 输出，无法进行矛盾检测和修正。扫雷 refinement 的本质是矛盾检测（模型预测与 board 约束不一致 → 修正），这需要显式反馈回路。NLP 的 chain-of-thought 每步是显式 token，模型能看到自己的推理；V4 的 latent loop 相当于"闭着眼睛反复想"。
+V4 的 Transformer 在抽象 latent 空间自循环，永远看不到 decoder 输出，无法进行矛盾检测和修正。扫雷 refinement 的本质是矛盾检测（模型预测与 board 约束不一致 → 修正），这需要显式反馈回路。
 
 ### 当前策略
-- 主力实验架构: V5 (CNN 重跑 + prev_probs 反馈 + constraint residual channels)
-- 稳定基线: V1_5 (CNN 重跑 + prev_probs 反馈)
-- V4 代码保留但不作为训练路线
+- 主力架构: V5 (CNN 重跑 + prev_probs 反馈 + constraint residual channels)
 - 推理: `eval_max_steps=4` (与训练步数对齐)，通过 `max|ΔP| < 1e-2` 早停
+- 旧架构 (V1/V1_5/V4) 已从 main 移除，历史追溯使用 git
 
 ---
 

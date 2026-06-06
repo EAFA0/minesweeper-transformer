@@ -58,7 +58,7 @@ class TrainingContext:
     metrics: TrainingMetrics
     device: torch.device
     save_dir: Path
-    arch: str = "V4"
+    arch: str = "V5"
     start_game: int = 0
     best_win_rate: float = 0.0
     t0: float = 0.0
@@ -221,33 +221,16 @@ def _play_training_game(
         channels = game.board_to_channels()
         ch_t = torch.from_numpy(channels).unsqueeze(0).float().to(ctx.device)
 
-        # Full BPTT: CNN once → Transformer self-loop → Decoder (or V3 logic)
-        if ctx.arch == "V1":
-            pv_raw = ctx.model.forward(ch_t)    # V1: (B,1,H,W) logits
-            pv = torch.sigmoid(pv_raw)           # (B,1,H,W) probabilities
-            pv_logits = pv_raw
-
-        elif ctx.arch in {"V1_5", "V5"}:
-            # V1_5/V5: explicit feedback refinement with full BPTT
-            refine_results = ctx.model.refine(
-                ch_t, num_steps=config.refinement_steps,
-                return_logits=True
-            )
-            raw = refine_results[-1]             # (B, 2, H, W) raw logits
-            probs = torch.sigmoid(raw[:, 0:1])    # (B, 1, H, W) mine probs
-            conf = raw[:, 1:2]                    # (B, 1, H, W) conf logit
-            pv = torch.cat([probs, conf], dim=1)  # (B, 2, H, W)
-            pv_logits = raw
-
-        else:
-            # V4: iterative refinement with full BPTT (grounding + residual)
-            raw = ctx.model.forward_logits(
-                ch_t, num_refine_steps=config.refinement_steps
-            )
-            probs = torch.sigmoid(raw[:, 0:1])  # (B, 1, H, W) mine probs
-            conf = raw[:, 1:2]                  # (B, 1, H, W) conf logit
-            pv = torch.cat([probs, conf], dim=1)  # (B, 2, H, W)
-            pv_logits = raw
+        # Full BPTT: explicit feedback refinement with constraint channels
+        refine_results = ctx.model.refine(
+            ch_t, num_steps=config.refinement_steps,
+            return_logits=True
+        )
+        raw = refine_results[-1]             # (B, 2, H, W) raw logits
+        probs = torch.sigmoid(raw[:, 0:1])    # (B, 1, H, W) mine probs
+        conf = raw[:, 1:2]                    # (B, 1, H, W) conf logit
+        pv = torch.cat([probs, conf], dim=1)  # (B, 2, H, W)
+        pv_logits = raw
 
         # Action selection (no_grad)
         with torch.no_grad():
@@ -276,7 +259,7 @@ def _play_training_game(
     return game_loss / max(1, game_steps)
 
 
-def train(config: TrainingConfig, arch: str = "V4") -> TrainingMetrics:
+def train(config: TrainingConfig, arch: str = "V5") -> TrainingMetrics:
     """Online training: self-validated boards + chosen loss (BCE/MSE) + full BPTT.
 
     Uses a disk-backed board pool to avoid repeated solver calls.

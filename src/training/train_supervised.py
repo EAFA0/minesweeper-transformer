@@ -29,7 +29,7 @@ def train_supervised(
     config: TrainingConfig,
     model_cfg: ModelConfig,
     device: Optional[str] = None,
-    arch: str = "V4",
+    arch: str = "V5",
     run_dir: str = "",
 ):
     """Train the model offline using TrajectoryPool's batch()."""
