@@ -13,7 +13,7 @@ class RecipePhase:
     """A single phase within a training recipe."""
 
     mode: str = "online"          # "online" | "supervised"
-    loss_type: str = "bce"        # "bce" | "mse" | "deep_mse"
+    loss_type: str = "bce"        # "bce" | "mse" | "deep_mse" | "deep_mse_rank"
     n_games: int = 5000
     lr: float = 3e-4
     board_width: int = 8
@@ -49,6 +49,18 @@ RECIPES: Dict[str, TrainingRecipe] = {
             ),
         ],
     ),
+    "v5_s1_rank": TrainingRecipe(
+        name="v5_s1_rank",
+        phases=[
+            RecipePhase(
+                mode="supervised", loss_type="deep_mse_rank", n_games=5000,
+                board_width=8, board_height=8, board_mines=10,
+                lr=3e-4, save_dir="checkpoints/v5_s1_rank",
+                data_dir="data",
+                desc="S1 supervised Deep-MSE + best-safe ranking — 8x8/10",
+            ),
+        ],
+    ),
     "v5_curriculum": TrainingRecipe(
         name="v5_curriculum",
         phases=[
@@ -79,6 +91,39 @@ RECIPES: Dict[str, TrainingRecipe] = {
                 lr=3e-4, save_dir="checkpoints/v5_S4",
                 data_dir="data/S4",
                 desc="S4 supervised Deep-MSE — 8x8/25",
+            ),
+        ],
+    ),
+    "v5_curriculum_rank": TrainingRecipe(
+        name="v5_curriculum_rank",
+        phases=[
+            RecipePhase(
+                mode="supervised", loss_type="deep_mse_rank", n_games=10000,
+                board_width=8, board_height=8, board_mines=10,
+                lr=3e-4, save_dir="checkpoints/v5_rank_S1",
+                data_dir="data/S1",
+                desc="S1 supervised Deep-MSE + ranking — 8x8/10",
+            ),
+            RecipePhase(
+                mode="supervised", loss_type="deep_mse_rank", n_games=10000,
+                board_width=8, board_height=8, board_mines=15,
+                lr=3e-4, save_dir="checkpoints/v5_rank_S2",
+                data_dir="data/S2",
+                desc="S2 supervised Deep-MSE + ranking — 8x8/15",
+            ),
+            RecipePhase(
+                mode="supervised", loss_type="deep_mse_rank", n_games=10000,
+                board_width=8, board_height=8, board_mines=20,
+                lr=3e-4, save_dir="checkpoints/v5_rank_S3",
+                data_dir="data/S3",
+                desc="S3 supervised Deep-MSE + ranking — 8x8/20",
+            ),
+            RecipePhase(
+                mode="supervised", loss_type="deep_mse_rank", n_games=10000,
+                board_width=8, board_height=8, board_mines=25,
+                lr=3e-4, save_dir="checkpoints/v5_rank_S4",
+                data_dir="data/S4",
+                desc="S4 supervised Deep-MSE + ranking — 8x8/25",
             ),
         ],
     ),

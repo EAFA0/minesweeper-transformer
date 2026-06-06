@@ -1,6 +1,7 @@
 # 训练记录
 
 当前主线: Online BCE 三阶段训练 — S1(规则) → S2(密度) → S3(高密度泛化)
+> **2026-06-06 更新**: V5 constraint channels 从 4 个扩为 8 个，当前模型输入为 19ch。此前 15ch checkpoint 与训练结果保留为历史记录，新架构需重新训练。
 > **2026-06-03**: 全线切换 Online BCE。MSE 监督训练、data_dir、LEGACY_STAGES 退役。
 > 评估用 EvalBoardPool，训练用 TrajectoryPool。全 BPTT refinement (无 detach)。
 > **2026-06-04**: V4 架构落地 (grounding + residual + deep inference)，S3 重定义为 8×8/32。

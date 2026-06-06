@@ -61,7 +61,7 @@
 ### 当前架构: V5 Constraint Residual
 CNN (3层 3×3 Conv, 64ch) → InterpolatablePE → Transformer (4层, d=64, 4头) → 1ch 输出 (mine logit)。
 
-输入: 10 board + 1 prev_probs + 4 constraint channels = 15 channels
+输入: 10 board + 1 prev_probs + 8 constraint channels = 19 channels
 
 ### 历史架构对比 (已从 main 移除)
 
@@ -86,12 +86,12 @@ V1/V1_5/V4 代码已从 main 移除，历史追溯使用 git。
 单次前向推理可能产生不一致的预测。迭代 refinement 让模型反复修正自己的预测。
 
 ### 决策
-- **主力路线 (V5)**: 保留 V1_5 的 `prev_probs` 显式反馈，并新增 4 个由棋盘规则直接计算的 constraint channels。每步 refinement 根据上一轮概率计算数字约束残差，再喂回 CNN + Transformer，全 BPTT。
+- **主力路线 (V5)**: 保留 V1_5 的 `prev_probs` 显式反馈，并新增 8 个由棋盘规则直接计算的 constraint channels。每步 refinement 根据上一轮概率计算数字约束残差与硬规则信号，再喂回 CNN + Transformer，全 BPTT。
 - **废弃路线 (V4 latent loop)**: CNN 只跑一次，Transformer 在抽象 latent 空间自循环。消融实验表明此路线在所有变体中均未超过 V1（无 refinement）。
 
 ### V5 constraint residual channels (2026-06-06)
 
-V5 的输入为 `10 board + 1 prev_probs + 4 constraints = 15ch`。约束通道不使用真实雷位置，只使用当前可见棋盘和上一轮概率，因此训练与推理一致。
+V5 的输入为 `10 board + 1 prev_probs + 8 constraints = 19ch`。约束通道不使用真实雷位置，只使用当前可见棋盘和上一轮概率，因此训练与推理一致。
 
 对每个 revealed cell:
 
@@ -101,19 +101,24 @@ predicted = sum(prev_probs on adjacent covered cells)
 residual = target_remaining - predicted
 ```
 
-然后将 revealed cells 上的约束投影到相邻 covered cells。当前实现的 4 个通道：
+然后将 revealed cells 上的约束投影到相邻 covered cells。当前实现的 8 个通道：
 
 | 通道 | 含义 |
 |------|------|
 | `mean_residual` | 相邻数字约束平均还缺/多多少雷概率质量 |
+| `max_residual` | 相邻约束中最强的正 residual |
+| `min_residual` | 相邻约束中最强的负 residual |
 | `mean_abs_residual` | 相邻约束不平衡强度 |
 | `constraint_count_norm` | 该 covered cell 参与多少个数字约束，除以 8 归一化 |
-| `mean_target_remaining` | 相邻数字约束平均还需要解释多少雷 |
+| `forced_safe_signal` | 任一相邻约束满足 `target_remaining == 0` |
+| `forced_mine_signal` | 任一相邻约束满足 `target_remaining == covered_neighbor_count` |
+| `min_slack_norm` | 相邻硬规则 slack 的最小值，越低表示约束越接近强制规则 |
 
 理由:
 1. `prev_probs` 告诉模型“当前假设是什么”，constraint channels 告诉模型“当前假设和可见规则哪里不平衡”。
 2. 扫雷 refinement 本质更接近约束传播，显式残差比纯 latent loop 更符合问题结构。
-3. V5 仍保留 CNN + Transformer，局部规则、共享边界和远距离依赖都能继续建模。
+3. `forced_safe_signal`/`forced_mine_signal` 直接暴露基础扫雷硬规则，减少模型从平均 residual 中反推规则的负担。
+4. V5 仍保留 CNN + Transformer，局部规则、共享边界和远距离依赖都能继续建模。
 
 ### 消融实验数据 (2026-06-05, S1 8×8/10雷, 10000 games, 5 epochs)
 
@@ -252,8 +257,21 @@ TrainingRecipe: {name, phases: [RecipePhase, ...]}
 
 预定义 recipe 示例：
 - `v5_s1`: supervised Deep-MSE calibration (8×8/10, 5000 games)，对每个 refinement step 都监督 solver probability，数据目录 `data/`
+- `v5_s1_rank`: `v5_s1` + best-safe ranking loss，对齐 `argmin P(mine)` 动作选择
 - `v5_curriculum`: supervised Deep-MSE 四阶段课程，S1(8×8/10) → S2(8×8/15) → S3(8×8/20) → S4(8×8/25)，数据目录 `data/S1` 到 `data/S4`
+- `v5_curriculum_rank`: 四阶段课程 + best-safe ranking loss，checkpoint 写入 `checkpoints/v5_rank_S1` 到 `checkpoints/v5_rank_S4`
 - `v5_s1_mse`: supervised MSE baseline，仅监督最后一个 refinement step，数据目录 `data/`
+
+`deep_mse_rank` 的 ranking 项只使用 solver probability target，不读取真实雷位置：
+
+```text
+preferred   = covered cells where target P(mine) <= 1e-6
+competitors = covered cells where target P(mine) > 1e-6
+loss_rank   = mean relu(min_logit(preferred) + margin - logits(competitors))
+loss        = deep_mse + 0.1 * loss_rank
+```
+
+该项直接优化评估动作 `argmin P(mine)` 的排序，不替代 probability distillation。
 
 数据生成与评估默认使用 `generate_no_guess_board()`。`generate_self_validated_board()` 允许 safe hint，只能用于显式标注的 hint-solvable 探索，不得作为主训练/评估 benchmark。项目默认假设 `data/` 下的训练和评估数据均为 no-guess。
 

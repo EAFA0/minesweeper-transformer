@@ -6,6 +6,9 @@
 - **CLI 收敛**: `--arch` 默认值从 V4 改为 V5，choices 仅保留 `["V5"]`。
 - **训练/评估去分支**: `train.py` 移除 V1/V4 分支，`evaluate.py` 的 `load_model()` 移除 arch 分发，`utils.py` 的 `build_model()`/`model_forward()` 简化为 V5-only。
 - **移除未监督 confidence head**: V5 输出头从 2ch 收敛为 1ch mine logit；refinement early-stop 改为 `max|P_t - P_{t-1}| < convergence_eps`，评估日志记录真实执行步数。
+- **V5 constraint channels 重构**: 输入从 `15ch` 扩为 `19ch`，constraint channels 从 4 个平均统计特征改为 8 个硬约束友好特征，新增 `max_residual`、`min_residual`、`forced_safe_signal`、`forced_mine_signal`、`min_slack_norm`。
+- **旧 checkpoint 不再迁移**: `load_pretrained()` 改为 strict load；架构 shape 变化直接失败，历史 checkpoint 通过重新训练处理。
+- **新增 best-safe ranking loss**: 新增 `deep_mse_rank = deep_mse + 0.1 * ranking_loss`，显式要求 `target P(mine)=0` 的最安全候选 logit 低于非零目标候选；新增 `v5_s1_rank` 与 `v5_curriculum_rank` 对照 recipe。
 - **修复训练入口 mode 路由**: `scripts/train.py` legacy 分支现在会应用 `--mode`，避免 recipe phase 传入 `--mode supervised` 时被默认 `online` 覆盖。
 - **文档同步**: AGENTS.md、README.md、architecture.md、conventions.md、metrics.md、training-log.md、docs/README.md 均已更新。
 
@@ -98,7 +101,7 @@
 
 ### Bug 修复
 - `generate_data` 并行 worker 参数冲突 (partial 导致 seed→width)
-- `load_pretrained` 误报 "migrated output head" 消息 (print 在 if 外)
+- `load_pretrained` 现已移除自动迁移，架构 shape 变化要求重新训练 checkpoint
 - 移除 RL 通关奖励和预揭开补分，避免最后一步获得与动作无关的巨额奖励
 - eval `mine_continue` 错配 (修复后立刻回退，评估需测真实胜率)
 - `first_done=False` OOD 回退 (模型未学过全覆态)

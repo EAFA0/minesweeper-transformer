@@ -24,7 +24,10 @@ class TrainingConfig:
     eval_interval_games: int = 200
     eval_games: int = 100
     board_pool_path: str = ""
-    loss_type: str = "bce"  # "bce", "mse", or "deep_mse"
+    loss_type: str = "bce"  # "bce", "mse", "deep_mse", or "deep_mse_rank"
+    rank_loss_weight: float = 0.1
+    rank_loss_margin: float = 0.5
+    rank_safe_threshold: float = 1e-6
 
     # Optimizer
     learning_rate: float = 3e-4

@@ -4,7 +4,7 @@ The architecture uses an explicit feedback loop: previous mine probability
 estimates and rule-derived constraint channels are fed back as input, making
 local number-constraint imbalance directly visible to the network.
 
-Input: 10 board + 1 prev_probs + 4 constraints = 15 channels
+Input: 10 board + 1 prev_probs + 8 constraints = 19 channels
 """
 
 from typing import List, Optional
@@ -92,14 +92,38 @@ class ConstraintFeatureBuilder(nn.Module):
     def _neighbor_sum(self, x: torch.Tensor) -> torch.Tensor:
         return F.conv2d(x, self.neighbor_kernel.to(dtype=x.dtype), padding=1)
 
+    def _neighbor_max(
+        self,
+        values: torch.Tensor,
+        mask: torch.Tensor,
+        default: float = 0.0,
+    ) -> torch.Tensor:
+        fill = torch.full_like(values, -1e4)
+        masked = torch.where(mask > 0, values, fill)
+        pooled = F.max_pool2d(masked, kernel_size=3, stride=1, padding=1)
+        has_value = self._neighbor_sum(mask).clamp(0.0, 1.0)
+        return torch.where(has_value > 0, pooled, torch.full_like(values, default))
+
+    def _neighbor_min(
+        self,
+        values: torch.Tensor,
+        mask: torch.Tensor,
+        default: float = 0.0,
+    ) -> torch.Tensor:
+        return -self._neighbor_max(-values, mask, default=-default)
+
     def forward(self, board: torch.Tensor, prev_probs: torch.Tensor) -> torch.Tensor:
-        """Return 4 constraint channels aligned to covered candidate cells.
+        """Return 8 constraint channels aligned to covered candidate cells.
 
         Channels:
             0: mean residual from adjacent revealed constraints
-            1: mean absolute residual magnitude
-            2: adjacent constraint count normalized by 8
-            3: mean target remaining mines from adjacent revealed constraints
+            1: max residual from adjacent revealed constraints
+            2: min residual from adjacent revealed constraints
+            3: mean absolute residual magnitude
+            4: adjacent constraint count normalized by 8
+            5: forced-safe signal from adjacent hard constraints
+            6: forced-mine signal from adjacent hard constraints
+            7: minimum hard-rule slack normalized by 8
         """
         covered = board[:, 0:1]
         flagged = board[:, 1:2]
@@ -114,30 +138,58 @@ class ConstraintFeatureBuilder(nn.Module):
         constraint_mask = known_cell
 
         flagged_neighbors = self._neighbor_sum(flagged)
+        covered_neighbors = self._neighbor_sum(covered)
         predicted_neighbors = self._neighbor_sum(prev_probs * covered)
 
         target_remaining = number_value - flagged_neighbors
         residual = (target_remaining - predicted_neighbors) * constraint_mask
-        target_remaining = target_remaining * constraint_mask
 
         constraint_count = self._neighbor_sum(constraint_mask) * covered
         denom = constraint_count.clamp_min(1.0)
 
         residual_sum = self._neighbor_sum(residual) * covered
         abs_residual_sum = self._neighbor_sum(residual.abs()) * covered
-        target_sum = self._neighbor_sum(target_remaining) * covered
 
         mean_residual = residual_sum / denom
+        max_residual = self._neighbor_max(residual, constraint_mask) * covered
+        min_residual = self._neighbor_min(residual, constraint_mask) * covered
         mean_abs_residual = abs_residual_sum / denom
         constraint_count_norm = (constraint_count / 8.0).clamp(0.0, 1.0)
-        mean_target_remaining = target_sum / denom
+
+        hard_eps = 1e-4
+        forced_safe_constraint = (
+            (target_remaining <= hard_eps) & (constraint_mask > 0)
+        ).to(dtype=board.dtype)
+        forced_mine_constraint = (
+            ((covered_neighbors - target_remaining).abs() <= hard_eps)
+            & (covered_neighbors > 0)
+            & (constraint_mask > 0)
+        ).to(dtype=board.dtype)
+        forced_safe_signal = (
+            self._neighbor_sum(forced_safe_constraint).clamp(0.0, 1.0) * covered
+        )
+        forced_mine_signal = (
+            self._neighbor_sum(forced_mine_constraint).clamp(0.0, 1.0) * covered
+        )
+
+        safe_slack = target_remaining.clamp_min(0.0)
+        mine_slack = (covered_neighbors - target_remaining).clamp_min(0.0)
+        hard_rule_slack = torch.minimum(safe_slack, mine_slack) * constraint_mask
+        min_slack = (
+            self._neighbor_min(hard_rule_slack, constraint_mask, default=8.0) * covered
+        )
+        min_slack_norm = (min_slack / 8.0).clamp(0.0, 1.0)
 
         return torch.cat(
             [
                 mean_residual,
+                max_residual,
+                min_residual,
                 mean_abs_residual,
                 constraint_count_norm,
-                mean_target_remaining,
+                forced_safe_signal,
+                forced_mine_signal,
+                min_slack_norm,
             ],
             dim=1,
         )
@@ -155,7 +207,7 @@ class MinesweeperTransformer(nn.Module):
         running N passes with shared weights (full BPTT).
     """
 
-    constraint_channels: int = 4
+    constraint_channels: int = 8
 
     def __init__(self, config: Optional[ModelConfig] = None):
         super().__init__()
@@ -247,59 +299,11 @@ class MinesweeperTransformer(nn.Module):
         return results[-1][:, 0:1]
 
     def load_pretrained(self, checkpoint_path: str, device: str = "cpu") -> None:
-        """Load weights from a checkpoint with automatic channel migration."""
+        """Load weights from a checkpoint.
+
+        Architecture shape changes intentionally fail fast. Historical
+        checkpoints should be retrained instead of migrated.
+        """
         ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
         state_dict = ckpt.get("model_state_dict", ckpt)
-
-        cnn_key = "cnn.net.0.weight"
-        if cnn_key in state_dict:
-            old_w = state_dict[cnn_key]
-            new_w = self.cnn.net[0].weight.data
-            if old_w.shape[1] != new_w.shape[1]:
-                padded = torch.zeros_like(new_w)
-                keep = min(old_w.shape[1], new_w.shape[1])
-                padded[:, :keep] = old_w[:, :keep]
-                state_dict[cnn_key] = padded
-                print(
-                    f"  (Migrated CNN input channels: {old_w.shape[1]} -> {new_w.shape[1]})"
-                )
-
-        head_w_key = "output_head.weight"
-        head_b_key = "output_head.bias"
-        if head_w_key in state_dict:
-            old_w = state_dict[head_w_key]
-            new_w = self.output_head.weight.data
-            if old_w.shape != new_w.shape:
-                padded = torch.zeros_like(new_w)
-                keep_out = min(old_w.shape[0], new_w.shape[0])
-                keep_in = min(old_w.shape[1], new_w.shape[1])
-                padded[:keep_out, :keep_in] = old_w[:keep_out, :keep_in]
-                state_dict[head_w_key] = padded
-                print(
-                    f"  (Migrated output head weight: {tuple(old_w.shape)} -> {tuple(new_w.shape)})"
-                )
-        if head_b_key in state_dict:
-            old_b = state_dict[head_b_key]
-            new_b = self.output_head.bias.data
-            if old_b.shape != new_b.shape:
-                padded = torch.zeros_like(new_b)
-                keep = min(old_b.shape[0], new_b.shape[0])
-                padded[:keep] = old_b[:keep]
-                state_dict[head_b_key] = padded
-                print(
-                    f"  (Migrated output head bias: {tuple(old_b.shape)} -> {tuple(new_b.shape)})"
-                )
-
-        migrated = {}
-        for key, value in state_dict.items():
-            if key.startswith("pos_encoding.row_embed") or key.startswith(
-                "pos_encoding.col_embed"
-            ):
-                continue
-            migrated[key] = value
-
-        missing, unexpected = self.load_state_dict(migrated, strict=False)
-        if missing:
-            print(f"  (initialized {len(missing)} new keys)")
-        if unexpected:
-            print(f"  (ignored {len(unexpected)} incompatible keys)")
+        self.load_state_dict(state_dict)

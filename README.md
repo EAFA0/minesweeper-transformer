@@ -95,7 +95,7 @@ src/
   training/        训练循环（MSE + online BCE）+ 共享评估模块
 
 scripts/
-  train.py           统一训练入口 (支持 --loss_type bce|mse|deep_mse, --recipe)
+  train.py           统一训练入口 (支持 --loss_type bce|mse|deep_mse|deep_mse_rank, --recipe)
   train_stage.py     分阶段编排 (S1→S2→S3→S4, --recipe)
   evaluate.py        独立评估 CLI
 ```

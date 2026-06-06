@@ -73,6 +73,40 @@ def compute_loss(
         return F.mse_loss(preds[masks], targets[masks])
 
 
+def compute_best_safe_ranking_loss(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    masks: torch.Tensor,
+    margin: float = 0.5,
+    safe_threshold: float = 1e-6,
+) -> torch.Tensor:
+    """Margin loss that keeps at least one solver-safe cell ranked first.
+
+    `targets` are solver mine probabilities. On strict no-guess boards, a
+    state should always expose at least one covered cell with target P(mine)=0.
+    The evaluation policy chooses argmin P(mine), so this loss explicitly
+    pushes the best zero-target candidate below all non-zero-target candidates.
+    """
+    if logits.dim() == 4:
+        logits = logits[:, 0]
+
+    losses = []
+    for sample_logits, sample_targets, sample_mask in zip(logits, targets, masks):
+        covered = sample_mask.bool()
+        preferred = covered & (sample_targets <= safe_threshold)
+        competitors = covered & (sample_targets > safe_threshold)
+        if not preferred.any() or not competitors.any():
+            continue
+
+        best_safe_logit = sample_logits[preferred].min()
+        competitor_logits = sample_logits[competitors]
+        losses.append(F.relu(best_safe_logit + margin - competitor_logits).mean())
+
+    if not losses:
+        return logits.sum() * 0.0
+    return torch.stack(losses).mean()
+
+
 # ── Checkpointing ───────────────────────────────────────────────────────────
 
 def save_checkpoint(

@@ -18,6 +18,7 @@ from config import TrainingConfig, ModelConfig
 from training.trajectory_pool import TrajectoryPool
 from training.utils import (
     build_model,
+    compute_best_safe_ranking_loss,
     compute_loss,
     model_forward,
     model_forward_logits,
@@ -93,9 +94,15 @@ def train_supervised(
         mines = config.board_mines
         pos_weight_val = (total_cells - mines) / max(mines, 1)
         print(f"BCE Loss with binary (ground-truth) targets, pos_weight={pos_weight_val:.2f}")
-    elif config.loss_type == "deep_mse":
+    elif config.loss_type in {"deep_mse", "deep_mse_rank"}:
         pos_weight_val = None
-        print("Deep-MSE Loss with solver probability targets at every refinement step")
+        if config.loss_type == "deep_mse_rank":
+            print(
+                "Deep-MSE + ranking loss "
+                f"(weight={config.rank_loss_weight}, margin={config.rank_loss_margin})"
+            )
+        else:
+            print("Deep-MSE Loss with solver probability targets at every refinement step")
     else:
         pos_weight_val = None
         print("MSE Loss with solver probability targets (distillation)")
@@ -129,16 +136,26 @@ def train_supervised(
             masks = masks.to(device)
 
             # 2. Forward pass. BCE uses raw logits; MSE variants use probabilities.
-            if config.loss_type == "deep_mse":
+            if config.loss_type in {"deep_mse", "deep_mse_rank"}:
                 refine_logits = model.refine(
                     channels, num_steps=config.refinement_steps, return_logits=True
                 )
                 step_losses = []
                 for logits in refine_logits:
                     step_preds = torch.sigmoid(logits)[:, 0]
-                    step_losses.append(
-                        compute_loss("mse", step_preds, targets, masks, pos_weight_val, device)
+                    mse_loss = compute_loss(
+                        "mse", step_preds, targets, masks, pos_weight_val, device
                     )
+                    if config.loss_type == "deep_mse_rank":
+                        rank_loss = compute_best_safe_ranking_loss(
+                            logits,
+                            targets,
+                            masks,
+                            margin=config.rank_loss_margin,
+                            safe_threshold=config.rank_safe_threshold,
+                        )
+                        mse_loss = mse_loss + config.rank_loss_weight * rank_loss
+                    step_losses.append(mse_loss)
                 loss = torch.stack(step_losses).mean()
                 preds = torch.sigmoid(refine_logits[-1])[:, 0]
             elif config.loss_type == "bce":
