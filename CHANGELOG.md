@@ -1,3 +1,17 @@
+## [未发布] - 2026-06-05
+
+### V4 消融实验与架构决策
+- **V4 latent loop 路线废弃**: 经过系统性消融实验，V4 的 latent loop refinement 在所有变体中均未超过 V1（无 refinement）。根因是 Transformer 在抽象 latent 空间自循环，看不到 decoder 输出，无法进行矛盾检测和修正。
+- **V1_5 确认为主力架构**: CNN 重跑 + prev_probs 显式反馈的 refinement 机制是当前唯一有效的迭代修正方案，S1 胜率 83.0%。
+- **消融实验数据** (S1 8×8/10雷, 10000 games, 5 epochs):
+  - V1_5 (显式反馈): 83.0% WR, 0.990 action_acc
+  - V1 (无 refinement): 74.0% WR, 0.985 action_acc
+  - V4 baseline: 63.5% WR → +2ch: 70.5% → +LayerNorm: 64.0% → -features_seq: 68.0%
+- **修复**: V4 `_transformer_step` 移除 `features_seq` 注入（每步注入原始 CNN 特征导致 refinement 信号被淹没）
+- **修复**: V4 Transformer 末层加回 LayerNorm
+- **修复**: V4 DecoderHead 从 1ch 恢复为 2ch (mine + confidence)
+- **修复**: `eval_max_steps` 从 16 降为 4，与训练步数对齐
+
 ## [未发布] - 2026-06-04
 
 ### 架构与代码重构

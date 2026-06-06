@@ -74,20 +74,20 @@ class TransformerEncoder(nn.Module):
         self.encoder = nn.TransformerEncoder(
             layer, num_layers=num_layers, enable_nested_tensor=False
         )
-        # Removed final LayerNorm to avoid squashing confidence growth during loop
+        self.norm = nn.LayerNorm(d_model)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """x: (B, S, C) → (B, S, C)"""
         x = self.encoder(x)
-        return x
+        return self.norm(x)
 
 
 class DecoderHead(nn.Module):
-    """1×1 Conv: d_model channels → 1 logit channel."""
+    """1×1 Conv: d_model channels → 2 logit channels (mine, confidence)."""
 
     def __init__(self, in_channels: int):
         super().__init__()
-        self.net = nn.Conv2d(in_channels, 1, kernel_size=1, bias=True)
+        self.net = nn.Conv2d(in_channels, 2, kernel_size=1, bias=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x)
@@ -151,32 +151,28 @@ class MinesweeperTransformer(nn.Module):
         """Sequence → spatial: (B, H*W, C) → (B, C, H, W)."""
         return seq.transpose(1, 2).reshape(seq.shape[0], seq.shape[2], H, W)
 
-    def _transformer_step(self, mem_seq: torch.Tensor, features_seq: torch.Tensor, H: int, W: int) -> torch.Tensor:
-        """One Transformer self-loop step with external residual and feature injection.
+    def _transformer_step(self, mem_seq: torch.Tensor, H: int, W: int) -> torch.Tensor:
+        """One Transformer self-loop step with external residual.
 
         Args:
             mem_seq: (B, H*W, d_model) current memory sequence
-            features_seq: (B, H*W, d_model) original CNN features for grounding
         Returns:
             new_mem_seq: (B, H*W, d_model)
         """
         pe_seq = self.pos_encoding.get_seq(H, W).to(mem_seq.device)
-        # Inject original features and positional encoding into the current memory state
-        x = mem_seq + pe_seq + features_seq
-        
-        # External residual connection to prevent state drift
+        x = mem_seq + pe_seq
         return mem_seq + self.transformer(x)
 
-    def _init_memory(self, board: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, int, int]:
-        """Run CNN and first Transformer step. Returns (mem_seq, features_seq, H, W)."""
+    def _init_memory(self, board: torch.Tensor) -> Tuple[torch.Tensor, int, int]:
+        """Run CNN and first Transformer step. Returns (mem_seq, H, W)."""
         _, _, H, W = board.shape
         features = self._extract_features(board)
         features_seq = self._to_seq(features)
         
         mem_seq = features_seq.clone()
-        mem_seq = self._transformer_step(mem_seq, features_seq, H, W)
+        mem_seq = self._transformer_step(mem_seq, H, W)
         
-        return mem_seq, features_seq, H, W
+        return mem_seq, H, W
 
     # ─── Public API ──────────────────────────────────────────────────────
 
@@ -184,20 +180,21 @@ class MinesweeperTransformer(nn.Module):
                 num_refine_steps: Optional[int] = None) -> Tuple[torch.Tensor, torch.Tensor]:
         """Full forward: CNN → Transformer loop → Decoder.
 
-        Returns (probs, mem_spatial) where probs is sigmoid(P(mine)).
+        Returns (probs, mem_spatial) where probs is (B, 2, H, W) sigmoid'd
+        [mine_prob, confidence].
         """
         if num_refine_steps is None:
             num_refine_steps = self.config.refinement_steps
 
-        mem_seq, features_seq, H, W = self._init_memory(board)
+        mem_seq, H, W = self._init_memory(board)
 
         # 3. Refinement: Transformer self-loop
         for _step in range(num_refine_steps - 1):
-            mem_seq = self._transformer_step(mem_seq, features_seq, H, W)
+            mem_seq = self._transformer_step(mem_seq, H, W)
 
         # 4. Decode final memory to probabilities
         mem_spatial = self._to_spatial(mem_seq, H, W)        # (B, d_model, H, W)
-        probs = torch.sigmoid(self.decoder(mem_spatial))     # (B, 1, H, W)
+        probs = torch.sigmoid(self.decoder(mem_spatial))     # (B, 2, H, W)
 
         return probs, mem_spatial
 
@@ -207,30 +204,30 @@ class MinesweeperTransformer(nn.Module):
                ) -> List[torch.Tensor]:
         """Iterative refinement with early-stopping for inference.
 
-        Returns list of probs at each step (for convergence tracking).
+        Returns list of (B, 2, H, W) [mine_prob, confidence] at each step.
         """
-        mem_seq, features_seq, H, W = self._init_memory(board)
+        mem_seq, H, W = self._init_memory(board)
 
         mem_spatial = self._to_spatial(mem_seq, H, W)
-        probs = torch.sigmoid(self.decoder(mem_spatial))
+        probs = torch.sigmoid(self.decoder(mem_spatial))  # (B, 2, H, W)
         results = [probs]
-        prev_probs = probs
+        prev_probs = probs[:, 0:1]  # track mine channel only for convergence
 
         # 3. Refinement
         for step in range(1, num_steps):
-            mem_seq = self._transformer_step(mem_seq, features_seq, H, W)
+            mem_seq = self._transformer_step(mem_seq, H, W)
             mem_spatial = self._to_spatial(mem_seq, H, W)
-            probs = torch.sigmoid(self.decoder(mem_spatial))
+            probs = torch.sigmoid(self.decoder(mem_spatial))  # (B, 2, H, W)
             results.append(probs)
 
             if not self.training and step > 0:
-                max_change = (probs - prev_probs).abs().max().item()
+                max_change = (probs[:, 0:1] - prev_probs).abs().max().item()
                 if max_change < convergence_eps:
                     break
             if not self.training:
-                prev_probs = probs.detach()
+                prev_probs = probs[:, 0:1].detach()
             else:
-                prev_probs = probs
+                prev_probs = probs[:, 0:1]
 
         return results
 
@@ -249,22 +246,22 @@ class MinesweeperTransformer(nn.Module):
         """Run refinement and report per-sample step statistics."""
         B = x.shape[0]
 
-        mem_seq, features_seq, H, W = self._init_memory(x)
+        mem_seq, H, W = self._init_memory(x)
 
         mem_spatial = self._to_spatial(mem_seq, H, W)
-        probs = torch.sigmoid(self.decoder(mem_spatial))
+        probs = torch.sigmoid(self.decoder(mem_spatial))  # (B, 2, H, W)
 
         n_steps = torch.ones(B, dtype=torch.long, device=x.device)
         done = torch.zeros(B, dtype=torch.bool, device=x.device)
         final_probs = probs.clone()
-        prev_probs = probs
+        prev_probs = probs[:, 0:1]
 
         for step in range(1, max_refine_steps):
-            mem_seq = self._transformer_step(mem_seq, features_seq, H, W)
+            mem_seq = self._transformer_step(mem_seq, H, W)
             mem_spatial = self._to_spatial(mem_seq, H, W)
-            probs = torch.sigmoid(self.decoder(mem_spatial))
+            probs = torch.sigmoid(self.decoder(mem_spatial))  # (B, 2, H, W)
 
-            max_change = (probs - prev_probs).abs().view(B, -1).max(dim=1).values
+            max_change = (probs[:, 0:1] - prev_probs).abs().view(B, -1).max(dim=1).values
             converged_now = ~done & (max_change < convergence_eps)
             done = done | converged_now
             n_steps = torch.where(converged_now, step + 1, n_steps)
@@ -272,7 +269,7 @@ class MinesweeperTransformer(nn.Module):
 
             if done.all():
                 break
-            prev_probs = probs.clone()
+            prev_probs = probs[:, 0:1].clone()
 
         n_steps = torch.where(~done, max_refine_steps, n_steps)
         final_probs = torch.where(~done.view(B, 1, 1, 1), probs, final_probs)
