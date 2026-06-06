@@ -23,6 +23,9 @@ def build_model(arch: str, model_config: ModelConfig, device: torch.device) -> n
     elif arch == "V1_5":
         from model.architecture_v1_5 import MinesweeperTransformerV1_5
         return MinesweeperTransformerV1_5(model_config).to(device)
+    elif arch == "V5":
+        from model.architecture_v5 import MinesweeperTransformerV5
+        return MinesweeperTransformerV5(model_config).to(device)
     else:
         from model.architecture import MinesweeperTransformer
         return MinesweeperTransformer(model_config).to(device)
@@ -44,7 +47,7 @@ def model_forward(
         logits = model.forward(x)            # (B, 1, H, W) raw logits
         return torch.sigmoid(logits)
 
-    elif arch == "V1_5":
+    elif arch in {"V1_5", "V5"}:
         results = model.refine(x, num_steps=refine_steps, return_logits=True)
         raw = results[-1]                     # (B, 2, H, W) raw logits
         return torch.sigmoid(raw[:, 0:1])     # (B, 1, H, W) mine probs
@@ -52,6 +55,31 @@ def model_forward(
     else:  # V4
         results = model.refine(x, num_steps=refine_steps)
         return results[-1][:, 0:1]            # (B, 1, H, W) sigmoid'd mine probs
+
+
+def model_forward_logits(
+    arch: str,
+    model: nn.Module,
+    x: torch.Tensor,
+    refine_steps: int,
+) -> torch.Tensor:
+    """Unified forward pass for BCE loss.
+
+    Returns raw mine logits with shape (B, 1, H, W). Use this only for
+    numerically stable BCEWithLogits loss; action selection and MSE use
+    model_forward() probabilities.
+    """
+    if arch == "V1":
+        return model.forward(x)
+
+    if arch in {"V1_5", "V5"}:
+        results = model.refine(x, num_steps=refine_steps, return_logits=True)
+        return results[-1][:, 0:1]
+
+    if hasattr(model, "forward_logits"):
+        return model.forward_logits(x, num_refine_steps=refine_steps)[:, 0:1]
+
+    raise ValueError(f"Architecture {arch} does not expose raw logits for BCE loss")
 
 
 # ── Loss Computation ────────────────────────────────────────────────────────
@@ -64,13 +92,14 @@ def compute_loss(
     pos_weight: float | None,
     device: torch.device,
 ) -> torch.Tensor:
-    """Unified loss: BCE (with optional pos_weight) or MSE, masked to covered cells."""
+    """Unified loss: BCE logits (with optional pos_weight) or MSE probabilities."""
     if loss_type == "bce":
         if pos_weight is not None:
             pw = torch.tensor(pos_weight, device=device)
-            weight = torch.where(targets[masks] > 0.5, pw, 1.0)
-            return F.binary_cross_entropy(preds[masks], targets[masks], weight=weight)
-        return F.binary_cross_entropy(preds[masks], targets[masks])
+            return F.binary_cross_entropy_with_logits(
+                preds[masks], targets[masks], pos_weight=pw
+            )
+        return F.binary_cross_entropy_with_logits(preds[masks], targets[masks])
     else:
         return F.mse_loss(preds[masks], targets[masks])
 

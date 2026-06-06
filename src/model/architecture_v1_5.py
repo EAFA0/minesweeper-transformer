@@ -183,7 +183,7 @@ class MinesweeperTransformerV1_5(nn.Module):
             (B, 2, H, W) raw outputs — [0]=P(mine) logit, [1]=confidence logit
         """
         B, _, H, W = x.shape
-        prev = torch.zeros(B, 1, H, W, device=x.device)
+        prev = torch.full((B, 1, H, W), 0.5, device=x.device, dtype=x.dtype)
         return self._single_pass(x, prev)
 
     def refine(self, board: torch.Tensor, num_steps: int = 5,
@@ -208,7 +208,7 @@ class MinesweeperTransformerV1_5(nn.Module):
             Last element is the final output.
         """
         B, _, H, W = board.shape
-        probs = torch.full((B, 1, H, W), 0.5, device=board.device)
+        probs = torch.full((B, 1, H, W), 0.5, device=board.device, dtype=board.dtype)
         results = []
 
         for _ in range(num_steps):

@@ -16,7 +16,13 @@ from tqdm import tqdm
 
 from config import TrainingConfig, ModelConfig
 from training.trajectory_pool import TrajectoryPool
-from training.utils import build_model, model_forward, compute_loss, save_checkpoint
+from training.utils import (
+    build_model,
+    compute_loss,
+    model_forward,
+    model_forward_logits,
+    save_checkpoint,
+)
 
 
 def train_supervised(
@@ -119,9 +125,14 @@ def train_supervised(
             targets = targets.to(device)
             masks = masks.to(device)
 
-            # 2. Forward pass
-            preds = model_forward(arch, model, channels, config.refinement_steps)
-            preds = preds[:, 0]  # (B, H, W) sigmoid'd mine probs
+            # 2. Forward pass. BCE uses raw logits; MSE uses probabilities.
+            if config.loss_type == "bce":
+                preds = model_forward_logits(
+                    arch, model, channels, config.refinement_steps
+                )
+            else:
+                preds = model_forward(arch, model, channels, config.refinement_steps)
+            preds = preds[:, 0]  # (B, H, W)
 
             # 3. Loss
             loss = compute_loss(config.loss_type, preds, targets, masks, pos_weight_val, device)

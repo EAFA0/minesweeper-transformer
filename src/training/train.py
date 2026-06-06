@@ -131,6 +131,7 @@ def _compute_loss_and_step(
     ctx: TrainingContext, 
     game: 'MinesweeperGame', 
     pv: torch.Tensor, 
+    pv_logits: torch.Tensor | None = None,
 ) -> float:
     """Compute the specified loss (BCE/MSE) and perform an optimization step."""
     loss_val = 0.0
@@ -141,10 +142,12 @@ def _compute_loss_and_step(
             mine_mask = torch.from_numpy(game.get_mine_mask()).float().to(ctx.device)
             frontier_t = torch.from_numpy(frontier).bool().to(ctx.device)
 
-            probs_frontier = pv[0, 0][frontier_t]
+            if pv_logits is None:
+                raise ValueError(f"Architecture {ctx.arch} does not provide logits for BCE")
+            logits_frontier = pv_logits[0, 0][frontier_t]
             labels_frontier = mine_mask[frontier_t]
 
-            loss = F.binary_cross_entropy(probs_frontier, labels_frontier)
+            loss = F.binary_cross_entropy_with_logits(logits_frontier, labels_frontier)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(ctx.model.parameters(), config.grad_clip_norm)
             ctx.optimizer.step()
@@ -222,9 +225,10 @@ def _play_training_game(
         if ctx.arch == "V1":
             pv_raw = ctx.model.forward(ch_t)    # V1: (B,1,H,W) logits
             pv = torch.sigmoid(pv_raw)           # (B,1,H,W) probabilities
+            pv_logits = pv_raw
 
-        elif ctx.arch == "V1_5":
-            # V1_5: iterative refinement with full BPTT
+        elif ctx.arch in {"V1_5", "V5"}:
+            # V1_5/V5: explicit feedback refinement with full BPTT
             refine_results = ctx.model.refine(
                 ch_t, num_steps=config.refinement_steps,
                 return_logits=True
@@ -233,14 +237,17 @@ def _play_training_game(
             probs = torch.sigmoid(raw[:, 0:1])    # (B, 1, H, W) mine probs
             conf = raw[:, 1:2]                    # (B, 1, H, W) conf logit
             pv = torch.cat([probs, conf], dim=1)  # (B, 2, H, W)
+            pv_logits = raw
 
         else:
             # V4: iterative refinement with full BPTT (grounding + residual)
-            refine_results = ctx.model.refine(ch_t, num_steps=config.refinement_steps)
-            # refine() returns sigmoid'd probs for both channels
-            probs = refine_results[-1][:, 0:1]  # (B, 1, H, W) mine probs
-            conf = refine_results[-1][:, 1:2]   # (B, 1, H, W) conf probs
+            raw = ctx.model.forward_logits(
+                ch_t, num_refine_steps=config.refinement_steps
+            )
+            probs = torch.sigmoid(raw[:, 0:1])  # (B, 1, H, W) mine probs
+            conf = raw[:, 1:2]                  # (B, 1, H, W) conf logit
             pv = torch.cat([probs, conf], dim=1)  # (B, 2, H, W)
+            pv_logits = raw
 
         # Action selection (no_grad)
         with torch.no_grad():
@@ -260,7 +267,7 @@ def _play_training_game(
             r, c = divmod(best_idx, config.board_width)
 
         # Loss computation
-        loss_val = _compute_loss_and_step(config, ctx, game, pv)
+        loss_val = _compute_loss_and_step(config, ctx, game, pv, pv_logits)
         game_loss += loss_val
 
         game.make_move(r, c, MoveType.REVEAL)

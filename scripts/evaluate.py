@@ -14,7 +14,7 @@ def main():
                    help="Evaluate using specific stage's board settings")
     p.add_argument("--n_games", type=int, default=1000)
     p.add_argument("--device", default="auto")
-    p.add_argument("--arch", type=str, default="V4", choices=["V1", "V1_5", "V4"], help="Model architecture version")
+    p.add_argument("--arch", type=str, default="V4", choices=["V1", "V1_5", "V4", "V5"], help="Model architecture version")
     
     # Optional overrides for zero-shot testing
     p.add_argument("--width", type=int, default=None, help="Override board width")

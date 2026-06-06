@@ -1,5 +1,16 @@
 ## [未发布] - 2026-06-05
 
+### 训练管线修复
+- **修复 BCE 数值稳定性**: Offline supervised 与 online frontier BCE 均改为 raw logits + `F.binary_cross_entropy_with_logits()`；概率路径只用于 MSE、动作选择和评估。
+- **修复 V1_5 单步接口一致性**: `forward()` 初始 `prev_probs` 从 0 改为 0.5，与 `refine(num_steps=1)` 保持一致。
+- **补充 V4 logits 入口**: 新增 `forward_logits()`，避免 V4 BCE 路径继续依赖 sigmoid 后概率。
+
+### V5 constraint residual 架构
+- **新增 V5**: 在 V1_5 的 `prev_probs` 显式反馈基础上，加入 4 个规则派生 constraint channels，输入共 `10 board + 1 prev_probs + 4 constraints = 15ch`。
+- **约束特征**: 对每个已翻开格计算 `target_remaining = number - flagged_neighbors` 与 `residual = target_remaining - sum(adjacent prev_probs)`，再投影到相邻 covered cells。
+- **接入训练/评估**: `--arch V5` 已接入 `scripts/train.py`、`scripts/train_stage.py`、`scripts/evaluate.py`、checkpoint 加载和统一训练分发。
+- **迁移支持**: V5 可从 V1/V1_5 类 checkpoint 迁移，CNN 首层新增输入通道零初始化。
+
 ### V4 消融实验与架构决策
 - **V4 latent loop 路线废弃**: 经过系统性消融实验，V4 的 latent loop refinement 在所有变体中均未超过 V1（无 refinement）。根因是 Transformer 在抽象 latent 空间自循环，看不到 decoder 输出，无法进行矛盾检测和修正。
 - **V1_5 确认为主力架构**: CNN 重跑 + prev_probs 显式反馈的 refinement 机制是当前唯一有效的迭代修正方案，S1 胜率 83.0%。

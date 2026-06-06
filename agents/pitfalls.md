@@ -111,9 +111,9 @@
 
 - **症状**: 潜在 NaN（当 sigmoid 输出极端 0/1 时）
 - **根因**: `torch.sigmoid() + F.binary_cross_entropy()` 组合不如 `F.binary_cross_entropy_with_logits()` 稳定。后者内部用 log-sum-exp trick 避免 log(0) 的 -inf
-- **当前状态**: 未修复，实际未触发 NaN，但属最佳实践
+- **当前状态**: 已修复 (2026-06-06)。训练主路径改为 raw logits + `F.binary_cross_entropy_with_logits()`；概率仅用于 MSE、评估和动作选择。
 - **记录日期**: 2026-06-04
 
 ---
 
-*最后更新: 2026-06-04*
+*最后更新: 2026-06-06*

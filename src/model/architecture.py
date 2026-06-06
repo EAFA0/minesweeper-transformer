@@ -198,6 +198,20 @@ class MinesweeperTransformer(nn.Module):
 
         return probs, mem_spatial
 
+    def forward_logits(self, board: torch.Tensor,
+                       num_refine_steps: Optional[int] = None) -> torch.Tensor:
+        """Full forward returning raw decoder logits for BCEWithLogits loss."""
+        if num_refine_steps is None:
+            num_refine_steps = self.config.refinement_steps
+
+        mem_seq, H, W = self._init_memory(board)
+
+        for _step in range(num_refine_steps - 1):
+            mem_seq = self._transformer_step(mem_seq, H, W)
+
+        mem_spatial = self._to_spatial(mem_seq, H, W)
+        return self.decoder(mem_spatial)
+
     def refine(self, board: torch.Tensor,
                num_steps: int = POLICY.refinement.eval_max_steps,
                convergence_eps: float = POLICY.refinement.convergence_eps,

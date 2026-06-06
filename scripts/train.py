@@ -14,7 +14,7 @@ def main():
                    help="Training mode: online (self-play) or supervised (offline npz)")
     p.add_argument("--stage", type=str, default=None, choices=["S1", "S2", "S3"],
                    help="Training stage (e.g. S1, S2, S3). Applies stage-specific board/optimizer configs.")
-    p.add_argument("--arch", type=str, default="V4", choices=["V1", "V1_5", "V4"],
+    p.add_argument("--arch", type=str, default="V4", choices=["V1", "V1_5", "V4", "V5"],
                    help="Architecture version to use")
     p.add_argument("--loss_type", type=str, default="bce", choices=["bce", "mse"],
                    help="Loss function: bce (binary cross-entropy on ground-truth mines) or mse (probability distillation)")
