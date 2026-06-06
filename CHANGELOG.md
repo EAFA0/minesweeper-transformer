@@ -1,3 +1,11 @@
+## [未发布] - 2026-06-06
+
+### 训练 Recipe 系统
+- **新增 `src/config/recipe_config.py`**: `RecipePhase` + `TrainingRecipe` dataclass，将训练策略抽象为可命名的多阶段 recipe。
+- **预定义 `v5_s1` recipe**: MSE warmup (supervised, 8×8/10) → online BCE finetune，替代手动组合 `--mode`/`--loss_type`。
+- **`scripts/train.py`**: 新增 `--recipe` 和 `--dry_run` 参数，支持单 phase 执行；不传 `--recipe` 时向后兼容。
+- **`scripts/train_stage.py`**: 新增 `--recipe` 参数，自动编排多 phase 顺序执行 + 每 phase 后评估；自动解析 pretrained checkpoint 链。
+
 ## [未发布] - 2026-06-05
 
 ### 训练管线修复

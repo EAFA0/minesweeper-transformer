@@ -243,4 +243,44 @@ win_reward       = none
 
 ---
 
-*最后更新: 2026-06-06 (V5 constraint residual 架构新增)*
+## ADR-008: 训练 Recipe 系统
+
+- **状态**: ✅ 接受
+- **日期**: 2026-06-06
+
+### 背景
+训练策略（MSE warmup → online BCE finetune → hybrid）之前分散在 `--mode`/`--loss_type`/`--stage` 等 CLI 参数中手动组合，容易出错且难以复现。
+
+### 决策
+引入 **Recipe 系统**：将训练策略抽象为可命名的多阶段 recipe。
+
+```text
+RecipePhase: {mode, loss_type, n_games, lr, board, pretrained, save_dir}
+TrainingRecipe: {name, phases: [RecipePhase, ...]}
+```
+
+预定义 recipe 示例：
+- `v5_s1`: supervised MSE warmup (8×8/10, 5000 games) → online BCE finetune (8×8/10, 3000 games)
+
+### 使用方式
+
+```bash
+# 查看 recipe 内容
+uv run python3 scripts/train.py --recipe v5_s1 --dry_run
+
+# 执行完整 recipe（多阶段自动编排）
+uv run python3 scripts/train_stage.py --recipe v5_s1 --arch V5
+
+# 单 phase 执行（调试用）
+uv run python3 scripts/train.py --recipe v5_s1 --arch V5
+```
+
+### 设计原则
+1. Recipe 与 stage 并存，`--recipe` 优先于 `--stage`/`--mode`/`--loss_type`
+2. 不传 `--recipe` 时完全向后兼容
+3. `train_stage.py` 自动编排多 phase 顺序执行，每 phase 后自动评估
+4. Pretrained checkpoint 链自动解析（phase N 默认继承 phase N-1 的 best_model.pt）
+
+---
+
+*最后更新: 2026-06-06 (Recipe 系统新增)*
