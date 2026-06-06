@@ -87,22 +87,20 @@
 
 ## 坑 #11: V4 架构缺少 grounding 和残差 — 状态漂移导致高密度失败
 
+> **状态**: 已解决。V4 latent loop 路线已废弃，V5 使用显式反馈 + constraint channels 替代。
+
 - **症状**: 6×6/18 (50%密度) Online BCE 胜率 6.5%，蒸馏 BCE 胜率 12%；格点准确率峰值 82.5%，远低于所需 99%+
 - **根因排查**: 审计 V4 代码发现两个设计缺陷：
   1. CNN 特征仅在第一步使用，后续 refinement step 中 Transformer 只能看见自己的隐状态 → 状态逐渐漂移
   2. 无外部残差：`m_{t+1} = Transformer(m_t)`，Transformer 需重建完整表示 → BPTT 梯度容易消失
-- **修复 (2026-06-04)**: 
-  1. 每步重注 CNN 特征: `x = mem_seq + pe_seq + features_seq`
-  2. 外部残差: `return mem_seq + self.transformer(x)`
-  3. 去除末端 LayerNorm: 允许 confidence 在循环中增长
-- **教训**: 循环架构必须保持 grounding（原始特征注入）+ residual（delta 建模），否则退化为无记忆的单步推理
+- **教训**: 循环架构必须保持 grounding（原始特征注入）+ residual（delta 建模），否则退化为无记忆的单步推理。V5 的显式反馈（每步 CNN 重跑 + prev_probs + constraint channels）彻底解决了此问题。
 - **记录日期**: 2026-06-04
 
 ## 坑 #12: BatchNorm + batch_size=1 的微妙权衡
 
 - **症状**: 历史上 commit `0d35275` 改为 `model.eval()` 训练，随后 `c8ad0a2` 改回 `model.train()`
 - **根因**: 在线 BCE 每次 forward 只处理 1 个棋盘。BatchNorm2d 统计量来自 H×W 个空间位置（8×8=64 样本/通道），虽非退化但噪声大。Running stats 被每步的噪声 EMA 更新，可能导致累积偏置。
-- **当前选择**: `model.train()` — V4 CNN 只跑一次，单步噪声可接受；eval() 会完全冻结 running stats，若初始值不匹配更危险
+- **当前选择**: `model.train()` — V5 CNN 每步重跑，单步噪声可接受；eval() 会完全冻结 running stats，若初始值不匹配更危险
 - **未来改进方向**: 换 GroupNorm(num_groups=8) 彻底消除 batch 依赖，或训练初期用 eval 模式预热 BN 统计量
 - **教训**: BN 的 batch_size 问题在 2D 场景下被空间维度缓解，不是根因但值得标记
 - **记录日期**: 2026-06-04
