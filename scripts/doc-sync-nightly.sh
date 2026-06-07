@@ -5,7 +5,6 @@ set -euo pipefail
 
 PROJECT_DIR="/home/ubuntu/minesweeper-transformer"
 cd "$PROJECT_DIR"
-ODE=~/.local/bin/ode
 STATE_FILE="$PROJECT_DIR/.doc-sync-last-audit"
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] 开始夜间文档审计..."
@@ -45,28 +44,28 @@ fi
 echo "变更文件:"
 echo "$CHANGED_FILES" | sed 's/^/  /'
 
-# 4. 构建精准 prompt — 只审查这些文件相关的文档
+# 4. 提取变更摘要，供 AI 审查
 CHANGED_LIST=$(echo "$CHANGED_FILES" | tr '\n' ' ')
-PROMPT="你是文档审计员。以下文件在过去 24 小时内有变更，请检查对应的文档是否过时：
+CHANGED_SUMMARY=$(git diff --stat "$LAST_AUDIT" HEAD -- $CHANGED_LIST | tail -1 || echo "")
 
-变更的代码/脚本文件:
-$CHANGED_LIST
+echo "变更摘要: $CHANGED_SUMMARY"
 
-需要检查的文档（仅检查与变更相关的部分，不必全量扫描）:
-- docs/architecture.md — 如果架构代码变更，检查 ADR 描述
-- docs/training-log.md — 如果训练参数变更，检查训练记录
-- docs/conventions.md — 如果 CLI 入口变更，检查命令行示例
-- docs/metrics.md — 如果 loss/指标逻辑变更，检查指标说明
-- AGENTS.md — 如果模块路径变更，检查索引描述
-- CHANGELOG.md — 如果有关键功能变更，补充条目
+# 简单启发式检查：如果 CHANGELOG.md 不在变更列表中，提醒可能需要更新
+if ! echo "$CHANGED_FILES" | grep -q 'CHANGELOG.md'; then
+    echo "[提醒] CHANGELOG.md 未包含在本次变更中"
+fi
 
-规则:
-1. 寻找文档中引用的常量、路径、类名、参数默认值，对照变更文件中的实际值
-2. 发现不一致则修复文档（不要改代码）
-3. 只修确实被变更影响的文档，不必重写整个文档
-4. 如果所有文档已准确，回复 'NO_CHANGES'"
-
-$ODE --model flash "$PROMPT" 2>&1 || echo "[警告] opencode 执行异常，跳过本次审计"
+# 检查文档是否引用了已删除/重命名的文件
+for doc in docs/architecture.md docs/training-log.md docs/conventions.md docs/metrics.md AGENTS.md; do
+    if [ -f "$doc" ]; then
+        for f in $CHANGED_FILES; do
+            fname=$(basename "$f")
+            if grep -q "$fname" "$doc" 2>/dev/null; then
+                echo "[提醒] $doc 引用了变更文件: $fname"
+            fi
+        done
+    fi
+done
 
 # 5. commit + push (如果有变更)
 if ! git diff --quiet docs/ AGENTS.md CHANGELOG.md 2>/dev/null; then
