@@ -102,6 +102,33 @@ Failure mining 500 局结果：
 | 输出 | `data/mistakes/S5_rule_guard_failures.npz` + `.json` |
 | 结论 | 剩余错误几乎全部集中在可证明安全格排序失败；下一步优先小比例 hard-example replay，暂不优先上 lookahead search。 |
 
+### S5 mistake replay fine-tune result
+
+| 项目 | 值 |
+|------|-----|
+| 继承 | `checkpoints/v5_replay_S5/best_model.pt` |
+| 数据 | `data/S5:0.55,data/S1:0.1,data/S2:0.1,data/S3:0.1,data/S4:0.1,data/mistakes/S5_rule_guard_failures.npz:0.05` |
+| 超参 | supervised `deep_mse_rank`, lr=1e-4, epochs=2, batch=64, refine=4 |
+| Checkpoint | `checkpoints/v5_replay_S5_mistake_ft/best_model.pt` |
+| S5 裸模型 500 局 | 484/500 WR = 96.80%, action_acc=0.9982, avg_steps=18.2, avg_refine=4.0 |
+| S5 rule guard 500 局 | 494/500 WR = 98.80%, action_acc=0.9993, rule_guard_actions=8241, avg_steps=18.3 |
+| S5 after-mining | 484/500 WR = 96.80%, 388 saved states, `rule_guard_avoidable=382`, `hard_sorting=6`, `calibration_drift=11` |
+| S1 回归 200 局 | 197/200 WR = 98.50%, action_acc=0.9992, avg_steps=18.8 |
+| S4/S25 回归 200 局 | 192/200 WR = 96.00%, action_acc=0.9983, avg_steps=23.9 |
+| 结论 | hard-example replay 成立：S5 裸模型从 91.40% 提升到 96.80%，S1/S4 无明显回归。下一步可用 `S5_after_mistake_ft.npz` 做更保守二次微调，优先 lr=5e-5、epochs=1、mistake weight=5%-8%。 |
+
+二次微调建议：
+
+```bash
+PYTHONPATH=src uv run python3 scripts/train.py \
+  --mode supervised --arch V5 --loss_type deep_mse_rank \
+  --data_dir "data/S5:0.52,data/S1:0.1,data/S2:0.1,data/S3:0.1,data/S4:0.1,data/mistakes/S5_after_mistake_ft.npz:0.08" \
+  --pretrained checkpoints/v5_replay_S5_mistake_ft/best_model.pt \
+  --save_dir checkpoints/v5_replay_S5_mistake_ft2 \
+  --board_width 8 --board_height 8 --board_mines 32 \
+  --epochs 1 --lr 5e-5
+```
+
 ---
 
 ## 2026-06-06: V5 S1 strict no-guess rerun (15ch/Deep-MSE 历史记录)

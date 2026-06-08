@@ -77,6 +77,18 @@ PYTHONPATH=src uv run python3 scripts/collect_mistakes.py \
 
 该分布说明下一步应优先做小比例 hard-example replay，目标是内化 `ConstraintSolver` 已能证明的 safe-cell 排序；lookahead search 暂时排在后面。
 
+S5 mistake replay fine-tune 后：
+- S5 裸模型: 484/500 WR = 96.80%, action_acc=0.9982
+- S5 `--rule_guard`: 494/500 WR = 98.80%, action_acc=0.9993
+- S5 after-mining: 388 saved states, `rule_guard_avoidable=382`, `hard_sorting=6`
+- S1 回归: 197/200 WR = 98.50%
+- S4/S25 回归: 192/200 WR = 96.00%
+
+解读：
+- hard-example replay 显著提升裸模型排序能力，S5 裸胜率 +5.4pp
+- `hard_sorting` 未下降，说明剩余极难错误不是当前微调主要解决对象
+- 后续二次微调应保守提高 mistake weight 或降低 lr，避免牺牲 S1/S4 泛化
+
 ## RL 训练时（已从 main 移除）
 
 > RL 代码已从 main 移除，以下指标仅供历史参考。
