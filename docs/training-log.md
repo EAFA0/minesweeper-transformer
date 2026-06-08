@@ -1,12 +1,10 @@
 # 训练记录
 
-当前主线: Online BCE 三阶段训练 — S1(规则) → S2(密度) → S3(高密度泛化)
-> **2026-06-06 更新**: V5 constraint channels 从 4 个扩为 8 个，当前模型输入为 19ch。此前 15ch checkpoint 与训练结果保留为历史记录，新架构需重新训练。
-> **2026-06-03**: 全线切换 Online BCE。MSE 监督训练、data_dir、LEGACY_STAGES 退役。
-> 评估用 EvalBoardPool，训练用 TrajectoryPool。全 BPTT refinement (无 detach)。
-> **2026-06-04**: V4 架构落地 (grounding + residual + deep inference)，S3 重定义为 8×8/32。
+当前主线: V5 replay curriculum — S1(8×8/10) → S2(15) → S3(20) → S4(25) → S5(32)。
 
-全局策略: Online BCE 训练，refine 固定 4 步全 BPTT（无 detach），Deep Inference 评估/推理 16 步且收敛早停。
+> **2026-06-06 更新**: V5 constraint channels 从 4 个扩为 8 个，当前模型输入为 19ch；主 loss 为 `deep_mse_rank`；主 recipe 为 `v5_curriculum_replay`。
+> **数据合同**: 主训练/评估数据均为 strict no-guess；生成器额外要求本项目 `ProbabilitySolver` 可无猜解完整局。
+> **推理策略**: refine 固定上限 4 步，全 BPTT 训练；评估中根据 `max|P_t - P_{t-1}| < convergence_eps` 早停。
 
 ## 日志格式
 
@@ -15,7 +13,55 @@
 
 ---
 
-## 2026-06-06: V5 S1 strict no-guess rerun
+## 2026-06-06: V5 19ch + ranking/replay curriculum
+
+### S1 sanity baseline
+
+| 项目 | 值 |
+|------|-----|
+| Recipe | `v5_curriculum_replay` Phase 1 |
+| 架构 | V5 constraint residual, 19ch input, 1ch mine logit |
+| 设备 | Mac MPS |
+| 数据 | `data/S1`, 8×8/10, 10000 局 strict no-guess |
+| 超参 | supervised `deep_mse_rank`, lr=3e-4, epochs=5, batch=64, refine=4 |
+| 独立评估 | 198/200 WR = 99.00%, action_acc=0.9994, avg_steps=17.9, avg_refine=3.9 |
+| Checkpoint | `checkpoints/v5_S1/best_model.pt`；当前等价主线 phase 输出为 `checkpoints/v5_replay_S1/best_model.pt` |
+| 结论 | 19ch hard-constraint channels 将 S1 恢复到旧体系 99% 水平，V5 架构方向成立。 |
+
+### S4 replay result
+
+| 项目 | 值 |
+|------|-----|
+| Recipe | `v5_curriculum_replay` Phase 4 |
+| 棋盘 | 8×8/25, 39.1% 密度 |
+| 数据 | `data/S4:0.7,data/S1:0.1,data/S2:0.1,data/S3:0.1` |
+| 超参 | supervised `deep_mse_rank`, lr=3e-4, epochs=5, batch=64, refine=4 |
+| 独立评估 | 191/200 WR = 95.50%, action_acc=0.9981, avg_steps=23.6, avg_refine=4.0 |
+| Checkpoint | `checkpoints/v5_replay_S4/best_model.pt` |
+| 结论 | S4 胜率主要受逐步 action error 控制：`0.9981^23.6 ≈ 95.6%`。若要 99% WR，action_acc 需接近 0.9996。 |
+
+### 下一阶段: S5 max-density
+
+| 项目 | 值 |
+|------|-----|
+| Recipe | `v5_curriculum_replay` Phase 5 |
+| 棋盘 | 8×8/32, 50.0% 密度 |
+| 数据 | `data/S5:0.6,data/S1:0.1,data/S2:0.1,data/S3:0.1,data/S4:0.1` |
+| 继承 | `checkpoints/v5_replay_S4/best_model.pt` |
+| Checkpoint | `checkpoints/v5_replay_S5/best_model.pt` |
+| 目标 | 评估裸模型在 50% 密度 no-guess 数据上的上限，并为 hard-rule guard / solver fallback / failure mining 提供依据。 |
+
+直接从 S5 开始：
+
+```bash
+PYTHONPATH=src uv run python3 scripts/train_stage.py \
+  --recipe v5_curriculum_replay --start_phase 5 --end_phase 5 \
+  --arch V5 --device auto --eval_games 200
+```
+
+---
+
+## 2026-06-06: V5 S1 strict no-guess rerun (15ch/Deep-MSE 历史记录)
 
 | 项目 | 值 |
 |------|-----|

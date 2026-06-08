@@ -18,6 +18,30 @@ from game.game import MinesweeperGame
 class TrajectoryPool:
     eval_cache_prefix = "eval_boards"
 
+    @staticmethod
+    def _parse_data_sources(data_dir: str) -> List[Tuple[Path, float]]:
+        """Parse data_dir as one or more weighted sources.
+
+        Examples:
+          data
+          data/S2:0.7,data/S1:0.3
+        """
+        sources = []
+        for raw in (data_dir or "data").split(","):
+            spec = raw.strip()
+            if not spec:
+                continue
+            path_text, weight = spec, 1.0
+            if ":" in spec:
+                path_text, weight_text = spec.rsplit(":", 1)
+                weight = float(weight_text)
+            if weight <= 0:
+                raise ValueError(f"Data source weight must be positive: {spec}")
+            sources.append((Path(path_text), weight))
+        if not sources:
+            sources.append((Path("data"), 1.0))
+        return sources
+
     def _load_eval_file(self, p: Path):
         try:
             data = np.load(p, allow_pickle=True)
@@ -70,8 +94,12 @@ class TrajectoryPool:
         self.compute_probs = compute_probs
         self.eval_mode = eval_mode
         self.data_dir = data_dir or "data"
+        self._data_sources = self._parse_data_sources(self.data_dir)
         
         self._offline_buffer: List[Dict[str, Any]] = []
+        self._source_buffers: List[List[Dict[str, Any]]] = [
+            [] for _ in self._data_sources
+        ]
         self._loaded_files = set()
         
         # Load offline data if data_dir is provided
@@ -82,31 +110,54 @@ class TrajectoryPool:
         if not self.data_dir:
             return
             
-        p = Path(self.data_dir)
-        if not p.exists():
-            return
-            
-        if p.is_dir():
-            if self.eval_mode:
-                eval_file = p / f"{self.eval_cache_prefix}_{self.width}x{self.height}_{self.mines}.npz"
-                if eval_file.exists() and eval_file not in self._loaded_files:
-                    self._load_eval_file(eval_file)
-                    self._loaded_files.add(eval_file)
-            else:
-                pattern = f"{self.width}x{self.height}_{self.mines}_*.npz"
-                new_files = [f for f in p.glob(pattern) if f not in self._loaded_files and "eval_boards" not in f.name]
+        for source_idx, (p, _weight) in enumerate(self._data_sources):
+            if not p.exists():
+                continue
+
+            if p.is_dir():
+                if self.eval_mode:
+                    eval_file = p / f"{self.eval_cache_prefix}_{self.width}x{self.height}_{self.mines}.npz"
+                    if eval_file.exists() and eval_file not in self._loaded_files:
+                        before = len(self._offline_buffer)
+                        self._load_eval_file(eval_file)
+                        self._source_buffers[source_idx].extend(self._offline_buffer[before:])
+                        self._loaded_files.add(eval_file)
+                    continue
+
+                if len(self._data_sources) == 1:
+                    pattern = f"{self.width}x{self.height}_{self.mines}_*.npz"
+                else:
+                    pattern = f"{self.width}x{self.height}_*.npz"
+                new_files = [
+                    f for f in p.glob(pattern)
+                    if f not in self._loaded_files and "eval_boards" not in f.name
+                ]
                 if new_files:
-                    print(f"TrajectoryPool: Found {len(new_files)} new data files. Loading...")
+                    print(f"TrajectoryPool: Found {len(new_files)} new data files in {p}. Loading...")
                     for f in sorted(new_files):
+                        before = len(self._offline_buffer)
                         self._load_train_file(f)
+                        self._source_buffers[source_idx].extend(self._offline_buffer[before:])
                         self._loaded_files.add(f)
                     print(f"TrajectoryPool: Total trajectories loaded: {len(self._offline_buffer)}")
-        elif p.is_file() and p not in self._loaded_files:
-            if self.eval_mode:
-                self._load_eval_file(p)
-            else:
-                self._load_train_file(p)
-            self._loaded_files.add(p)
+            elif p.is_file() and p not in self._loaded_files:
+                before = len(self._offline_buffer)
+                if self.eval_mode:
+                    self._load_eval_file(p)
+                else:
+                    self._load_train_file(p)
+                self._source_buffers[source_idx].extend(self._offline_buffer[before:])
+                self._loaded_files.add(p)
+
+    def _get_source_weights(self) -> np.ndarray:
+        weights = []
+        for source_buffer, (_path, weight) in zip(self._source_buffers, self._data_sources):
+            weights.append(weight if source_buffer else 0.0)
+        probs = np.asarray(weights, dtype=np.float64)
+        total = probs.sum()
+        if total <= 0:
+            return probs
+        return probs / total
 
     def _get_traj(self) -> Dict[str, Any]:
         """Get one trajectory randomly from the loaded offline buffer. Wait if empty."""
@@ -114,7 +165,13 @@ class TrajectoryPool:
             print("TrajectoryPool: Buffer empty, waiting for background data generation...")
             time.sleep(2)
             self.refresh()
-            
+
+        probs = self._get_source_weights()
+        if probs.sum() > 0:
+            source_idx = int(np.random.choice(len(self._source_buffers), p=probs))
+            source_buffer = self._source_buffers[source_idx]
+            return source_buffer[np.random.randint(len(source_buffer))]
+
         idx = np.random.randint(len(self._offline_buffer))
         return self._offline_buffer[idx]
 

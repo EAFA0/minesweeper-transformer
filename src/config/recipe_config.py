@@ -37,18 +37,6 @@ class TrainingRecipe:
 # ── Predefined recipes ──────────────────────────────────────────────────────
 
 RECIPES: Dict[str, TrainingRecipe] = {
-    "v5_s1": TrainingRecipe(
-        name="v5_s1",
-        phases=[
-            RecipePhase(
-                mode="supervised", loss_type="deep_mse", n_games=5000,
-                board_width=8, board_height=8, board_mines=10,
-                lr=3e-4, save_dir="checkpoints/v5_s1_deep",
-                data_dir="data",
-                desc="S1 supervised Deep-MSE (all refinement steps)",
-            ),
-        ],
-    ),
     "v5_s1_rank": TrainingRecipe(
         name="v5_s1_rank",
         phases=[
@@ -61,81 +49,43 @@ RECIPES: Dict[str, TrainingRecipe] = {
             ),
         ],
     ),
-    "v5_curriculum": TrainingRecipe(
-        name="v5_curriculum",
-        phases=[
-            RecipePhase(
-                mode="supervised", loss_type="deep_mse", n_games=10000,
-                board_width=8, board_height=8, board_mines=10,
-                lr=3e-4, save_dir="checkpoints/v5_S1",
-                data_dir="data/S1",
-                desc="S1 supervised Deep-MSE — 8x8/10",
-            ),
-            RecipePhase(
-                mode="supervised", loss_type="deep_mse", n_games=10000,
-                board_width=8, board_height=8, board_mines=15,
-                lr=3e-4, save_dir="checkpoints/v5_S2",
-                data_dir="data/S2",
-                desc="S2 supervised Deep-MSE — 8x8/15",
-            ),
-            RecipePhase(
-                mode="supervised", loss_type="deep_mse", n_games=10000,
-                board_width=8, board_height=8, board_mines=20,
-                lr=3e-4, save_dir="checkpoints/v5_S3",
-                data_dir="data/S3",
-                desc="S3 supervised Deep-MSE — 8x8/20",
-            ),
-            RecipePhase(
-                mode="supervised", loss_type="deep_mse", n_games=10000,
-                board_width=8, board_height=8, board_mines=25,
-                lr=3e-4, save_dir="checkpoints/v5_S4",
-                data_dir="data/S4",
-                desc="S4 supervised Deep-MSE — 8x8/25",
-            ),
-        ],
-    ),
-    "v5_curriculum_rank": TrainingRecipe(
-        name="v5_curriculum_rank",
+    "v5_curriculum_replay": TrainingRecipe(
+        name="v5_curriculum_replay",
         phases=[
             RecipePhase(
                 mode="supervised", loss_type="deep_mse_rank", n_games=10000,
                 board_width=8, board_height=8, board_mines=10,
-                lr=3e-4, save_dir="checkpoints/v5_rank_S1",
+                lr=3e-4, save_dir="checkpoints/v5_replay_S1",
                 data_dir="data/S1",
                 desc="S1 supervised Deep-MSE + ranking — 8x8/10",
             ),
             RecipePhase(
                 mode="supervised", loss_type="deep_mse_rank", n_games=10000,
                 board_width=8, board_height=8, board_mines=15,
-                lr=3e-4, save_dir="checkpoints/v5_rank_S2",
-                data_dir="data/S2",
-                desc="S2 supervised Deep-MSE + ranking — 8x8/15",
+                lr=3e-4, save_dir="checkpoints/v5_replay_S2",
+                data_dir="data/S2:0.7,data/S1:0.3",
+                desc="S2 replay mix — 70% 8x8/15 + 30% S1",
             ),
             RecipePhase(
                 mode="supervised", loss_type="deep_mse_rank", n_games=10000,
                 board_width=8, board_height=8, board_mines=20,
-                lr=3e-4, save_dir="checkpoints/v5_rank_S3",
-                data_dir="data/S3",
-                desc="S3 supervised Deep-MSE + ranking — 8x8/20",
+                lr=3e-4, save_dir="checkpoints/v5_replay_S3",
+                data_dir="data/S3:0.7,data/S1:0.15,data/S2:0.15",
+                desc="S3 replay mix — 70% 8x8/20 + 15% S1 + 15% S2",
             ),
             RecipePhase(
                 mode="supervised", loss_type="deep_mse_rank", n_games=10000,
                 board_width=8, board_height=8, board_mines=25,
-                lr=3e-4, save_dir="checkpoints/v5_rank_S4",
-                data_dir="data/S4",
-                desc="S4 supervised Deep-MSE + ranking — 8x8/25",
+                lr=3e-4, save_dir="checkpoints/v5_replay_S4",
+                data_dir="data/S4:0.7,data/S1:0.1,data/S2:0.1,data/S3:0.1",
+                desc="S4 replay mix — 70% 8x8/25 + 10% S1 + 10% S2 + 10% S3",
             ),
-        ],
-    ),
-    "v5_s1_mse": TrainingRecipe(
-        name="v5_s1_mse",
-        phases=[
             RecipePhase(
-                mode="supervised", loss_type="mse", n_games=5000,
-                board_width=8, board_height=8, board_mines=10,
-                lr=3e-4, save_dir="checkpoints/v5_s1_mse",
-                data_dir="data",
-                desc="S1 supervised MSE baseline (final refinement step)",
+                mode="supervised", loss_type="deep_mse_rank", n_games=10000,
+                board_width=8, board_height=8, board_mines=32,
+                lr=3e-4, save_dir="checkpoints/v5_replay_S5",
+                data_dir="data/S5:0.6,data/S1:0.1,data/S2:0.1,data/S3:0.1,data/S4:0.1",
+                desc="S5 max-density replay — 60% 8x8/32 + 10% S1/S2/S3/S4",
             ),
         ],
     ),

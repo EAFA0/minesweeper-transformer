@@ -29,6 +29,13 @@ STAGES = {
         "pretrained": "checkpoints/S3/best_model.pt",
         "desc": "高密度 — 8×8/25雷",
     },
+    "S5": {
+        "width": 8, "height": 8, "mines": 32,
+        "n_games": 10000, "save_dir": "checkpoints/S5",
+        "lr": 3e-4, "weight_decay": 3e-4,
+        "pretrained": "checkpoints/S4/best_model.pt",
+        "desc": "最高密度 — 8×8/32雷",
+    },
 }
 
 def apply_stage_config(config, stage_name: str):

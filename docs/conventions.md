@@ -42,22 +42,26 @@ python -m src.data.generator --n_samples 10000 --workers 0 --force
 
 ### 训练
 ```bash
-# 三阶段预训练（统一入口）
+# 分阶段训练（legacy stage 入口）
 python scripts/train_stage.py --stage S1          # 从头训练 8x8/10
 python scripts/train_stage.py --stage S2          # 继承 S1 → 8x8/15
 python scripts/train_stage.py --stage S3          # 继承 S2 → 8x8/20
 python scripts/train_stage.py --stage S4          # 继承 S3 → 8x8/25
-python scripts/train_stage.py --recipe v5_curriculum --arch V5  # S1 → S2 → S3 → S4
+python scripts/train_stage.py --stage S5          # 继承 S4 → 8x8/32
 
 # 带强制数据重新生成
 python scripts/train_stage.py --stage S1 --force_data
 
 # 仅评估
-python scripts/train_stage.py --stage S4 --eval_only
-python scripts/train_stage.py --stage S4 --eval 10 10 40  # 零样本评估
+python scripts/train_stage.py --stage S5 --eval_only
+python scripts/train_stage.py --stage S5 --eval 10 10 40  # 零样本评估
 
-# Recipe 模式
-python scripts/train_stage.py --recipe v5_s1 --arch V5
+# Recipe 模式（当前主线）
+python scripts/train_stage.py --recipe v5_curriculum_replay --arch V5
+
+# 只跑 recipe 的 S5（从 checkpoints/v5_replay_S4/best_model.pt 继承）
+python scripts/train_stage.py --recipe v5_curriculum_replay \
+    --start_phase 5 --end_phase 5 --arch V5
 
 # 直接调 train.py（调试用）
 # Online BCE（自我探索，默认）
@@ -68,8 +72,8 @@ python scripts/train.py --board_width 8 --board_height 8 --board_mines 10 --n_ga
 python scripts/train.py --mode supervised --data_dir data/S1 --epochs 5 --device cuda \
     --save_dir checkpoints/S1 --lr 1e-3 --weight_decay 3e-4
 
-# MSE loss (全 covered cells，替代 BCE 的 frontier 策略)
-python scripts/train.py --loss_type mse --n_games 5000
+# 当前主力 loss
+python scripts/train.py --loss_type deep_mse_rank --n_games 5000
 ```
 
 ### 评估

@@ -28,10 +28,10 @@ def main():
     # High-level configuration
     p.add_argument("--mode", type=str, default="online", choices=["online", "supervised"],
                    help="Training mode: online (self-play) or supervised (offline npz)")
-    p.add_argument("--stage", type=str, default=None, choices=["S1", "S2", "S3", "S4"],
-                   help="Training stage (e.g. S1, S2, S3, S4). Applies stage-specific board/optimizer configs.")
+    p.add_argument("--stage", type=str, default=None, choices=["S1", "S2", "S3", "S4", "S5"],
+                   help="Training stage (e.g. S1, S2, S3, S4, S5). Applies stage-specific board/optimizer configs.")
     p.add_argument("--recipe", type=str, default=None,
-                   help="Training recipe name (e.g. v5_s1). Overrides --stage/--mode/--loss_type.")
+                   help="Training recipe name (e.g. v5_curriculum_replay). Overrides --stage/--mode/--loss_type.")
     p.add_argument("--arch", type=str, default="V5", choices=["V5"],
                    help="Architecture version to use")
     p.add_argument("--loss_type", type=str, default="bce", choices=["bce", "mse", "deep_mse", "deep_mse_rank"],
@@ -42,6 +42,8 @@ def main():
 
     # Explicit overrides (optional)
     p.add_argument("--n_games", type=int, default=None, help="Override number of games")
+    p.add_argument("--epochs", type=int, default=None, help="Override supervised training epochs")
+    p.add_argument("--eval_games", type=int, default=None, help="Override internal evaluation games")
     p.add_argument("--lr", type=float, default=None, dest="learning_rate", help="Override learning rate")
     p.add_argument("--pretrained", default=None, help="Override pretrained checkpoint path")
     p.add_argument("--resume_from", default=None, help="Resume training from checkpoint")
@@ -77,6 +79,10 @@ def main():
         # CLI overrides still apply on top of recipe
         if args.n_games is not None:
             config.n_games = args.n_games
+        if args.epochs is not None:
+            config.epochs = args.epochs
+        if args.eval_games is not None:
+            config.eval_games = args.eval_games
         if args.learning_rate is not None:
             config.learning_rate = args.learning_rate
         if args.save_dir is not None:
@@ -100,6 +106,10 @@ def main():
 
         if args.n_games is not None:
             config.n_games = args.n_games
+        if args.epochs is not None:
+            config.epochs = args.epochs
+        if args.eval_games is not None:
+            config.eval_games = args.eval_games
         if args.learning_rate is not None:
             config.learning_rate = args.learning_rate
         if args.pretrained is not None:

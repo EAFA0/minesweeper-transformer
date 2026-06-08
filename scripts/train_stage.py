@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
 """Minesweeper Transformer — 多阶段密度课程训练
 
-核心路线 S1 → S2 → S3 → S4:
+核心路线 S1 → S2 → S3 → S4 → S5:
   S1 (规则):  8×8 / 10雷
   S2 (低中密度): 8×8 / 15雷
   S3 (中密度): 8×8 / 20雷
   S4 (高密度): 8×8 / 25雷
+  S5 (最高密度): 8×8 / 32雷
 
 Recipe 模式:
-  uv run python3 scripts/train_stage.py --recipe v5_s1 --arch V5
+  uv run python3 scripts/train_stage.py --recipe v5_curriculum_replay --arch V5
 
 用法:
   uv run python3 scripts/train_stage.py --all
   uv run python3 scripts/train_stage.py --stage S1
-  uv run python3 scripts/train_stage.py --stage S4 --eval 10 10 40
-  uv run python3 scripts/train_stage.py --recipe v5_curriculum --arch V5
+  uv run python3 scripts/train_stage.py --stage S5 --eval 10 10 40
+  uv run python3 scripts/train_stage.py --recipe v5_curriculum_replay --arch V5
 """
 
 import argparse
@@ -83,13 +84,26 @@ def _build_eval_cmd(ckpt_path: str, phase, arch: str, device: str,
 def run_recipe(recipe_name: str, args):
     """Execute all phases of a training recipe sequentially."""
     recipe = RECIPES[recipe_name]
+    start_phase = args.start_phase or 1
+    end_phase = args.end_phase or len(recipe.phases)
+    if start_phase < 1 or end_phase > len(recipe.phases) or start_phase > end_phase:
+        print(
+            f"Invalid phase range: start={start_phase}, end={end_phase}, "
+            f"recipe has {len(recipe.phases)} phases"
+        )
+        sys.exit(1)
 
     print(f"\n{'='*60}")
     print(f"  Recipe: {recipe.name} ({len(recipe.phases)} phases)")
     print(f"  Arch: {args.arch}  |  Device: {args.device}")
+    if start_phase != 1 or end_phase != len(recipe.phases):
+        print(f"  Phase range: {start_phase} → {end_phase}")
     print(f"{'='*60}")
 
     for i, phase in enumerate(recipe.phases, 1):
+        if i < start_phase or i > end_phase:
+            continue
+
         print(f"\n{'─'*60}")
         print(f"  Phase {i}/{len(recipe.phases)}: {phase.desc}")
         print(f"{'─'*60}")
@@ -103,7 +117,9 @@ def run_recipe(recipe_name: str, args):
                 pretrained = str(prev_best)
                 print(f"  Auto pretrained: {pretrained}")
             else:
-                print(f"  ⚠ Previous phase checkpoint not found: {prev_best}")
+                print(f"  ❌ Previous phase checkpoint not found: {prev_best}")
+                print("     Run the previous phase first, or provide a recipe phase with explicit pretrained.")
+                sys.exit(1)
 
         # Check pretrained exists
         if pretrained and not Path(pretrained).exists():
@@ -232,7 +248,7 @@ def main():
     p.add_argument("--stage", choices=list(STAGES.keys()),
                    help="训练阶段: " + " | ".join(STAGES.keys()))
     p.add_argument("--recipe", type=str, default=None,
-                   help="Recipe name (e.g. v5_s1, v5_curriculum). Runs all phases sequentially.")
+                   help="Recipe name (e.g. v5_curriculum_replay). Runs all phases sequentially.")
     p.add_argument("--all", action="store_true",
                    help="运行主线全部: " + " → ".join(STAGES.keys()))
     p.add_argument("--n_games", type=int, default=None, help="覆盖默认训练游戏数")
@@ -245,6 +261,10 @@ def main():
     p.add_argument("--eval_games", type=int, default=200)
     p.add_argument("--eval", nargs=3, type=int, metavar=("W", "H", "M"), default=None)
     p.add_argument("--eval_only", action="store_true")
+    p.add_argument("--start_phase", type=int, default=None,
+                   help="Recipe mode: start from this 1-based phase index")
+    p.add_argument("--end_phase", type=int, default=None,
+                   help="Recipe mode: stop at this 1-based phase index")
 
     args = p.parse_args()
 
@@ -265,7 +285,7 @@ def main():
     else:
         print(f"\n核心路线: {' → '.join(STAGES.keys())}")
         print(f"Recipes: {', '.join(RECIPES.keys())}")
-        print("\n--all  运行全部  |  --stage S1  指定阶段  |  --recipe v5_curriculum  Recipe模式  |  --eval_only 仅评估")
+        print("\n--all  运行全部  |  --stage S1  指定阶段  |  --recipe v5_curriculum_replay  Recipe模式  |  --eval_only 仅评估")
         sys.exit(0)
 
     for stage in stages_to_run:

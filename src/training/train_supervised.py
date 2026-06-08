@@ -46,14 +46,16 @@ def train_supervised(
     run_dir = run_dir or datetime.now().strftime("runs/%Y%m%d_%H%M%S")
     os.makedirs(run_dir, exist_ok=True)
     
-    # Spawn background generator if needed
-    os.makedirs(config.data_dir, exist_ok=True)
-    log_file = os.path.join(config.data_dir, "data_gen.log")
+    # Spawn background generator for the primary/current phase source only.
+    # Additional comma-separated sources are replay data and are loaded read-only.
+    primary_data_dir = config.data_dir.split(",", 1)[0].strip().rsplit(":", 1)[0]
+    os.makedirs(primary_data_dir, exist_ok=True)
+    log_file = os.path.join(primary_data_dir, "data_gen.log")
     print(f"Starting background data generator (logs to {log_file})...")
     gen_cmd = [
         sys.executable, "scripts/generate_data.py",
         "--n_samples", str(config.n_games),
-        "--output", config.data_dir,
+        "--output", primary_data_dir,
         "--width", str(config.board_width),
         "--height", str(config.board_height),
         "--mines", str(config.board_mines),

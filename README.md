@@ -1,6 +1,6 @@
 # Minesweeper Transformer
 
-CNN + Transformer 混合架构的扫雷 AI。当前主线：**V5 supervised curriculum `S1 → S2 → S3 → S4`**。
+CNN + Transformer 混合架构的扫雷 AI。当前主线：**V5 replay curriculum `S1 → S2 → S3 → S4 → S5`**。
 
 ## 快速开始
 
@@ -8,11 +8,11 @@ CNN + Transformer 混合架构的扫雷 AI。当前主线：**V5 supervised curr
 # 1. 安装依赖（editable install）
 uv sync
 
-# 2. 全阶段训练（S1 → S2 → S3 → S4）
-uv run python3 scripts/train_stage.py --recipe v5_curriculum --arch V5
+# 2. 全阶段训练（S1 → S2 → S3 → S4 → S5）
+uv run python3 scripts/train_stage.py --recipe v5_curriculum_replay --arch V5
 
 # 3. 零样本评估
-uv run python3 scripts/evaluate.py checkpoints/v5_S4/best_model.pt \
+uv run python3 scripts/evaluate.py checkpoints/v5_replay_S5/best_model.pt \
   --width 10 --height 10 --mines 40
 
 # 4. 单阶段冷启动 (Online 模式)
@@ -42,7 +42,7 @@ refinement.convergence_eps = 0.05
 
 ## 训练 Pipeline
 
-V5 supervised curriculum：strict no-guess 数据 + Deep-MSE probability distillation + 全 BPTT refinement。
+V5 replay curriculum：strict no-guess 数据 + Deep-MSE probability distillation + best-safe ranking loss + 全 BPTT refinement。
 
 | 阶段 | 棋盘 | 雷数 | 密度 | 游戏数 |
 |------|------|------|------|--------|
@@ -50,8 +50,9 @@ V5 supervised curriculum：strict no-guess 数据 + Deep-MSE probability distill
 | S2 | 8×8 | 15 | 23.4% | 10000 |
 | S3 | 8×8 | 20 | 31.3% | 10000 |
 | S4 | 8×8 | 25 | 39.1% | 10000 |
+| S5 | 8×8 | 32 | 50.0% | 10000 |
 
-每阶段继承前一阶段权重（curriculum transfer）。冷启动无需预生成数据，`TrajectoryPool` 统一管理后台经验回放池。
+每阶段继承前一阶段权重（curriculum transfer）。S2 之后混入低密度 replay，减少纯顺序课程导致的遗忘。冷启动无需预生成数据，`TrajectoryPool` 统一管理后台经验回放池。
 
 ## 常用命令
 
@@ -59,7 +60,11 @@ V5 supervised curriculum：strict no-guess 数据 + Deep-MSE probability distill
 # 所有命令通过 uv run 确保使用正确的虚拟环境
 
 # 全阶段训练
-uv run python3 scripts/train_stage.py --recipe v5_curriculum --arch V5
+uv run python3 scripts/train_stage.py --recipe v5_curriculum_replay --arch V5
+
+# 只跑最高密度 S5（继承 checkpoints/v5_replay_S4/best_model.pt）
+uv run python3 scripts/train_stage.py \
+  --recipe v5_curriculum_replay --start_phase 5 --end_phase 5 --arch V5
 
 # 单阶段
 uv run python3 scripts/train_stage.py --stage S1
@@ -77,11 +82,11 @@ uv run python3 scripts/train.py \
   --pretrained checkpoints/S1/best_model.pt --n_games 500 --lr 1e-5
 
 # 评估
-uv run python3 scripts/evaluate.py checkpoints/v5_S4/best_model.pt \
+uv run python3 scripts/evaluate.py checkpoints/v5_replay_S5/best_model.pt \
   --width 10 --height 10 --mines 40 --n_games 1000
 
 # 仅评估已有 checkpoint
-uv run python3 scripts/train_stage.py --stage S4 --eval_only --eval 10 10 40
+uv run python3 scripts/train_stage.py --stage S5 --eval_only --eval 10 10 40
 ```
 
 ## 项目结构
@@ -96,7 +101,7 @@ src/
 
 scripts/
   train.py           统一训练入口 (支持 --loss_type bce|mse|deep_mse|deep_mse_rank, --recipe)
-  train_stage.py     分阶段编排 (S1→S2→S3→S4, --recipe)
+  train_stage.py     分阶段编排 (S1→S2→S3→S4→S5, --recipe, replay curriculum)
   evaluate.py        独立评估 CLI
 ```
 
