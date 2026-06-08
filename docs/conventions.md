@@ -57,6 +57,9 @@ python scripts/train_stage.py --stage S5 --eval_only
 python scripts/train_stage.py --stage S5 --eval 10 10 40  # 零样本评估
 python scripts/evaluate.py checkpoints/v5_replay_S5/best_model.pt \
     --width 8 --height 8 --mines 32 --n_games 200 --rule_guard
+python scripts/collect_mistakes.py checkpoints/v5_replay_S5/best_model.pt \
+    --width 8 --height 8 --mines 32 --n_games 500 --board_pool data \
+    --output data/mistakes/S5_rule_guard_failures.npz
 
 # Recipe 模式（当前主线）
 python scripts/train_stage.py --recipe v5_curriculum_replay --arch V5

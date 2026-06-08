@@ -48,6 +48,35 @@ Won / Total。最直观的最终指标。受样本量影响（10 局可能波动
 - 裸模型 500 局: 457/500 WR = 91.40%, action_acc=0.9952（评估期间 cache 从 200 扩到 500 boards）
 - `--rule_guard` 500 局: 491/500 WR = 98.20%, action_acc=0.9990, `rule_guard_actions=8194`
 
+## Failure Mining（collect_mistakes.py）
+
+`scripts/collect_mistakes.py` 使用裸模型 rollout，不启用 `--rule_guard`；solver 只用于诊断和生成 target。输出分两部分：
+- `.npz`: 与 `TrajectoryPool` 兼容的单步 hard-example trajectory，可作为后续 replay source
+- `.json`: 诊断摘要和每个保存样本的元信息
+
+错误分类：
+- `rule_guard_avoidable`: `ConstraintSolver` 已有可证明 safe cells，但模型没有选这些 safe cells
+- `hard_sorting`: 当前没有可证明 safe cells，模型直接点雷
+- `calibration_drift`: 模型没有点雷，但选择的 solver target 明显差于当前最优 target
+
+推荐先用固定 eval cache 运行诊断，再决定是否混入训练：
+
+```bash
+PYTHONPATH=src uv run python3 scripts/collect_mistakes.py \
+  checkpoints/v5_replay_S5/best_model.pt \
+  --width 8 --height 8 --mines 32 --n_games 500 --board_pool data \
+  --output data/mistakes/S5_rule_guard_failures.npz
+```
+
+当前 S5 mining 结果：
+- 裸模型 rollout: 457/500 WR = 91.40%, 8909 steps
+- 保存错题: 441 states
+- `rule_guard_avoidable`: 435
+- `hard_sorting`: 6
+- `calibration_drift`: 13（仅统计，不保存到默认 NPZ）
+
+该分布说明下一步应优先做小比例 hard-example replay，目标是内化 `ConstraintSolver` 已能证明的 safe-cell 排序；lookahead search 暂时排在后面。
+
 ## RL 训练时（已从 main 移除）
 
 > RL 代码已从 main 移除，以下指标仅供历史参考。

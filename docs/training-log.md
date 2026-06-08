@@ -76,6 +76,32 @@ PYTHONPATH=src uv run python3 scripts/evaluate.py \
 
 `--rule_guard` 会优先选择 `ConstraintSolver` 可证明安全的格子；它不计入裸模型成绩，用来判断剩余 loss 是基础规则抖动还是高阶排序错误。
 
+Failure mining 诊断：
+
+```bash
+PYTHONPATH=src uv run python3 scripts/collect_mistakes.py \
+  checkpoints/v5_replay_S5/best_model.pt \
+  --width 8 --height 8 --mines 32 --n_games 500 --device auto \
+  --board_pool data \
+  --output data/mistakes/S5_rule_guard_failures.npz
+```
+
+输出的 `.npz` 与 `TrajectoryPool` 兼容，可作为后续 replay source；对应 `.json` 记录 `rule_guard_avoidable`、`hard_sorting`、`calibration_drift` 计数。
+
+Failure mining 500 局结果：
+
+| 项目 | 值 |
+|------|-----|
+| Rollout | 裸模型，固定 `data/eval_boards_8x8_32.npz` |
+| 胜率 | 457/500 WR = 91.40% |
+| 总步数 | 8909 |
+| 保存错题 | 441 单步 states |
+| `rule_guard_avoidable` | 435 |
+| `hard_sorting` | 6 |
+| `calibration_drift` | 13（仅统计，不保存到 NPZ） |
+| 输出 | `data/mistakes/S5_rule_guard_failures.npz` + `.json` |
+| 结论 | 剩余错误几乎全部集中在可证明安全格排序失败；下一步优先小比例 hard-example replay，暂不优先上 lookahead search。 |
+
 ---
 
 ## 2026-06-06: V5 S1 strict no-guess rerun (15ch/Deep-MSE 历史记录)

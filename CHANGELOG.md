@@ -16,6 +16,7 @@
 - **训练记录更新**: `docs/training-log.md` 记录 V5 19ch S1 99.0% WR、S4 replay 95.5% WR、S5 93.0% WR，以及 S5 训练/评估命令。
 - **新增 rule guard 诊断**: `scripts/evaluate.py --rule_guard` 会优先选择 `ConstraintSolver` 可证明安全格，用于区分基础规则抖动与高阶排序错误；该结果与裸模型成绩分开记录。
 - **S5 rule guard 结果**: V5 S5 裸模型 8×8/32 为 186/200 WR = 93.00%；500 局裸评为 457/500 WR = 91.40%（评估期间 cache 从 200 扩到 500 boards）；启用 `--rule_guard` 后 500 局为 491/500 WR = 98.20%，说明可证明安全格排序抖动是主要剩余误差之一。
+- **新增 failure mining 诊断脚本**: `scripts/collect_mistakes.py` 使用裸模型 rollout 收集 `rule_guard_avoidable`、`hard_sorting`、`calibration_drift` 状态；输出训练兼容 `.npz` 和诊断 `.json`。S5 500 局结果保存 441 个错题 states，其中 435 个为 `rule_guard_avoidable`、6 个为 `hard_sorting`，后续优先尝试小比例 hard-example replay。
 - **修复训练入口 mode 路由**: `scripts/train.py` legacy 分支现在会应用 `--mode`，避免 recipe phase 传入 `--mode supervised` 时被默认 `online` 覆盖。
 - **文档同步**: AGENTS.md、README.md、architecture.md、conventions.md、metrics.md、training-log.md、docs/README.md 均已更新。
 
