@@ -18,6 +18,7 @@
 - **S5 rule guard 结果**: V5 S5 裸模型 8×8/32 为 186/200 WR = 93.00%；500 局裸评为 457/500 WR = 91.40%（评估期间 cache 从 200 扩到 500 boards）；启用 `--rule_guard` 后 500 局为 491/500 WR = 98.20%，说明可证明安全格排序抖动是主要剩余误差之一。
 - **新增 failure mining 诊断脚本**: `scripts/collect_mistakes.py` 使用裸模型 rollout 收集 `rule_guard_avoidable`、`hard_sorting`、`calibration_drift` 状态；输出训练兼容 `.npz` 和诊断 `.json`。S5 500 局结果保存 441 个错题 states，其中 435 个为 `rule_guard_avoidable`、6 个为 `hard_sorting`，后续优先尝试小比例 hard-example replay。
 - **S5 mistake replay 微调结果**: 使用 5% hard-example replay 从 `checkpoints/v5_replay_S5/best_model.pt` 微调到 `checkpoints/v5_replay_S5_mistake_ft/best_model.pt`；S5 裸模型从 457/500 WR = 91.40% 提升到 484/500 WR = 96.80%，`--rule_guard` 提升到 494/500 WR = 98.80%，S1/S4 回归分别为 98.50%/96.00%，无明显退化。
+- **S5 mistake replay 二次微调结果**: 使用 8% `S5_after_mistake_ft.npz`、lr=5e-5、epochs=1 微调到 `checkpoints/v5_replay_S5_mistake_ft2/best_model.pt`；S5 裸模型提升到 486/500 WR = 97.20%，`--rule_guard` 提升到 496/500 WR = 99.20%，S1/S4 回归维持 98.50%/96.00%。继续同构 replay 收益进入平台期，下一步优先研究 solver-safe-set ranking loss。
 - **修复训练入口 mode 路由**: `scripts/train.py` legacy 分支现在会应用 `--mode`，避免 recipe phase 传入 `--mode supervised` 时被默认 `online` 覆盖。
 - **文档同步**: AGENTS.md、README.md、architecture.md、conventions.md、metrics.md、training-log.md、docs/README.md 均已更新。
 

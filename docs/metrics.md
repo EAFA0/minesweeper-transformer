@@ -89,6 +89,18 @@ S5 mistake replay fine-tune 后：
 - `hard_sorting` 未下降，说明剩余极难错误不是当前微调主要解决对象
 - 后续二次微调应保守提高 mistake weight 或降低 lr，避免牺牲 S1/S4 泛化
 
+S5 mistake replay fine-tune v2 后：
+- S5 裸模型: 486/500 WR = 97.20%, action_acc=0.9985
+- S5 `--rule_guard`: 496/500 WR = 99.20%, action_acc=0.9996
+- S5 after-mining: 381 saved states, `rule_guard_avoidable=377`, `hard_sorting=4`
+- S1 回归: 197/200 WR = 98.50%
+- S4/S25 回归: 192/200 WR = 96.00%
+
+解读：
+- 第二轮 replay 仍正向，但裸模型仅 +0.4pp，进入平台期
+- `rule_guard` 已达 99.20%，辅助框架路线接近 99%+
+- 继续同构 replay 的预期收益较低；下一步应考虑 `solver_safe_rank`，直接约束所有可证明 safe cells 排在 unknown cells 前面
+
 ## RL 训练时（已从 main 移除）
 
 > RL 代码已从 main 移除，以下指标仅供历史参考。

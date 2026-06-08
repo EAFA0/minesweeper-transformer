@@ -117,7 +117,7 @@ Failure mining 500 局结果：
 | S4/S25 回归 200 局 | 192/200 WR = 96.00%, action_acc=0.9983, avg_steps=23.9 |
 | 结论 | hard-example replay 成立：S5 裸模型从 91.40% 提升到 96.80%，S1/S4 无明显回归。下一步可用 `S5_after_mistake_ft.npz` 做更保守二次微调，优先 lr=5e-5、epochs=1、mistake weight=5%-8%。 |
 
-二次微调建议：
+二次微调命令：
 
 ```bash
 PYTHONPATH=src uv run python3 scripts/train.py \
@@ -128,6 +128,22 @@ PYTHONPATH=src uv run python3 scripts/train.py \
   --board_width 8 --board_height 8 --board_mines 32 \
   --epochs 1 --lr 5e-5
 ```
+
+### S5 mistake replay fine-tune v2 result
+
+| 项目 | 值 |
+|------|-----|
+| 继承 | `checkpoints/v5_replay_S5_mistake_ft/best_model.pt` |
+| 数据 | `data/S5:0.52,data/S1:0.1,data/S2:0.1,data/S3:0.1,data/S4:0.1,data/mistakes/S5_after_mistake_ft.npz:0.08` |
+| 超参 | supervised `deep_mse_rank`, lr=5e-5, epochs=1, refine=4 |
+| Checkpoint | `checkpoints/v5_replay_S5_mistake_ft2/best_model.pt` |
+| 训练内评估 | 98/100 WR = 98.00%, action_acc=0.999 |
+| S5 裸模型 500 局 | 486/500 WR = 97.20%, action_acc=0.9985, avg_steps=18.2, avg_refine=4.0 |
+| S5 rule guard 500 局 | 496/500 WR = 99.20%, action_acc=0.9996, rule_guard_actions=8256, avg_steps=18.4 |
+| S5 after-mining | 486/500 WR = 97.20%, 381 saved states, `rule_guard_avoidable=377`, `hard_sorting=4`, `calibration_drift=11` |
+| S1 回归 200 局 | 197/200 WR = 98.50%, action_acc=0.9992, avg_steps=18.8 |
+| S4/S25 回归 200 局 | 192/200 WR = 96.00%, action_acc=0.9983, avg_steps=23.9 |
+| 结论 | 二次 hard-example replay 继续正向但边际收益变小：S5 裸模型从 96.80% 到 97.20%，rule guard 到 99.20%，S1/S4 无回归。当前最佳 checkpoint 为 `v5_replay_S5_mistake_ft2`。不建议继续同构第三轮 replay，下一步优先研究 solver-safe-set ranking loss。 |
 
 ---
 
