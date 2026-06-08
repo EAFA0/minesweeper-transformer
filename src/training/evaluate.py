@@ -18,6 +18,7 @@ from config import POLICY
 from data.no_guess import generate_no_guess_board
 from game.constants import GameStatus, MoveType, DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_MINES
 from game.game import MinesweeperGame
+from game.solver import ConstraintSolver
 from model.architecture import MinesweeperTransformer, ModelConfig
 from training.trajectory_pool import TrajectoryPool
 
@@ -29,10 +30,11 @@ def pick_action(
     game: MinesweeperGame,
     device: torch.device,
     refine_steps: int = None,
-) -> Optional[Tuple[MoveType, int, int, int]]:
+    rule_guard: bool = False,
+) -> Optional[Tuple[MoveType, int, int, int, str]]:
     """Choose the next move + return refinement steps actually used.
 
-    Returns (MoveType, row, col, n_refine_steps) or None if no moves.
+    Returns (MoveType, row, col, n_refine_steps, source) or None if no moves.
     """
     if refine_steps is None:
         refine_steps = POLICY.refinement.eval_max_steps
@@ -61,10 +63,20 @@ def pick_action(
     if not covered.any():
         return None
 
-    masked_probs = np.where(covered, probs, 2.0)
+    action_source = "model"
+    candidate_mask = covered
+    if rule_guard:
+        safe_cells, _mine_cells = ConstraintSolver(game).find_safe_and_mines()
+        if safe_cells:
+            candidate_mask = np.zeros_like(covered, dtype=bool)
+            for r, c in safe_cells:
+                candidate_mask[r, c] = covered[r, c]
+            action_source = "rule_guard"
+
+    masked_probs = np.where(candidate_mask, probs, 2.0)
     best_idx = np.argmin(masked_probs)
     best_r, best_c = divmod(int(best_idx), game.width)
-    return MoveType.REVEAL, best_r, best_c, n_refine_steps
+    return MoveType.REVEAL, best_r, best_c, n_refine_steps, action_source
 
 
 def play_one_game(
@@ -73,20 +85,26 @@ def play_one_game(
     game: MinesweeperGame,
     max_steps: int = 200,
     refine_steps: int = None,
+    rule_guard: bool = False,
 ) -> dict:
     """Play one game to completion. Returns detailed stats."""
     steps = 0
     safe_reveals = 0
     mine_hits = 0
+    rule_guard_actions = 0
     refine_steps_used: list = []
 
     while game.status == GameStatus.PLAYING and steps < max_steps:
-        action = pick_action(model, game, device, refine_steps=refine_steps)
+        action = pick_action(
+            model, game, device, refine_steps=refine_steps, rule_guard=rule_guard
+        )
         if action is None:
             break
 
-        move_type, mr, mc, n_refine = action
+        move_type, mr, mc, n_refine, action_source = action
         refine_steps_used.append(n_refine)
+        if action_source == "rule_guard":
+            rule_guard_actions += 1
         is_safe = not game.get_mine_mask()[mr, mc]
         game.make_move(mr, mc, move_type)
         steps += 1
@@ -101,6 +119,7 @@ def play_one_game(
         "steps": steps,
         "safe_reveals": safe_reveals,
         "mine_hits": mine_hits,
+        "rule_guard_actions": rule_guard_actions,
         "refine_steps": refine_steps_used
     }
 
@@ -117,6 +136,7 @@ def evaluate_model(
     seed: int = 42,
     board_pool_path: Optional[Path] = None,
     refine_steps: int = None,
+    rule_guard: bool = False,
     quiet: bool = False,
 ) -> dict:
     """Evaluate a model by playing N games. Returns aggregate stats.
@@ -144,7 +164,9 @@ def evaluate_model(
             metrics.add_gen_failure()
             continue
 
-        stats = play_one_game(model, device_t, game, refine_steps=refine_steps)
+        stats = play_one_game(
+            model, device_t, game, refine_steps=refine_steps, rule_guard=rule_guard
+        )
         if not isinstance(stats.get("refine_steps"), list):
             print(f"DEBUG stats: {stats}")
         metrics.add_result(stats)
@@ -166,6 +188,7 @@ class _EvalMetrics:
         self.gen_failed = 0
         self.total_safe = 0
         self.total_mine = 0
+        self.rule_guard_actions = 0
         self.steps_list: list = []
         self.refine_steps_list: list = []  # all refine_step counts across all games
         self.n_games = n_games
@@ -185,6 +208,7 @@ class _EvalMetrics:
         self.steps_list.append(stats["steps"])
         self.total_safe += stats["safe_reveals"]
         self.total_mine += stats["mine_hits"]
+        self.rule_guard_actions += stats.get("rule_guard_actions", 0)
         if stats.get("refine_steps"):
             self.refine_steps_list.extend(stats["refine_steps"])
 
@@ -221,6 +245,7 @@ class _EvalMetrics:
             "played": played,
             "win_rate": win_rate,
             "action_accuracy": action_acc,
+            "rule_guard_actions": self.rule_guard_actions,
             "avg_steps": avg_steps,
             "avg_refine_steps": avg_refine,
             "elapsed": elapsed,

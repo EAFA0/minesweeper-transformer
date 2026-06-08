@@ -301,6 +301,10 @@ uv run python3 scripts/train_stage.py --recipe v5_curriculum_replay --arch V5
 uv run python3 scripts/train_stage.py \
   --recipe v5_curriculum_replay --start_phase 5 --end_phase 5 --arch V5
 
+# 辅助框架诊断：规则 guard + 模型排序
+uv run python3 scripts/evaluate.py checkpoints/v5_replay_S5/best_model.pt \
+  --width 8 --height 8 --mines 32 --n_games 200 --rule_guard
+
 # 单 phase 执行（调试用）
 uv run python3 scripts/train.py --recipe v5_s1_rank --arch V5
 ```
@@ -311,6 +315,8 @@ uv run python3 scripts/train.py --recipe v5_s1_rank --arch V5
 3. `train_stage.py` 自动编排 recipe phase 顺序执行，每 phase 后自动评估
 4. Pretrained checkpoint 链自动解析（phase N 默认继承 phase N-1 的 best_model.pt）
 5. 可用 `--start_phase` / `--end_phase` 只运行 recipe 的一段，适合从已有 checkpoint 直接进入 S5
+
+`--rule_guard` 是评估/部署侧辅助框架：先由确定性 `ConstraintSolver` 找出可证明安全格，再在这些候选内用模型概率排序；没有可证明安全格时退回模型 `argmin P(mine)`。裸模型实验记录默认不启用该开关。
 
 ---
 

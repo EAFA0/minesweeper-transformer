@@ -23,6 +23,11 @@ def main():
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--refine_steps", type=int, default=None)
     p.add_argument("--board_pool", default=None)
+    p.add_argument(
+        "--rule_guard",
+        action="store_true",
+        help="Prefer deterministic solver-proven safe cells before model argmin",
+    )
 
     args = p.parse_args()
     
@@ -53,6 +58,7 @@ def main():
         seed=args.seed,
         board_pool_path=board_pool_path,
         refine_steps=args.refine_steps,
+        rule_guard=args.rule_guard,
     )
 
     print("\n═══ Results ═══")
@@ -61,6 +67,8 @@ def main():
     print(f"Loss: {result['lost']:4d}")
     print(f"Stuck:{result['stuck']:4d}")
     print(f"Action accuracy: {result['action_accuracy']:.4f}")
+    if args.rule_guard:
+        print(f"Rule-guard actions: {result['rule_guard_actions']}")
     print(f"Avg game steps: {result['avg_steps']:.1f}")
     print(f"Avg refine steps: {result['avg_refine_steps']:.1f} (early stop savings)")
     print(f"Time: {result['elapsed']:.0f}s")

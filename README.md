@@ -85,6 +85,10 @@ uv run python3 scripts/train.py \
 uv run python3 scripts/evaluate.py checkpoints/v5_replay_S5/best_model.pt \
   --width 10 --height 10 --mines 40 --n_games 1000
 
+# 规则 guard 诊断（辅助框架成绩，和裸模型成绩分开记录）
+uv run python3 scripts/evaluate.py checkpoints/v5_replay_S5/best_model.pt \
+  --width 8 --height 8 --mines 32 --n_games 200 --rule_guard
+
 # 仅评估已有 checkpoint
 uv run python3 scripts/train_stage.py --stage S5 --eval_only --eval 10 10 40
 ```

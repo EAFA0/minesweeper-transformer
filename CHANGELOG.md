@@ -13,7 +13,9 @@
 - **收敛主线 recipe**: 删除过时的 `v5_s1`、`v5_curriculum`、`v5_curriculum_rank`、`v5_s1_mse` 入口；主线只保留 `v5_s1_rank` 与 `v5_curriculum_replay`。
 - **新增最高密度 S5**: `v5_curriculum_replay` 扩展到 S5=8×8/32（50% 密度），S5 使用 `60% S5 + 10% S1/S2/S3/S4` replay mix；`--stage` / `--eval --stage` 支持 S5。
 - **支持 recipe 分段执行**: `scripts/train_stage.py --recipe ... --start_phase 5 --end_phase 5` 可直接从已有 S4 checkpoint 进入 S5，无需重跑完整课程。
-- **训练记录更新**: `docs/training-log.md` 记录 V5 19ch S1 99.0% WR、S4 replay 95.5% WR，以及 S5 训练命令和目标。
+- **训练记录更新**: `docs/training-log.md` 记录 V5 19ch S1 99.0% WR、S4 replay 95.5% WR、S5 93.0% WR，以及 S5 训练/评估命令。
+- **新增 rule guard 诊断**: `scripts/evaluate.py --rule_guard` 会优先选择 `ConstraintSolver` 可证明安全格，用于区分基础规则抖动与高阶排序错误；该结果与裸模型成绩分开记录。
+- **S5 rule guard 结果**: V5 S5 裸模型 8×8/32 为 186/200 WR = 93.00%；500 局裸评为 457/500 WR = 91.40%（评估期间 cache 从 200 扩到 500 boards）；启用 `--rule_guard` 后 500 局为 491/500 WR = 98.20%，说明可证明安全格排序抖动是主要剩余误差之一。
 - **修复训练入口 mode 路由**: `scripts/train.py` legacy 分支现在会应用 `--mode`，避免 recipe phase 传入 `--mode supervised` 时被默认 `online` 覆盖。
 - **文档同步**: AGENTS.md、README.md、architecture.md、conventions.md、metrics.md、training-log.md、docs/README.md 均已更新。
 

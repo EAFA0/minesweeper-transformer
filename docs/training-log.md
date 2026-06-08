@@ -40,7 +40,7 @@
 | Checkpoint | `checkpoints/v5_replay_S4/best_model.pt` |
 | 结论 | S4 胜率主要受逐步 action error 控制：`0.9981^23.6 ≈ 95.6%`。若要 99% WR，action_acc 需接近 0.9996。 |
 
-### 下一阶段: S5 max-density
+### S5 max-density result
 
 | 项目 | 值 |
 |------|-----|
@@ -48,8 +48,14 @@
 | 棋盘 | 8×8/32, 50.0% 密度 |
 | 数据 | `data/S5:0.6,data/S1:0.1,data/S2:0.1,data/S3:0.1,data/S4:0.1` |
 | 继承 | `checkpoints/v5_replay_S4/best_model.pt` |
+| 超参 | supervised `deep_mse_rank`, lr=3e-4, epochs=5, batch=64, refine=4 |
+| 独立评估 | 186/200 WR = 93.00%, action_acc=0.9961, avg_steps=18.1, avg_refine=3.9 |
+| 独立评估 500 局 | 457/500 WR = 91.40%, action_acc=0.9952, avg_steps=17.8, avg_refine=3.9 |
+| Rule guard 诊断 200 局 | 196/200 WR = 98.00%, action_acc=0.9989, rule_guard_actions=3324, avg_steps=18.5, avg_refine=3.9 |
+| Rule guard 诊断 500 局 | 491/500 WR = 98.20%, action_acc=0.9990, rule_guard_actions=8194, avg_steps=18.2, avg_refine=3.9 |
 | Checkpoint | `checkpoints/v5_replay_S5/best_model.pt` |
-| 目标 | 评估裸模型在 50% 密度 no-guess 数据上的上限，并为 hard-rule guard / solver fallback / failure mining 提供依据。 |
+| 注意 | 500 局裸模型评估期间 eval cache 从 200 boards 扩容到 500 boards；严格对照建议在固定 500-board cache 上复跑裸模型一次。 |
+| 结论 | 裸模型在 50% 密度 no-guess 上未崩溃；rule guard 稳定提升到 98%+，说明大量剩余错误来自可证明安全格上的排序抖动。 |
 
 直接从 S5 开始：
 
@@ -58,6 +64,17 @@ PYTHONPATH=src uv run python3 scripts/train_stage.py \
   --recipe v5_curriculum_replay --start_phase 5 --end_phase 5 \
   --arch V5 --device auto --eval_games 200
 ```
+
+辅助框架诊断：
+
+```bash
+PYTHONPATH=src uv run python3 scripts/evaluate.py \
+  checkpoints/v5_replay_S5/best_model.pt \
+  --arch V5 --n_games 500 --device auto --width 8 --height 8 --mines 32 \
+  --rule_guard
+```
+
+`--rule_guard` 会优先选择 `ConstraintSolver` 可证明安全的格子；它不计入裸模型成绩，用来判断剩余 loss 是基础规则抖动还是高阶排序错误。
 
 ---
 

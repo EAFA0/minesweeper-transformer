@@ -36,6 +36,18 @@ covered 格子中 (P>0.5 vs 真值是雷) 的二元准确率。>95% 正常。
 **Win Rate**
 Won / Total。最直观的最终指标。受样本量影响（10 局可能波动大，建议 100+）。
 
+**Rule-Guard Actions**
+启用 `scripts/evaluate.py --rule_guard` 时，评估会优先选择 `ConstraintSolver` 可证明安全的格子，并统计这类动作数量。该指标用于诊断：
+- guard 后胜率显著提升：裸模型仍会在基础/子集规则上偶发排序错误
+- guard 后胜率变化很小：主要瓶颈在高阶概率排序或训练目标
+
+带 `--rule_guard` 的结果应单独记录为辅助框架成绩，不与裸模型 win rate 混记。
+
+当前 S5 诊断基线：
+- 裸模型: 8×8/32, 186/200 WR = 93.00%, action_acc=0.9961
+- 裸模型 500 局: 457/500 WR = 91.40%, action_acc=0.9952（评估期间 cache 从 200 扩到 500 boards）
+- `--rule_guard` 500 局: 491/500 WR = 98.20%, action_acc=0.9990, `rule_guard_actions=8194`
+
 ## RL 训练时（已从 main 移除）
 
 > RL 代码已从 main 移除，以下指标仅供历史参考。
