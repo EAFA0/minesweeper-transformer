@@ -145,6 +145,36 @@ PYTHONPATH=src uv run python3 scripts/train.py \
 | S4/S25 回归 200 局 | 192/200 WR = 96.00%, action_acc=0.9983, avg_steps=23.9 |
 | 结论 | 二次 hard-example replay 继续正向但边际收益变小：S5 裸模型从 96.80% 到 97.20%，rule guard 到 99.20%，S1/S4 无回归。当前最佳 checkpoint 为 `v5_replay_S5_mistake_ft2`。不建议继续同构第三轮 replay，下一步优先研究 solver-safe-set ranking loss。 |
 
+### Solver-safe-set ranking implementation
+
+已新增 `deep_mse_solver_safe_rank`，用于 hard-example replay 的下一轮实验。它在 `deep_mse_rank` 基础上额外约束 `ConstraintSolver` 可证明 safe 的所有 covered cells 排在 unknown/non-safe covered cells 前面。
+
+实现要点：
+- `scripts/collect_mistakes.py` 新增保存 `solver_safe_masks_*`
+- `TrajectoryPool.batch(..., include_solver_safe=True)` 可返回 solver-safe masks
+- 普通 S1-S5 replay 样本没有 safe mask 时，该额外 loss 自动为 0
+
+正式训练前先重新生成带 safe mask 的错题集：
+
+```bash
+PYTHONPATH=src uv run python3 scripts/collect_mistakes.py \
+  checkpoints/v5_replay_S5_mistake_ft2/best_model.pt \
+  --width 8 --height 8 --mines 32 --n_games 500 --board_pool data \
+  --output data/mistakes/S5_after_mistake_ft2_solver_safe.npz
+```
+
+候选训练命令：
+
+```bash
+PYTHONPATH=src uv run python3 scripts/train.py \
+  --mode supervised --arch V5 --loss_type deep_mse_solver_safe_rank \
+  --data_dir "data/S5:0.52,data/S1:0.1,data/S2:0.1,data/S3:0.1,data/S4:0.1,data/mistakes/S5_after_mistake_ft2_solver_safe.npz:0.08" \
+  --pretrained checkpoints/v5_replay_S5_mistake_ft2/best_model.pt \
+  --save_dir checkpoints/v5_replay_S5_solver_safe_rank \
+  --board_width 8 --board_height 8 --board_mines 32 \
+  --epochs 1 --lr 5e-5
+```
+
 ---
 
 ## 2026-06-06: V5 S1 strict no-guess rerun (15ch/Deep-MSE 历史记录)

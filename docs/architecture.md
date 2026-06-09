@@ -120,6 +120,24 @@ residual = target_remaining - predicted
 3. `forced_safe_signal`/`forced_mine_signal` 直接暴露基础扫雷硬规则，减少模型从平均 residual 中反推规则的负担。
 4. V5 仍保留 CNN + Transformer，局部规则、共享边界和远距离依赖都能继续建模。
 
+### Solver-Safe Ranking Loss (2026-06-06)
+
+S5 hard-example replay 后，裸模型从 91.40% 提升到 97.20%，但剩余 mined states 仍主要是 `rule_guard_avoidable`。这说明单纯重复采样错题已进入平台期，下一步需要更直接地约束排序目标。
+
+新增 loss 类型 `deep_mse_solver_safe_rank`：
+
+```text
+loss = deep_mse
+     + rank_loss_weight * best_safe_rank
+     + rank_loss_weight * solver_safe_set_rank
+```
+
+其中：
+- `best_safe_rank`: 原 `deep_mse_rank`，要求至少一个 target P(mine)=0 的候选排在非零目标前面。
+- `solver_safe_set_rank`: 新增项，要求 `ConstraintSolver` 可证明 safe 的所有 covered cells 排在 unknown/non-safe covered cells 前面。
+
+`solver_safe_set_rank` 只使用 failure mining 生成的 `solver_safe_masks_*`，不在训练热路径中临时调用 solver；普通 replay 样本缺少该 mask 时额外项自动为 0。
+
 ### 消融实验数据 (2026-06-05, S1 8×8/10雷, 10000 games, 5 epochs)
 
 | 架构 | Refinement 机制 | 胜率 | action_acc |

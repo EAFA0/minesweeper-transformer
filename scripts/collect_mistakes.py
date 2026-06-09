@@ -49,7 +49,7 @@ def _classify_state(
     model_probs: np.ndarray,
     action: tuple[int, int],
     calibration_margin: float,
-) -> tuple[str, dict, Optional[np.ndarray]]:
+) -> tuple[str, dict, Optional[np.ndarray], Optional[np.ndarray]]:
     covered = game.covered_cells
     mines = game.get_mine_mask()
     r, c = action
@@ -57,6 +57,7 @@ def _classify_state(
     safe_cells, _mine_cells = ConstraintSolver(game).find_safe_and_mines()
     safe_set = set(safe_cells)
     has_solver_safe = len(safe_set) > 0
+    solver_safe_mask = _safe_mask(game, safe_cells) if has_solver_safe else None
     selected_is_mine = bool(mines[r, c])
 
     solver_probs = None
@@ -78,7 +79,7 @@ def _classify_state(
 
     safe_model_prob = None
     if has_solver_safe:
-        safe_candidates = _safe_mask(game, safe_cells)
+        safe_candidates = solver_safe_mask
         safe_model_prob = float(np.where(safe_candidates, model_probs, 2.0).min())
 
     masked_model = np.where(covered, model_probs, 2.0)
@@ -102,19 +103,23 @@ def _classify_state(
             float(masked_solver.min()) if masked_solver is not None else None
         ),
     }
-    return category, detail, solver_probs
+    return category, detail, solver_probs, solver_safe_mask
 
 
 def _sample_from_state(
     game: MinesweeperGame,
     action: tuple[int, int],
     solver_probs: np.ndarray,
+    solver_safe_mask: Optional[np.ndarray],
 ) -> dict:
+    if solver_safe_mask is None:
+        solver_safe_mask = np.zeros_like(game.covered_cells, dtype=bool)
     return {
         "mines": game.get_mine_mask().copy(),
         "actions": [action],
         "masks": [game.covered_cells.copy()],
         "probs": [solver_probs.astype(np.float32)],
+        "solver_safe_masks": [solver_safe_mask.astype(bool)],
     }
 
 
@@ -126,6 +131,7 @@ def _write_npz(path: Path, samples: list[dict]) -> None:
         data[f"actions_{i}"] = np.array(sample["actions"], dtype=np.int32)
         data[f"masks_{i}"] = np.array(sample["masks"], dtype=bool)
         data[f"probs_{i}"] = np.array(sample["probs"], dtype=np.float32)
+        data[f"solver_safe_masks_{i}"] = np.array(sample["solver_safe_masks"], dtype=bool)
     np.savez_compressed(path, **data)
 
 
@@ -196,14 +202,14 @@ def collect_mistakes(args) -> dict:
 
             probs = _model_probs(model, game, device, args.refine_steps)
             action = _pick_model_action(probs, covered, game.width)
-            category, detail, solver_probs = _classify_state(
+            category, detail, solver_probs, solver_safe_mask = _classify_state(
                 game, probs, action, args.calibration_margin
             )
             counts[category] += 1
             counts["steps"] += 1
 
             if category in save_categories and solver_probs is not None:
-                samples.append(_sample_from_state(game, action, solver_probs))
+                samples.append(_sample_from_state(game, action, solver_probs, solver_safe_mask))
                 counts["saved"] += 1
                 detail.update({"game": game_idx, "step": step})
                 records.append(detail)

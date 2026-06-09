@@ -34,8 +34,13 @@ def main():
                    help="Training recipe name (e.g. v5_curriculum_replay). Overrides --stage/--mode/--loss_type.")
     p.add_argument("--arch", type=str, default="V5", choices=["V5"],
                    help="Architecture version to use")
-    p.add_argument("--loss_type", type=str, default="bce", choices=["bce", "mse", "deep_mse", "deep_mse_rank"],
-                   help="Loss function: bce, mse, deep_mse, or deep_mse_rank")
+    p.add_argument(
+        "--loss_type",
+        type=str,
+        default="bce",
+        choices=["bce", "mse", "deep_mse", "deep_mse_rank", "deep_mse_solver_safe_rank"],
+        help="Loss function: bce, mse, deep_mse, deep_mse_rank, or deep_mse_solver_safe_rank",
+    )
     p.add_argument("--device", default="auto")
     p.add_argument("--dry_run", action="store_true",
                    help="Print recipe phases without training (requires --recipe)")

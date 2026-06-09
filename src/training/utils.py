@@ -107,6 +107,41 @@ def compute_best_safe_ranking_loss(
     return torch.stack(losses).mean()
 
 
+def compute_solver_safe_set_ranking_loss(
+    logits: torch.Tensor,
+    masks: torch.Tensor,
+    solver_safe_masks: torch.Tensor,
+    margin: float = 0.5,
+) -> torch.Tensor:
+    """Margin loss that ranks every proven-safe cell before other covered cells.
+
+    Unlike `compute_best_safe_ranking_loss`, this uses explicit safe cells from
+    `ConstraintSolver` diagnostics. It is intended for mined hard examples and
+    returns zero for normal replay samples that do not carry solver-safe masks.
+    """
+    if logits.dim() == 4:
+        logits = logits[:, 0]
+
+    losses = []
+    for sample_logits, sample_mask, sample_safe in zip(logits, masks, solver_safe_masks):
+        covered = sample_mask.bool()
+        preferred = covered & sample_safe.bool()
+        competitors = covered & ~sample_safe.bool()
+        if not preferred.any() or not competitors.any():
+            continue
+
+        preferred_logits = sample_logits[preferred]
+        competitor_logits = sample_logits[competitors]
+        pairwise = F.relu(
+            preferred_logits[:, None] + margin - competitor_logits[None, :]
+        )
+        losses.append(pairwise.mean())
+
+    if not losses:
+        return logits.sum() * 0.0
+    return torch.stack(losses).mean()
+
+
 # ── Checkpointing ───────────────────────────────────────────────────────────
 
 def save_checkpoint(

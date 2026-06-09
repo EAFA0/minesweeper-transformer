@@ -101,6 +101,25 @@ S5 mistake replay fine-tune v2 后：
 - `rule_guard` 已达 99.20%，辅助框架路线接近 99%+
 - 继续同构 replay 的预期收益较低；下一步应考虑 `solver_safe_rank`，直接约束所有可证明 safe cells 排在 unknown cells 前面
 
+## Solver-Safe Ranking
+
+`deep_mse_solver_safe_rank` 是 hard-example replay 专用 loss：
+
+```text
+deep_mse_solver_safe_rank =
+  deep_mse
+  + rank_loss_weight * best_safe_rank
+  + rank_loss_weight * solver_safe_set_rank
+```
+
+其中 `solver_safe_set_rank` 只在样本携带 `solver_safe_masks_*` 时生效。该 mask 由 `scripts/collect_mistakes.py` 调用 `ConstraintSolver` 生成，表示当前状态下所有可证明 safe 的 covered cells。
+
+目标：
+- 原 `deep_mse_rank`: 至少一个 target-safe cell 排在 non-safe cells 前面
+- 新 `solver_safe_set_rank`: 所有可证明 safe cells 排在 unknown/non-safe covered cells 前面
+
+旧版 mistake NPZ 不包含 `solver_safe_masks_*`，使用该 loss 前需重新运行 failure mining 生成新版错题文件。
+
 ## RL 训练时（已从 main 移除）
 
 > RL 代码已从 main 移除，以下指标仅供历史参考。

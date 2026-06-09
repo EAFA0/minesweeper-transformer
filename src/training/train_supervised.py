@@ -20,6 +20,7 @@ from training.utils import (
     build_model,
     compute_best_safe_ranking_loss,
     compute_loss,
+    compute_solver_safe_set_ranking_loss,
     model_forward,
     model_forward_logits,
     save_checkpoint,
@@ -96,11 +97,16 @@ def train_supervised(
         mines = config.board_mines
         pos_weight_val = (total_cells - mines) / max(mines, 1)
         print(f"BCE Loss with binary (ground-truth) targets, pos_weight={pos_weight_val:.2f}")
-    elif config.loss_type in {"deep_mse", "deep_mse_rank"}:
+    elif config.loss_type in {"deep_mse", "deep_mse_rank", "deep_mse_solver_safe_rank"}:
         pos_weight_val = None
         if config.loss_type == "deep_mse_rank":
             print(
                 "Deep-MSE + ranking loss "
+                f"(weight={config.rank_loss_weight}, margin={config.rank_loss_margin})"
+            )
+        elif config.loss_type == "deep_mse_solver_safe_rank":
+            print(
+                "Deep-MSE + best-safe ranking + solver-safe-set ranking "
                 f"(weight={config.rank_loss_weight}, margin={config.rank_loss_margin})"
             )
         else:
@@ -131,14 +137,25 @@ def train_supervised(
         
         for _ in range(batches_per_epoch):
             # 1. Fetch batch from unified pool
-            channels, targets, masks = pool.batch(batch_size, target_type=target_type)
+            batch = pool.batch(
+                batch_size,
+                target_type=target_type,
+                include_solver_safe=config.loss_type == "deep_mse_solver_safe_rank",
+            )
+            if config.loss_type == "deep_mse_solver_safe_rank":
+                channels, targets, masks, solver_safe_masks = batch
+            else:
+                channels, targets, masks = batch
+                solver_safe_masks = None
 
             channels = channels.to(device)
             targets = targets.to(device)
             masks = masks.to(device)
+            if solver_safe_masks is not None:
+                solver_safe_masks = solver_safe_masks.to(device)
 
             # 2. Forward pass. BCE uses raw logits; MSE variants use probabilities.
-            if config.loss_type in {"deep_mse", "deep_mse_rank"}:
+            if config.loss_type in {"deep_mse", "deep_mse_rank", "deep_mse_solver_safe_rank"}:
                 refine_logits = model.refine(
                     channels, num_steps=config.refinement_steps, return_logits=True
                 )
@@ -148,7 +165,7 @@ def train_supervised(
                     mse_loss = compute_loss(
                         "mse", step_preds, targets, masks, pos_weight_val, device
                     )
-                    if config.loss_type == "deep_mse_rank":
+                    if config.loss_type in {"deep_mse_rank", "deep_mse_solver_safe_rank"}:
                         rank_loss = compute_best_safe_ranking_loss(
                             logits,
                             targets,
@@ -157,6 +174,14 @@ def train_supervised(
                             safe_threshold=config.rank_safe_threshold,
                         )
                         mse_loss = mse_loss + config.rank_loss_weight * rank_loss
+                    if config.loss_type == "deep_mse_solver_safe_rank":
+                        safe_set_rank_loss = compute_solver_safe_set_ranking_loss(
+                            logits,
+                            masks,
+                            solver_safe_masks,
+                            margin=config.rank_loss_margin,
+                        )
+                        mse_loss = mse_loss + config.rank_loss_weight * safe_set_rank_loss
                     step_losses.append(mse_loss)
                 loss = torch.stack(step_losses).mean()
                 preds = torch.sigmoid(refine_logits[-1])[:, 0]

@@ -59,7 +59,7 @@ class TrajectoryPool:
     def _load_train_file(self, f: Path):
         try:
             data = np.load(f, allow_pickle=True)
-            n = len(data.files) // 4  # assuming mines, actions, masks, probs
+            n = len([key for key in data.files if key.startswith("mines_")])
             if n == 0:
                 # If there are no actions, it might just be empty, safely ignore
                 return
@@ -71,6 +71,8 @@ class TrajectoryPool:
                 }
                 if f"probs_{i}" in data:
                     traj["probs"] = data[f"probs_{i}"]
+                if f"solver_safe_masks_{i}" in data:
+                    traj["solver_safe_masks"] = data[f"solver_safe_masks_{i}"]
                 self._offline_buffer.append(traj)
         except Exception as e:
             print(f"Error loading {f}: {e}")
@@ -148,6 +150,8 @@ class TrajectoryPool:
                     self._load_train_file(p)
                 self._source_buffers[source_idx].extend(self._offline_buffer[before:])
                 self._loaded_files.add(p)
+                loaded = len(self._offline_buffer) - before
+                print(f"TrajectoryPool: Loaded {loaded} trajectories from {p}")
 
     def _get_source_weights(self) -> np.ndarray:
         weights = []
@@ -181,9 +185,15 @@ class TrajectoryPool:
         # Initial visible state is masks[0]
         return traj["mines"], traj["masks"][0]
 
-    def batch(self, batch_size: int, target_type: str = "probs") -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def batch(
+        self,
+        batch_size: int,
+        target_type: str = "probs",
+        include_solver_safe: bool = False,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor] | Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Return (channels, targets, mask) batch for supervised training."""
         b_channels, b_targets, b_masks = [], [], []
+        b_solver_safe_masks = []
 
         for _ in range(batch_size):
             traj = self._get_traj()
@@ -211,6 +221,11 @@ class TrajectoryPool:
 
             b_channels.append(channels)
             b_masks.append(mask)
+            if include_solver_safe:
+                if "solver_safe_masks" in traj:
+                    b_solver_safe_masks.append(traj["solver_safe_masks"][t])
+                else:
+                    b_solver_safe_masks.append(np.zeros_like(mask, dtype=bool))
 
             if target_type == "binary":
                 # Ground truth: 1=mine, 0=safe (binary labels)
@@ -222,11 +237,14 @@ class TrajectoryPool:
                 else:
                     b_targets.append(np.zeros_like(mask, dtype=np.float32))
 
-        return (
+        result = (
             torch.from_numpy(np.stack(b_channels)),
             torch.from_numpy(np.stack(b_targets)),
             torch.from_numpy(np.stack(b_masks)),
         )
+        if include_solver_safe:
+            return (*result, torch.from_numpy(np.stack(b_solver_safe_masks)))
+        return result
 
     # ── Evaluation Support ──────────────────────────────────────────────────
     
