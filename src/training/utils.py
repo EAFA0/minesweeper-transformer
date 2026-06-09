@@ -113,11 +113,12 @@ def compute_solver_safe_set_ranking_loss(
     solver_safe_masks: torch.Tensor,
     margin: float = 0.5,
 ) -> torch.Tensor:
-    """Margin loss that ranks every proven-safe cell before other covered cells.
+    """Margin loss that makes the argmin action fall inside proven-safe cells.
 
-    Unlike `compute_best_safe_ranking_loss`, this uses explicit safe cells from
-    `ConstraintSolver` diagnostics. It is intended for mined hard examples and
-    returns zero for normal replay samples that do not carry solver-safe masks.
+    This uses explicit safe cells from `ConstraintSolver` diagnostics. The
+    action policy only takes one argmin cell, so this loss uses a conservative
+    set-min objective instead of ranking every safe cell before every unknown
+    cell. That keeps calibration pressure local to the decision boundary.
     """
     if logits.dim() == 4:
         logits = logits[:, 0]
@@ -130,12 +131,9 @@ def compute_solver_safe_set_ranking_loss(
         if not preferred.any() or not competitors.any():
             continue
 
-        preferred_logits = sample_logits[preferred]
-        competitor_logits = sample_logits[competitors]
-        pairwise = F.relu(
-            preferred_logits[:, None] + margin - competitor_logits[None, :]
-        )
-        losses.append(pairwise.mean())
+        best_safe_logit = sample_logits[preferred].min()
+        best_competitor_logit = sample_logits[competitors].min()
+        losses.append(F.relu(best_safe_logit + margin - best_competitor_logit))
 
     if not losses:
         return logits.sum() * 0.0

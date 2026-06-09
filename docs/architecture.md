@@ -134,9 +134,11 @@ loss = deep_mse
 
 其中：
 - `best_safe_rank`: 原 `deep_mse_rank`，要求至少一个 target P(mine)=0 的候选排在非零目标前面。
-- `solver_safe_set_rank`: 新增项，要求 `ConstraintSolver` 可证明 safe 的所有 covered cells 排在 unknown/non-safe covered cells 前面。
+- `solver_safe_set_rank`: 新增项，要求 `ConstraintSolver` 可证明 safe set 中的最低 logit 低于 safe set 外的最低 logit，使裸模型 argmin 落入可证明 safe set。
 
 `solver_safe_set_rank` 只使用 failure mining 生成的 `solver_safe_masks_*`，不在训练热路径中临时调用 solver；普通 replay 样本缺少该 mask 时额外项自动为 0。
+
+全 pairwise 版本（所有可证明 safe cells 都排在所有 unknown cells 前面）在 S5 上出现负优化，因此当前实现采用更保守的 set-min objective，优先修正动作选择而不是强行重排全部 covered cells。
 
 ### 消融实验数据 (2026-06-05, S1 8×8/10雷, 10000 games, 5 epochs)
 

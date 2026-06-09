@@ -153,6 +153,7 @@ PYTHONPATH=src uv run python3 scripts/train.py \
 - `scripts/collect_mistakes.py` 新增保存 `solver_safe_masks_*`
 - `TrajectoryPool.batch(..., include_solver_safe=True)` 可返回 solver-safe masks
 - 普通 S1-S5 replay 样本没有 safe mask 时，该额外 loss 自动为 0
+- 初版全 pairwise safe-set ranking 在 S5 500 局下降到 480/500 WR = 96.00%，低于 `mistake_ft2` 的 486/500；当前实现已改为保守 set-min objective，只要求 safe set 内最低 logit 低于 safe set 外最低 logit。
 
 正式训练前先重新生成带 safe mask 的错题集：
 

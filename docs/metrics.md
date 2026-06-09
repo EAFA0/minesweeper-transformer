@@ -116,7 +116,9 @@ deep_mse_solver_safe_rank =
 
 目标：
 - 原 `deep_mse_rank`: 至少一个 target-safe cell 排在 non-safe cells 前面
-- 新 `solver_safe_set_rank`: 所有可证明 safe cells 排在 unknown/non-safe covered cells 前面
+- 新 `solver_safe_set_rank`: safe set 里的最低 logit 低于 safe set 外的最低 logit，使裸模型 argmin 落入可证明 safe set
+
+注意：最初的全 pairwise 版本“所有可证明 safe cells 都排在 unknown cells 前面”在 S5 上出现负优化，说明该约束过强，会扰动概率校准。当前实现改为 set-min objective，直接对齐动作选择。
 
 旧版 mistake NPZ 不包含 `solver_safe_masks_*`，使用该 loss 前需重新运行 failure mining 生成新版错题文件。
 
