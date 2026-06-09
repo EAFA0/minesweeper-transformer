@@ -33,8 +33,8 @@
 ## 坑 #5: 数据目录混乱
 
 - **症状**: `train_stage.py` 报 "Data already exists" 但数据不完整（曾被中途 kill）
-- **原因**: 多进程/单进程生成到不同目录 (`data/S1/` vs `data/`)，`--force_data` 检查逻辑可能误判
-- **正确做法**: 主线训练统一使用 `data/`；`data/` 下默认全是 no-guess 样本，不要混入 hint-solvable 数据
+- **原因**: 多进程/单进程生成到不同目录 (`data/S1/` vs `data/`)，`--force_data` 检查逻辑可能误判；历史 `train_supervised.py` 还会在离线训练时自动启动 background generator，可能覆盖阶段数据文件。
+- **正确做法**: 主线训练统一使用 `data/`；`data/` 下默认全是 no-guess 样本，不要混入 hint-solvable 数据；supervised 训练必须只读取显式 `--data_dir`，生成数据用 `scripts/generate_data.py` 单独执行。
 - **记录日期**: 2026-05-30
 
 ## 预防原则
