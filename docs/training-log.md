@@ -145,17 +145,102 @@ PYTHONPATH=src uv run python3 scripts/train.py \
 | S4/S25 回归 200 局 | 192/200 WR = 96.00%, action_acc=0.9983, avg_steps=23.9 |
 | 结论 | 二次 hard-example replay 继续正向但边际收益变小：S5 裸模型从 96.80% 到 97.20%，rule guard 到 99.20%，S1/S4 无回归。当前最佳 checkpoint 为 `v5_replay_S5_mistake_ft2`。不建议继续同构第三轮 replay，下一步优先研究 solver-safe-set ranking loss。 |
 
-### Solver-safe-set ranking implementation
+### 当前最佳基线复现流程
 
-已新增 `deep_mse_solver_safe_rank`，用于 hard-example replay 的下一轮实验。它在 `deep_mse_rank` 基础上额外约束 `ConstraintSolver` 可证明 safe 的所有 covered cells 排在 unknown/non-safe covered cells 前面。
+当前成功基线为：
+
+```text
+checkpoints/v5_replay_S5_mistake_ft2/best_model.pt
+S5 naked:      486/500 WR = 97.20%
+S5 rule_guard: 496/500 WR = 99.20%
+S1 regression: 197/200 WR = 98.50%
+S4 regression: 192/200 WR = 96.00%
+```
+
+复现前置：
+- `data/S1` 到 `data/S5` 均为 strict no-guess 数据，每阶段 10000 trajectories
+- `data/eval_boards_8x8_32.npz` 固定为 500 boards
+- 继承 checkpoint 为 `checkpoints/v5_replay_S5/best_model.pt`
+
+1. 收集 S5 base checkpoint 的错题：
+
+```bash
+PYTHONPATH=src uv run python3 scripts/collect_mistakes.py \
+  checkpoints/v5_replay_S5/best_model.pt \
+  --width 8 --height 8 --mines 32 --n_games 500 --board_pool data \
+  --output data/mistakes/S5_rule_guard_failures.npz
+```
+
+2. 第一轮 hard-example replay：
+
+```bash
+PYTHONPATH=src uv run python3 scripts/train.py \
+  --mode supervised --arch V5 --loss_type deep_mse_rank \
+  --data_dir "data/S5:0.55,data/S1:0.1,data/S2:0.1,data/S3:0.1,data/S4:0.1,data/mistakes/S5_rule_guard_failures.npz:0.05" \
+  --pretrained checkpoints/v5_replay_S5/best_model.pt \
+  --save_dir checkpoints/v5_replay_S5_mistake_ft \
+  --board_width 8 --board_height 8 --board_mines 32 \
+  --epochs 2 --lr 1e-4
+```
+
+3. 收集第一轮后的错题：
+
+```bash
+PYTHONPATH=src uv run python3 scripts/collect_mistakes.py \
+  checkpoints/v5_replay_S5_mistake_ft/best_model.pt \
+  --width 8 --height 8 --mines 32 --n_games 500 --board_pool data \
+  --output data/mistakes/S5_after_mistake_ft.npz
+```
+
+4. 第二轮保守 hard-example replay：
+
+```bash
+PYTHONPATH=src uv run python3 scripts/train.py \
+  --mode supervised --arch V5 --loss_type deep_mse_rank \
+  --data_dir "data/S5:0.52,data/S1:0.1,data/S2:0.1,data/S3:0.1,data/S4:0.1,data/mistakes/S5_after_mistake_ft.npz:0.08" \
+  --pretrained checkpoints/v5_replay_S5_mistake_ft/best_model.pt \
+  --save_dir checkpoints/v5_replay_S5_mistake_ft2 \
+  --board_width 8 --board_height 8 --board_mines 32 \
+  --epochs 1 --lr 5e-5
+```
+
+5. 固定 cache 评估：
+
+```bash
+PYTHONPATH=src uv run python3 scripts/evaluate.py \
+  checkpoints/v5_replay_S5_mistake_ft2/best_model.pt \
+  --width 8 --height 8 --mines 32 --n_games 500 --board_pool data
+
+PYTHONPATH=src uv run python3 scripts/evaluate.py \
+  checkpoints/v5_replay_S5_mistake_ft2/best_model.pt \
+  --width 8 --height 8 --mines 32 --n_games 500 --board_pool data --rule_guard
+
+PYTHONPATH=src uv run python3 scripts/evaluate.py \
+  checkpoints/v5_replay_S5_mistake_ft2/best_model.pt \
+  --width 8 --height 8 --mines 10 --n_games 200 --board_pool data
+
+PYTHONPATH=src uv run python3 scripts/evaluate.py \
+  checkpoints/v5_replay_S5_mistake_ft2/best_model.pt \
+  --width 8 --height 8 --mines 25 --n_games 200 --board_pool data
+```
+
+复现注意：
+- `train_supervised.py` 已禁止自动启动 background generator；监督训练只读取显式 `--data_dir`
+- 如果 S5 加载不是 `10000` trajectories，先修复 `data/S5` 再训练
+- 不要覆盖 `checkpoints/v5_replay_S5_mistake_ft2`，它是当前成功基线
+
+### Solver-safe-set ranking exploration
+
+已新增 `deep_mse_solver_safe_rank` 并完成两轮探索，但当前结果为负优化，暂不作为成功基线。
 
 实现要点：
 - `scripts/collect_mistakes.py` 新增保存 `solver_safe_masks_*`
 - `TrajectoryPool.batch(..., include_solver_safe=True)` 可返回 solver-safe masks
 - 普通 S1-S5 replay 样本没有 safe mask 时，该额外 loss 自动为 0
 - 初版全 pairwise safe-set ranking 在 S5 500 局下降到 480/500 WR = 96.00%，低于 `mistake_ft2` 的 486/500；当前实现已改为保守 set-min objective，只要求 safe set 内最低 logit 低于 safe set 外最低 logit。
+- set-min 版本训练内 100 局为 91/100 WR = 91.00%，仍明显低于 `mistake_ft2`，因此暂停该路线。
 
-正式训练前先重新生成带 safe mask 的错题集：
+历史错题生成命令：
 
 ```bash
 PYTHONPATH=src uv run python3 scripts/collect_mistakes.py \
@@ -164,7 +249,7 @@ PYTHONPATH=src uv run python3 scripts/collect_mistakes.py \
   --output data/mistakes/S5_after_mistake_ft2_solver_safe.npz
 ```
 
-候选训练命令：
+已证伪训练命令（不要作为当前基线）：
 
 ```bash
 PYTHONPATH=src uv run python3 scripts/train.py \

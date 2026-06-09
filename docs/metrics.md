@@ -99,7 +99,7 @@ S5 mistake replay fine-tune v2 后：
 解读：
 - 第二轮 replay 仍正向，但裸模型仅 +0.4pp，进入平台期
 - `rule_guard` 已达 99.20%，辅助框架路线接近 99%+
-- 继续同构 replay 的预期收益较低；下一步应考虑 `solver_safe_rank`，直接约束所有可证明 safe cells 排在 unknown cells 前面
+- 继续同构 replay 的预期收益较低；当前成功基线固定为 `checkpoints/v5_replay_S5_mistake_ft2/best_model.pt`
 
 ## Solver-Safe Ranking
 
@@ -119,6 +119,11 @@ deep_mse_solver_safe_rank =
 - 新 `solver_safe_set_rank`: safe set 里的最低 logit 低于 safe set 外的最低 logit，使裸模型 argmin 落入可证明 safe set
 
 注意：最初的全 pairwise 版本“所有可证明 safe cells 都排在 unknown cells 前面”在 S5 上出现负优化，说明该约束过强，会扰动概率校准。当前实现改为 set-min objective，直接对齐动作选择。
+
+当前实验状态：
+- 全 pairwise 版本: S5 500 局 480/500 WR = 96.00%，低于 `mistake_ft2`
+- set-min 版本: 训练内 100 局 91/100 WR = 91.00%，仍为负优化
+- 结论: 暂停 solver-safe ranking 路线；当前最佳仍是 `deep_mse_rank + mistake replay v2`
 
 旧版 mistake NPZ 不包含 `solver_safe_masks_*`，使用该 loss 前需重新运行 failure mining 生成新版错题文件。
 

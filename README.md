@@ -1,6 +1,16 @@
 # Minesweeper Transformer
 
-CNN + Transformer 混合架构的扫雷 AI。当前主线：**V5 replay curriculum `S1 → S2 → S3 → S4 → S5`**。
+CNN + Transformer 混合架构的扫雷 AI。当前主线：**V5 replay curriculum `S1 → S2 → S3 → S4 → S5` + S5 hard-example replay**。
+
+当前最佳基线：
+
+```text
+checkpoint: checkpoints/v5_replay_S5_mistake_ft2/best_model.pt
+S5 8×8/32 naked:      486/500 WR = 97.20%
+S5 8×8/32 rule_guard: 496/500 WR = 99.20%
+```
+
+完整复现流程见 `docs/training-log.md` 的“当前最佳基线复现流程”。
 
 ## 快速开始
 
