@@ -38,8 +38,18 @@ def main():
         "--loss_type",
         type=str,
         default="bce",
-        choices=["bce", "mse", "deep_mse", "deep_mse_rank", "deep_mse_solver_safe_rank"],
-        help="Loss function: bce, mse, deep_mse, deep_mse_rank, or deep_mse_solver_safe_rank",
+        choices=[
+            "bce",
+            "mse",
+            "deep_mse",
+            "deep_mse_rank",
+            "deep_mse_denoise_rank",
+            "deep_mse_solver_safe_rank",
+        ],
+        help=(
+            "Loss function: bce, mse, deep_mse, deep_mse_rank, "
+            "deep_mse_denoise_rank, or deep_mse_solver_safe_rank"
+        ),
     )
     p.add_argument("--device", default="auto")
     p.add_argument("--dry_run", action="store_true",

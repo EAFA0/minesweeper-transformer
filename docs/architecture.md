@@ -120,6 +120,28 @@ residual = target_remaining - predicted
 3. `forced_safe_signal`/`forced_mine_signal` 直接暴露基础扫雷硬规则，减少模型从平均 residual 中反推规则的负担。
 4. V5 仍保留 CNN + Transformer，局部规则、共享边界和远距离依赖都能继续建模。
 
+### No-Arch Denoising Refinement (2026-06-08)
+
+当前 V5 refinement 默认从 `0.5` 概率图开始：
+
+```text
+0.5 -> p1 -> p2 -> p3 -> p4
+```
+
+这让模型擅长固定轨迹推理，但不一定擅长从任意错误概率图自我修正。新增 `deep_mse_denoise_rank`，在不改变 19ch 架构的前提下训练：
+
+```text
+noisy_or_biased_prev_probs -> clean solver probability target
+```
+
+训练时 `initial_probs` 随机来自：
+- `0.5` constant prior
+- `target_probs + gaussian noise`
+- `target_probs` 与随机概率图混合
+- 轻度 wrong-biased probs
+
+该路线借鉴 diffusion/denoising 思想，但不生成完整雷盘，也不新增 step/noise channel，因此可直接继承 `checkpoints/v5_replay_S5_mistake_ft2/best_model.pt`。Gemini 提到的 step 感知更适合作为后续 `noise_level` conditioning，而不是当前第一步。
+
 ### Solver-Safe Ranking Loss (2026-06-06)
 
 S5 hard-example replay 后，裸模型从 91.40% 提升到 97.20%，但剩余 mined states 仍主要是 `rule_guard_avoidable`。这说明单纯重复采样错题已进入平台期，下一步需要更直接地约束排序目标。
@@ -138,7 +160,7 @@ loss = deep_mse
 
 `solver_safe_set_rank` 只使用 failure mining 生成的 `solver_safe_masks_*`，不在训练热路径中临时调用 solver；普通 replay 样本缺少该 mask 时额外项自动为 0。
 
-全 pairwise 版本（所有可证明 safe cells 都排在所有 unknown cells 前面）在 S5 上出现负优化，因此当前实现采用更保守的 set-min objective，优先修正动作选择而不是强行重排全部 covered cells。
+全 pairwise 版本（所有可证明 safe cells 都排在所有 unknown cells 前面）在 S5 上出现负优化，因此当前实现采用更保守的 set-min objective，优先修正动作选择而不是强行重排全部 covered cells。set-min 版本训练内评估仍为负优化，当前暂停该路线。
 
 ### 消融实验数据 (2026-06-05, S1 8×8/10雷, 10000 games, 5 epochs)
 

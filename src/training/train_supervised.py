@@ -15,6 +15,7 @@ from tqdm import tqdm
 from config import TrainingConfig, ModelConfig
 from training.trajectory_pool import TrajectoryPool
 from training.utils import (
+    build_denoising_initial_probs,
     build_model,
     compute_best_safe_ranking_loss,
     compute_loss,
@@ -77,11 +78,21 @@ def train_supervised(
         mines = config.board_mines
         pos_weight_val = (total_cells - mines) / max(mines, 1)
         print(f"BCE Loss with binary (ground-truth) targets, pos_weight={pos_weight_val:.2f}")
-    elif config.loss_type in {"deep_mse", "deep_mse_rank", "deep_mse_solver_safe_rank"}:
+    elif config.loss_type in {
+        "deep_mse",
+        "deep_mse_rank",
+        "deep_mse_solver_safe_rank",
+        "deep_mse_denoise_rank",
+    }:
         pos_weight_val = None
         if config.loss_type == "deep_mse_rank":
             print(
                 "Deep-MSE + ranking loss "
+                f"(weight={config.rank_loss_weight}, margin={config.rank_loss_margin})"
+            )
+        elif config.loss_type == "deep_mse_denoise_rank":
+            print(
+                "Deep-MSE denoising refinement + ranking loss "
                 f"(weight={config.rank_loss_weight}, margin={config.rank_loss_margin})"
             )
         elif config.loss_type == "deep_mse_solver_safe_rank":
@@ -135,9 +146,20 @@ def train_supervised(
                 solver_safe_masks = solver_safe_masks.to(device)
 
             # 2. Forward pass. BCE uses raw logits; MSE variants use probabilities.
-            if config.loss_type in {"deep_mse", "deep_mse_rank", "deep_mse_solver_safe_rank"}:
+            if config.loss_type in {
+                "deep_mse",
+                "deep_mse_rank",
+                "deep_mse_solver_safe_rank",
+                "deep_mse_denoise_rank",
+            }:
+                initial_probs = None
+                if config.loss_type == "deep_mse_denoise_rank":
+                    initial_probs = build_denoising_initial_probs(targets, masks)
                 refine_logits = model.refine(
-                    channels, num_steps=config.refinement_steps, return_logits=True
+                    channels,
+                    num_steps=config.refinement_steps,
+                    return_logits=True,
+                    initial_probs=initial_probs,
                 )
                 step_losses = []
                 for logits in refine_logits:
@@ -145,7 +167,11 @@ def train_supervised(
                     mse_loss = compute_loss(
                         "mse", step_preds, targets, masks, pos_weight_val, device
                     )
-                    if config.loss_type in {"deep_mse_rank", "deep_mse_solver_safe_rank"}:
+                    if config.loss_type in {
+                        "deep_mse_rank",
+                        "deep_mse_solver_safe_rank",
+                        "deep_mse_denoise_rank",
+                    }:
                         rank_loss = compute_best_safe_ranking_loss(
                             logits,
                             targets,

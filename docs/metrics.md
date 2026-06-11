@@ -127,6 +127,33 @@ deep_mse_solver_safe_rank =
 
 旧版 mistake NPZ 不包含 `solver_safe_masks_*`，使用该 loss 前需重新运行 failure mining 生成新版错题文件。
 
+## Denoising Refinement
+
+`deep_mse_denoise_rank` 是 no-architecture-change 的 diffusion-inspired refinement 训练方式：
+
+```text
+deep_mse_denoise_rank =
+  deep_mse_from_noisy_initial_probs
+  + rank_loss_weight * best_safe_rank
+```
+
+训练时不再只从固定 `0.5` prior 开始，而是随机采样不完美概率图作为 `initial_probs`：
+- `0.5` constant prior，保留原始 refinement 分布
+- `target_probs + gaussian noise`
+- `target_probs` 与随机概率图混合
+- 轻度 wrong-biased probs
+
+评估时仍使用标准 refinement，从 `0.5` 开始，模型结构保持 19ch 不变，因此可继承 `v5_replay_S5_mistake_ft2`。
+
+目标：
+- 让模型学习从错误/噪声概率图修正回 solver target
+- 提升 refinement loop 的自我纠错能力
+- 避免直接加 step/noise channel 导致无法继承当前最佳 checkpoint
+
+当前状态：
+- `deep_mse_denoise_rank` 已通过 1-batch smoke
+- 正式 S5 500-board 结果待跑
+
 ## RL 训练时（已从 main 移除）
 
 > RL 代码已从 main 移除，以下指标仅供历史参考。

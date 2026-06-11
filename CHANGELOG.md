@@ -23,6 +23,7 @@
 - **新增 solver-safe-set ranking loss**: `collect_mistakes.py` 现在保存 `solver_safe_masks_*`；`TrajectoryPool.batch(..., include_solver_safe=True)` 可返回该 mask；新增 `deep_mse_solver_safe_rank`，在 `deep_mse_rank` 基础上要求 `ConstraintSolver` safe set 内最低 logit 低于 safe set 外最低 logit。
 - **收敛 solver-safe ranking 目标**: 全 pairwise safe-set ranking 在 S5 上负优化（500 局 96.00%，低于 `mistake_ft2` 97.20%）；`compute_solver_safe_set_ranking_loss()` 改为 set-min objective，只要求 safe set 内最低 logit 低于 safe set 外最低 logit，直接对齐 argmin 动作选择。
 - **暂停 solver-safe ranking 路线**: set-min 版本训练内 100 局仅 91/100 WR，仍低于 `mistake_ft2`；当前成功基线保持 `deep_mse_rank + mistake replay v2`。
+- **新增 no-arch denoising refinement**: `MinesweeperTransformer.refine()` 支持 `initial_probs`；新增 `deep_mse_denoise_rank`，训练时用 `0.5`、noisy target、random mix、wrong-biased probs 作为不完美概率图输入，学习修正回 solver target；不改 19ch 架构，可继承 `v5_replay_S5_mistake_ft2`。
 - **停止 supervised 自动生成数据**: `train_supervised.py` 不再启动 background `generate_data.py` 写入 primary data source；离线训练现在只读取显式 `--data_dir`，避免微调时覆盖 `data/S5` 等阶段数据。
 - **修复训练入口 mode 路由**: `scripts/train.py` legacy 分支现在会应用 `--mode`，避免 recipe phase 传入 `--mode supervised` 时被默认 `online` 覆盖。
 - **文档同步**: AGENTS.md、README.md、architecture.md、conventions.md、metrics.md、training-log.md、docs/README.md 均已更新。

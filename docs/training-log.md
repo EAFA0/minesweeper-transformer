@@ -143,7 +143,7 @@ PYTHONPATH=src uv run python3 scripts/train.py \
 | S5 after-mining | 486/500 WR = 97.20%, 381 saved states, `rule_guard_avoidable=377`, `hard_sorting=4`, `calibration_drift=11` |
 | S1 回归 200 局 | 197/200 WR = 98.50%, action_acc=0.9992, avg_steps=18.8 |
 | S4/S25 回归 200 局 | 192/200 WR = 96.00%, action_acc=0.9983, avg_steps=23.9 |
-| 结论 | 二次 hard-example replay 继续正向但边际收益变小：S5 裸模型从 96.80% 到 97.20%，rule guard 到 99.20%，S1/S4 无回归。当前最佳 checkpoint 为 `v5_replay_S5_mistake_ft2`。不建议继续同构第三轮 replay，下一步优先研究 solver-safe-set ranking loss。 |
+| 结论 | 二次 hard-example replay 继续正向但边际收益变小：S5 裸模型从 96.80% 到 97.20%，rule guard 到 99.20%，S1/S4 无回归。当前最佳 checkpoint 为 `v5_replay_S5_mistake_ft2`。不建议继续同构第三轮 replay；solver-safe ranking 已证伪，下一步优先 no-arch denoising refinement。 |
 
 ### 当前最佳基线复现流程
 
@@ -260,6 +260,50 @@ PYTHONPATH=src uv run python3 scripts/train.py \
   --board_width 8 --board_height 8 --board_mines 32 \
   --epochs 1 --lr 5e-5
 ```
+
+### No-Arch Denoising Refinement
+
+新增 `deep_mse_denoise_rank`，目标是在不改变 V5 19ch 架构的前提下，让模型从任意不完美概率图修正回 solver target。该路线借鉴 diffusion/denoising 思想，但不生成雷盘，也不引入 step/noise channel，因此可以继承当前最佳 checkpoint。
+
+实现要点：
+- `MinesweeperTransformer.refine(..., initial_probs=...)` 支持从外部概率图启动；默认仍为 `0.5`，评估行为不变
+- 训练时随机采样 denoising initial priors：`0.5`、`target_probs + gaussian noise`、`target_probs/random mix`、轻度 wrong-biased probs
+- loss 仍为 `deep_mse + best_safe_rank`，不使用已证伪的 solver-safe ranking
+- 当前仅做 smoke 验证，正式结果待跑
+
+候选训练命令：
+
+```bash
+PYTHONPATH=src uv run python3 scripts/train.py \
+  --mode supervised --arch V5 --loss_type deep_mse_denoise_rank \
+  --data_dir "data/S5:0.52,data/S1:0.1,data/S2:0.1,data/S3:0.1,data/S4:0.1,data/mistakes/S5_after_mistake_ft.npz:0.08" \
+  --pretrained checkpoints/v5_replay_S5_mistake_ft2/best_model.pt \
+  --save_dir checkpoints/v5_replay_S5_denoise_rank \
+  --board_width 8 --board_height 8 --board_mines 32 \
+  --epochs 1 --lr 5e-5
+```
+
+评估命令：
+
+```bash
+PYTHONPATH=src uv run python3 scripts/evaluate.py \
+  checkpoints/v5_replay_S5_denoise_rank/best_model.pt \
+  --width 8 --height 8 --mines 32 --n_games 500 --board_pool data
+
+PYTHONPATH=src uv run python3 scripts/evaluate.py \
+  checkpoints/v5_replay_S5_denoise_rank/best_model.pt \
+  --width 8 --height 8 --mines 32 --n_games 500 --board_pool data --rule_guard
+
+PYTHONPATH=src uv run python3 scripts/collect_mistakes.py \
+  checkpoints/v5_replay_S5_denoise_rank/best_model.pt \
+  --width 8 --height 8 --mines 32 --n_games 500 --board_pool data \
+  --output data/mistakes/S5_after_denoise_rank.npz
+```
+
+判断标准：
+- S5 naked 高于 `v5_replay_S5_mistake_ft2` 的 486/500 WR = 97.20%
+- S5 `--rule_guard` 不低于 496/500 WR = 99.20%
+- 若 S5 正向，再补 S1/S4 回归
 
 ---
 

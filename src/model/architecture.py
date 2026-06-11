@@ -262,9 +262,18 @@ class MinesweeperTransformer(nn.Module):
 
     def refine(self, board: torch.Tensor, num_steps: int = 5,
                convergence_epsilon: float = 0.01,
-               return_logits: bool = False) -> List[torch.Tensor]:
+               return_logits: bool = False,
+               initial_probs: Optional[torch.Tensor] = None) -> List[torch.Tensor]:
         B, _, H, W = board.shape
-        probs = torch.full((B, 1, H, W), 0.5, device=board.device, dtype=board.dtype)
+        if initial_probs is None:
+            probs = torch.full((B, 1, H, W), 0.5, device=board.device, dtype=board.dtype)
+        else:
+            probs = initial_probs.to(device=board.device, dtype=board.dtype)
+            if probs.shape != (B, 1, H, W):
+                expected = (B, 1, H, W)
+                raise ValueError(
+                    f"initial_probs must have shape {expected}, got {tuple(probs.shape)}"
+                )
         results = []
 
         for _ in range(num_steps):

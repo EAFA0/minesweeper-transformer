@@ -140,6 +140,61 @@ def compute_solver_safe_set_ranking_loss(
     return torch.stack(losses).mean()
 
 
+def build_denoising_initial_probs(
+    targets: torch.Tensor,
+    masks: torch.Tensor,
+) -> torch.Tensor:
+    """Sample imperfect mine-probability priors for denoising refinement.
+
+    The returned tensor is detached and only serves as `prev_probs` input. It
+    intentionally mixes easy, noisy, random, and mildly wrong priors so the
+    shared refinement block learns to correct arbitrary probability maps.
+    """
+    if targets.dim() != 3 or masks.dim() != 3:
+        raise ValueError(
+            f"targets and masks must be (B,H,W), got {targets.shape} and {masks.shape}"
+        )
+
+    target_probs = targets.unsqueeze(1).clamp(0.0, 1.0)
+    covered = masks.unsqueeze(1).to(dtype=targets.dtype)
+    B = target_probs.shape[0]
+    device = target_probs.device
+    dtype = target_probs.dtype
+
+    mode = torch.rand((B, 1, 1, 1), device=device, dtype=dtype)
+    constant = torch.full_like(target_probs, 0.5)
+
+    gaussian_std = 0.05 + 0.20 * torch.rand((B, 1, 1, 1), device=device, dtype=dtype)
+    gaussian = (target_probs + torch.randn_like(target_probs) * gaussian_std).clamp(
+        0.0, 1.0
+    )
+
+    mix_alpha = 0.25 + 0.55 * torch.rand((B, 1, 1, 1), device=device, dtype=dtype)
+    random_mix = (
+        (1.0 - mix_alpha) * target_probs
+        + mix_alpha * torch.rand_like(target_probs)
+    ).clamp(0.0, 1.0)
+
+    wrong_alpha = 0.15 + 0.35 * torch.rand((B, 1, 1, 1), device=device, dtype=dtype)
+    wrong_bias = (
+        (1.0 - wrong_alpha) * target_probs
+        + wrong_alpha * (1.0 - target_probs)
+    ).clamp(0.0, 1.0)
+
+    initial = torch.where(
+        mode < 0.20,
+        constant,
+        torch.where(
+            mode < 0.60,
+            gaussian,
+            torch.where(mode < 0.85, random_mix, wrong_bias),
+        ),
+    )
+    # Non-covered cells do not contribute to constraint residuals; zeroing them
+    # prevents noisy priors from leaking through the explicit prev_probs channel.
+    return (initial * covered).detach()
+
+
 # ── Checkpointing ───────────────────────────────────────────────────────────
 
 def save_checkpoint(
