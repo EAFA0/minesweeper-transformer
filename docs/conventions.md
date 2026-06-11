@@ -57,6 +57,9 @@ python scripts/train_stage.py --stage S5 --eval_only
 python scripts/train_stage.py --stage S5 --eval 10 10 40  # 零样本评估
 python scripts/evaluate.py checkpoints/v5_replay_S5/best_model.pt \
     --width 8 --height 8 --mines 32 --n_games 200 --rule_guard
+python scripts/evaluate.py checkpoints/v5_replay_S5_denoise_rank_ft2/best_model.pt \
+    --width 8 --height 8 --mines 32 --n_games 1000 --board_pool data \
+    --refine_steps 5 --rule_guard --prob_zero_guard
 python scripts/collect_mistakes.py checkpoints/v5_replay_S5/best_model.pt \
     --width 8 --height 8 --mines 32 --n_games 500 --board_pool data \
     --output data/mistakes/S5_rule_guard_failures.npz
@@ -87,6 +90,12 @@ python scripts/evaluate.py checkpoints/S1/best_model.pt \
     --width 8 --height 8 --mines 10 --n_games 100
 ```
 
+评估成绩记录约定：
+- `naked`: 不带 `--rule_guard` / `--prob_zero_guard`，只体现模型 argmin 能力
+- `rule_guard`: `ConstraintSolver` 可证明 safe cells 优先，属于辅助框架成绩
+- `prob_zero_guard`: 只在 `rule_guard` 无 safe cells 且 `ProbabilitySolver` 找到 `P(mine)=0` cells 时介入，属于 100% 部署组合成绩
+- 不要把 naked、rule_guard、prob_zero_guard 三类胜率混记
+
 ## 命名规范
 
 - **Checkpoint 目录**: `checkpoints/{stage}/` (如 `S1`, `S3`, `rl`)
@@ -114,4 +123,4 @@ python scripts/evaluate.py checkpoints/S1/best_model.pt \
 
 ---
 
-*最后更新: 2026-06-06 (V5 单架构清理, archived 移除)*
+*最后更新: 2026-06-12 (S5 100% combo strategy, prob_zero_guard)*

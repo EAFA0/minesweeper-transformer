@@ -4,7 +4,7 @@
 
 > **2026-06-06 更新**: V5 constraint channels 从 4 个扩为 8 个，当前模型输入为 19ch；主 loss 为 `deep_mse_rank`；主 recipe 为 `v5_curriculum_replay`。
 > **数据合同**: 主训练/评估数据均为 strict no-guess；生成器额外要求本项目 `ProbabilitySolver` 可无猜解完整局。
-> **推理策略**: refine 固定上限 4 步，全 BPTT 训练；评估中根据 `max|P_t - P_{t-1}| < convergence_eps` 早停。
+> **推理策略**: 训练固定 4 步全 BPTT；默认评估根据 `max|P_t - P_{t-1}| < convergence_eps` 早停，当前 S5 100% 组合显式使用 `--refine_steps 5`。
 
 ## 日志格式
 
@@ -143,11 +143,11 @@ PYTHONPATH=src uv run python3 scripts/train.py \
 | S5 after-mining | 486/500 WR = 97.20%, 381 saved states, `rule_guard_avoidable=377`, `hard_sorting=4`, `calibration_drift=11` |
 | S1 回归 200 局 | 197/200 WR = 98.50%, action_acc=0.9992, avg_steps=18.8 |
 | S4/S25 回归 200 局 | 192/200 WR = 96.00%, action_acc=0.9983, avg_steps=23.9 |
-| 结论 | 二次 hard-example replay 继续正向但边际收益变小：S5 裸模型从 96.80% 到 97.20%，rule guard 到 99.20%，S1/S4 无回归。当前最佳 checkpoint 为 `v5_replay_S5_mistake_ft2`。不建议继续同构第三轮 replay；solver-safe ranking 已证伪，下一步优先 no-arch denoising refinement。 |
+| 结论 | 二次 hard-example replay 继续正向但边际收益变小：S5 裸模型从 96.80% 到 97.20%，rule guard 到 99.20%，S1/S4 无回归。该阶段最佳 checkpoint 为 `v5_replay_S5_mistake_ft2`。不建议继续同构第三轮 replay；solver-safe ranking 已证伪，下一步优先 no-arch denoising refinement。 |
 
-### 当前最佳基线复现流程
+### Hard-Example Replay 基线复现流程
 
-当前成功基线为：
+hard-example replay 成功基线为：
 
 ```text
 checkpoints/v5_replay_S5_mistake_ft2/best_model.pt
@@ -227,7 +227,7 @@ PYTHONPATH=src uv run python3 scripts/evaluate.py \
 复现注意：
 - `train_supervised.py` 已禁止自动启动 background generator；监督训练只读取显式 `--data_dir`
 - 如果 S5 加载不是 `10000` trajectories，先修复 `data/S5` 再训练
-- 不要覆盖 `checkpoints/v5_replay_S5_mistake_ft2`，它是当前成功基线
+- 不要覆盖 `checkpoints/v5_replay_S5_mistake_ft2`，它是 hard-example replay 成功基线
 
 ### Solver-safe-set ranking exploration
 
@@ -263,15 +263,15 @@ PYTHONPATH=src uv run python3 scripts/train.py \
 
 ### No-Arch Denoising Refinement
 
-新增 `deep_mse_denoise_rank`，目标是在不改变 V5 19ch 架构的前提下，让模型从任意不完美概率图修正回 solver target。该路线借鉴 diffusion/denoising 思想，但不生成雷盘，也不引入 step/noise channel，因此可以继承当前最佳 checkpoint。
+新增 `deep_mse_denoise_rank`，目标是在不改变 V5 19ch 架构的前提下，让模型从任意不完美概率图修正回 solver target。该路线借鉴 diffusion/denoising 思想，但不生成雷盘，也不引入 step/noise channel，因此可以继承 hard-example replay checkpoint。
 
 实现要点：
 - `MinesweeperTransformer.refine(..., initial_probs=...)` 支持从外部概率图启动；默认仍为 `0.5`，评估行为不变
 - 训练时随机采样 denoising initial priors：`0.5`、`target_probs + gaussian noise`、`target_probs/random mix`、轻度 wrong-biased probs
 - loss 仍为 `deep_mse + best_safe_rank`，不使用已证伪的 solver-safe ranking
-- 当前仅做 smoke 验证，正式结果待跑
+- `v5_replay_S5_denoise_rank` 证明该路线正向：S5 裸模型达到 490/500 WR = 98.00%
 
-候选训练命令：
+训练命令：
 
 ```bash
 PYTHONPATH=src uv run python3 scripts/train.py \
@@ -283,27 +283,113 @@ PYTHONPATH=src uv run python3 scripts/train.py \
   --epochs 1 --lr 5e-5
 ```
 
-评估命令：
+结果：
+
+| 项目 | 值 |
+|------|-----|
+| Checkpoint | `checkpoints/v5_replay_S5_denoise_rank/best_model.pt` |
+| S5 裸模型 500 局 | 490/500 WR = 98.00%, action_acc=0.9989 |
+| S5 rule guard 500 局 | 496/500 WR = 99.20% |
+| S1 回归 200 局 | 195/200 WR = 97.50% |
+| S4/S25 回归 200 局 | 195/200 WR = 97.50% |
+| S5 after-mining | 342 saved states, `rule_guard_avoidable=338`, `hard_sorting=4`, `calibration_drift=8` |
+| 结论 | denoising refinement 提升裸模型上限，但 S1/S4 略低于 `mistake_ft2`；后续使用更低 lr 和 S5_after_denoise_rank 做保守二次微调。 |
+
+二次 denoise replay 命令：
+
+```bash
+PYTHONPATH=src uv run python3 scripts/train.py \
+  --mode supervised --arch V5 --loss_type deep_mse_denoise_rank \
+  --data_dir "data/S5:0.50,data/S1:0.1,data/S2:0.1,data/S3:0.1,data/S4:0.1,data/mistakes/S5_after_denoise_rank.npz:0.10" \
+  --pretrained checkpoints/v5_replay_S5_denoise_rank/best_model.pt \
+  --save_dir checkpoints/v5_replay_S5_denoise_rank_ft2 \
+  --board_width 8 --board_height 8 --board_mines 32 \
+  --epochs 1 --lr 2e-5
+```
+
+二次结果：
+
+| 项目 | 值 |
+|------|-----|
+| Checkpoint | `checkpoints/v5_replay_S5_denoise_rank_ft2/best_model.pt` |
+| S5 裸模型 500 局 | 486/500 WR = 97.20% |
+| S5 rule guard refine=4 | 497/500 WR = 99.40% |
+| S5 rule guard refine=5 | 498/500 WR = 99.60% |
+| S5 rule guard refine=6 | 498/500 WR = 99.60% |
+| S5 rule guard refine=8 | 497/500 WR = 99.40% |
+| 结论 | 二次微调提升了 guarded 策略的稳定性，但裸模型回落到 `mistake_ft2` 水平；最终部署评估采用 `refine_steps=5`。 |
+
+### Current 100% Combo Strategy
+
+最终 100% 路线是 `v5_replay_S5_denoise_rank_ft2` + `rule_guard` + `prob_zero_guard`，不是裸模型 100%。
+
+实现边界：
+- `rule_guard`: `ConstraintSolver` 有可证明 safe cells 时，只在 safe set 内交给模型排序
+- `prob_zero_guard`: `rule_guard` 无 safe cells 时调用 `ProbabilitySolver`，仅在存在 `P(mine)=0` covered cells 时直接选择该零概率安全格
+- `rule_mine_guard`: 仅保留诊断开关，最终 100% 组合不依赖
+
+S5 正式评估命令：
 
 ```bash
 PYTHONPATH=src uv run python3 scripts/evaluate.py \
-  checkpoints/v5_replay_S5_denoise_rank/best_model.pt \
-  --width 8 --height 8 --mines 32 --n_games 500 --board_pool data
-
-PYTHONPATH=src uv run python3 scripts/evaluate.py \
-  checkpoints/v5_replay_S5_denoise_rank/best_model.pt \
-  --width 8 --height 8 --mines 32 --n_games 500 --board_pool data --rule_guard
-
-PYTHONPATH=src uv run python3 scripts/collect_mistakes.py \
-  checkpoints/v5_replay_S5_denoise_rank/best_model.pt \
-  --width 8 --height 8 --mines 32 --n_games 500 --board_pool data \
-  --output data/mistakes/S5_after_denoise_rank.npz
+  checkpoints/v5_replay_S5_denoise_rank_ft2/best_model.pt \
+  --width 8 --height 8 --mines 32 --n_games 1000 --board_pool data \
+  --refine_steps 5 --rule_guard --prob_zero_guard
 ```
 
-判断标准：
-- S5 naked 高于 `v5_replay_S5_mistake_ft2` 的 486/500 WR = 97.20%
-- S5 `--rule_guard` 不低于 496/500 WR = 99.20%
-- 若 S5 正向，再补 S1/S4 回归
+S5 结果：
+
+| 项目 | 值 |
+|------|-----|
+| 棋盘 | S5 8×8/32, 50.0% 密度 |
+| Eval cache | `data/eval_boards_8x8_32.npz`, 1000 boards |
+| Checkpoint | `checkpoints/v5_replay_S5_denoise_rank_ft2/best_model.pt` |
+| 策略 | `--refine_steps 5 --rule_guard --prob_zero_guard` |
+| 胜率 | 1000/1000 WR = 100.00% |
+| Action accuracy | 1.0000 |
+| Rule-guard actions | 16396 |
+| Prob-zero-guard actions | 1855 |
+| Avg game steps | 18.3 |
+| Avg refine steps | 4.9 |
+
+S1/S4 回归命令：
+
+```bash
+PYTHONPATH=src uv run python3 scripts/evaluate.py \
+  checkpoints/v5_replay_S5_denoise_rank_ft2/best_model.pt \
+  --width 8 --height 8 --mines 10 --n_games 200 --board_pool data \
+  --refine_steps 5 --rule_guard --prob_zero_guard
+
+PYTHONPATH=src uv run python3 scripts/evaluate.py \
+  checkpoints/v5_replay_S5_denoise_rank_ft2/best_model.pt \
+  --width 8 --height 8 --mines 25 --n_games 200 --board_pool data \
+  --refine_steps 5 --rule_guard --prob_zero_guard
+```
+
+回归结果：
+
+| 阶段 | 结果 |
+|------|------|
+| S1 8×8/10 | 200/200 WR = 100.00% |
+| S4 8×8/25 | 200/200 WR = 100.00% |
+
+### 当前 100% 组合复现流程
+
+推荐直接复现当前组合：
+
+```bash
+PYTHONPATH=src uv run python3 scripts/evaluate.py \
+  checkpoints/v5_replay_S5_denoise_rank_ft2/best_model.pt \
+  --width 8 --height 8 --mines 32 --n_games 1000 --board_pool data \
+  --refine_steps 5 --rule_guard --prob_zero_guard
+```
+
+若需从训练开始完整复现：
+1. 先按“Hard-Example Replay 基线复现流程”训练到 `v5_replay_S5_mistake_ft2`
+2. 运行 `deep_mse_denoise_rank` 训练生成 `v5_replay_S5_denoise_rank`
+3. 对 `v5_replay_S5_denoise_rank` 进行 failure mining，生成 `data/mistakes/S5_after_denoise_rank.npz`
+4. 运行二次 denoise replay，生成 `v5_replay_S5_denoise_rank_ft2`
+5. 使用 `--refine_steps 5 --rule_guard --prob_zero_guard` 在固定 cache 上评估
 
 ---
 

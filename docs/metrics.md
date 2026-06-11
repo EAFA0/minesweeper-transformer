@@ -43,10 +43,20 @@ Won / Total。最直观的最终指标。受样本量影响（10 局可能波动
 
 带 `--rule_guard` 的结果应单独记录为辅助框架成绩，不与裸模型 win rate 混记。
 
+**Rule-Mine-Guard Actions**
+启用 `--rule_mine_guard` 时，只有在 `--rule_guard` 找不到 safe cells 且 `ConstraintSolver` 找到 proven mines 时才介入。它只是虚拟排除这些 mine candidates，不真实插旗。该指标用于诊断“已知雷排除”能否减少 fallback 错误；当前 100% 组合不依赖该路径。
+
+**Prob-Zero-Guard Actions**
+启用 `--prob_zero_guard` 时，只有在 `--rule_guard` 找不到 safe cells 时才调用 `ProbabilitySolver`。如果存在 `P(mine)=0` 的 covered cells，评估直接选择这些零概率安全格；如果没有零概率格，仍回退模型排序。
+
+这是比全局 ProbabilitySolver fallback 更保守的辅助框架：只接管可证明零风险动作，不使用 `0.5` fallback 概率替代模型排序。
+
 当前 S5 诊断基线：
-- 裸模型: 8×8/32, 186/200 WR = 93.00%, action_acc=0.9961
-- 裸模型 500 局: 457/500 WR = 91.40%, action_acc=0.9952（评估期间 cache 从 200 扩到 500 boards）
-- `--rule_guard` 500 局: 491/500 WR = 98.20%, action_acc=0.9990, `rule_guard_actions=8194`
+- `v5_replay_S5` 裸模型 500 局: 457/500 WR = 91.40%, action_acc=0.9952
+- `v5_replay_S5` `--rule_guard` 500 局: 491/500 WR = 98.20%, action_acc=0.9990, `rule_guard_actions=8194`
+- `v5_replay_S5_mistake_ft2` 裸模型 500 局: 486/500 WR = 97.20%, action_acc=0.9985
+- `v5_replay_S5_denoise_rank` 裸模型 500 局: 490/500 WR = 98.00%
+- `v5_replay_S5_denoise_rank_ft2` `--rule_guard --prob_zero_guard --refine_steps 5` 1000 局: 1000/1000 WR = 100.00%, action_acc=1.0000, `rule_guard_actions=16396`, `prob_zero_guard_actions=1855`
 
 ## Failure Mining（collect_mistakes.py）
 
@@ -151,8 +161,10 @@ deep_mse_denoise_rank =
 - 避免直接加 step/noise channel 导致无法继承当前最佳 checkpoint
 
 当前状态：
-- `deep_mse_denoise_rank` 已通过 1-batch smoke
-- 正式 S5 500-board 结果待跑
+- `v5_replay_S5_denoise_rank` S5 裸模型: 490/500 WR = 98.00%
+- `v5_replay_S5_denoise_rank` S5 `--rule_guard`: 496/500 WR = 99.20%
+- `v5_replay_S5_denoise_rank_ft2` S5 `--rule_guard --refine_steps 5`: 498/500 WR = 99.60%
+- `v5_replay_S5_denoise_rank_ft2` S5 `--rule_guard --prob_zero_guard --refine_steps 5`: 1000/1000 WR = 100.00%
 
 ## RL 训练时（已从 main 移除）
 

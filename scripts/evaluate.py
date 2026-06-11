@@ -28,6 +28,16 @@ def main():
         action="store_true",
         help="Prefer deterministic solver-proven safe cells before model argmin",
     )
+    p.add_argument(
+        "--rule_mine_guard",
+        action="store_true",
+        help="When rule_guard finds proven mines but no safe cells, exclude them from model candidates",
+    )
+    p.add_argument(
+        "--prob_zero_guard",
+        action="store_true",
+        help="When rule_guard finds no safe cells, use ProbabilitySolver only if it finds P(mine)=0 cells",
+    )
 
     args = p.parse_args()
     
@@ -59,6 +69,8 @@ def main():
         board_pool_path=board_pool_path,
         refine_steps=args.refine_steps,
         rule_guard=args.rule_guard,
+        rule_mine_guard=args.rule_mine_guard,
+        prob_zero_guard=args.prob_zero_guard,
     )
 
     print("\n═══ Results ═══")
@@ -69,6 +81,10 @@ def main():
     print(f"Action accuracy: {result['action_accuracy']:.4f}")
     if args.rule_guard:
         print(f"Rule-guard actions: {result['rule_guard_actions']}")
+    if args.rule_mine_guard:
+        print(f"Rule-mine-guard actions: {result['rule_mine_guard_actions']}")
+    if args.prob_zero_guard:
+        print(f"Prob-zero-guard actions: {result['prob_zero_guard_actions']}")
     print(f"Avg game steps: {result['avg_steps']:.1f}")
     print(f"Avg refine steps: {result['avg_refine_steps']:.1f} (early stop savings)")
     print(f"Time: {result['elapsed']:.0f}s")

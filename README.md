@@ -1,16 +1,18 @@
 # Minesweeper Transformer
 
-CNN + Transformer 混合架构的扫雷 AI。当前主线：**V5 replay curriculum `S1 → S2 → S3 → S4 → S5` + S5 hard-example replay**。
+CNN + Transformer 混合架构的扫雷 AI。当前主线：**V5 replay curriculum `S1 → S2 → S3 → S4 → S5` + S5 hard-example replay + denoising refinement**。
 
-当前最佳基线：
+当前最佳结果：
 
 ```text
-checkpoint: checkpoints/v5_replay_S5_mistake_ft2/best_model.pt
-S5 8×8/32 naked:      486/500 WR = 97.20%
-S5 8×8/32 rule_guard: 496/500 WR = 99.20%
+checkpoint: checkpoints/v5_replay_S5_denoise_rank_ft2/best_model.pt
+S5 8×8/32 naked best:     490/500 WR = 98.00%  (v5_replay_S5_denoise_rank)
+S5 8×8/32 combo strategy: 1000/1000 WR = 100.00%
+strategy: --refine_steps 5 --rule_guard --prob_zero_guard
+regression: S1 200/200 WR = 100.00%, S4 200/200 WR = 100.00%
 ```
 
-完整复现流程见 `docs/training-log.md` 的“当前最佳基线复现流程”。
+完整复现流程见 `docs/training-log.md` 的“当前 100% 组合复现流程”。
 
 ## 快速开始
 
@@ -95,9 +97,10 @@ uv run python3 scripts/train.py \
 uv run python3 scripts/evaluate.py checkpoints/v5_replay_S5/best_model.pt \
   --width 10 --height 10 --mines 40 --n_games 1000
 
-# 规则 guard 诊断（辅助框架成绩，和裸模型成绩分开记录）
-uv run python3 scripts/evaluate.py checkpoints/v5_replay_S5/best_model.pt \
-  --width 8 --height 8 --mines 32 --n_games 200 --rule_guard
+# 100% 组合评估（辅助框架成绩，和裸模型成绩分开记录）
+uv run python3 scripts/evaluate.py checkpoints/v5_replay_S5_denoise_rank_ft2/best_model.pt \
+  --width 8 --height 8 --mines 32 --n_games 1000 --board_pool data \
+  --refine_steps 5 --rule_guard --prob_zero_guard
 
 # 错题挖掘诊断（裸模型 rollout，输出训练兼容 NPZ + JSON summary）
 uv run python3 scripts/collect_mistakes.py checkpoints/v5_replay_S5/best_model.pt \
@@ -119,7 +122,7 @@ src/
   training/        训练循环（MSE + online BCE）+ 共享评估模块
 
 scripts/
-  train.py           统一训练入口 (支持 --loss_type bce|mse|deep_mse|deep_mse_rank, --recipe)
+  train.py           统一训练入口 (支持 --loss_type bce|mse|deep_mse|deep_mse_rank|deep_mse_denoise_rank, --recipe)
   train_stage.py     分阶段编排 (S1→S2→S3→S4→S5, --recipe, replay curriculum)
   evaluate.py        独立评估 CLI
   collect_mistakes.py 裸模型 failure mining 诊断，输出 hard-example NPZ

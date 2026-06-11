@@ -195,8 +195,8 @@ class MinesweeperGame:
         stack = [(r, c)]
         while stack:
             cr, cc = stack.pop()
-            if self.visible[cr, cc] >= 0:
-                continue  # already revealed
+            if self.visible[cr, cc] != CellState.COVERED:
+                continue  # already revealed, flagged, or exploded
 
             mine_count = self._count_adjacent_mines(cr, cc)
             self.visible[cr, cc] = mine_count
@@ -204,7 +204,7 @@ class MinesweeperGame:
 
             if mine_count == 0:
                 for nr, nc in self._neighbors(cr, cc):
-                    if self.visible[nr, nc] < 0:  # covered or flagged
+                    if self.visible[nr, nc] == CellState.COVERED:
                         stack.append((nr, nc))
 
     def _count_adjacent_mines(self, r: int, c: int) -> int:

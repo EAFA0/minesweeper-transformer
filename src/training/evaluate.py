@@ -18,6 +18,7 @@ from config import POLICY
 from data.no_guess import generate_no_guess_board
 from game.constants import GameStatus, MoveType, DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_MINES
 from game.game import MinesweeperGame
+from game.probability_solver import ProbabilitySolver
 from game.solver import ConstraintSolver
 from model.architecture import MinesweeperTransformer, ModelConfig
 from training.trajectory_pool import TrajectoryPool
@@ -31,6 +32,8 @@ def pick_action(
     device: torch.device,
     refine_steps: int = None,
     rule_guard: bool = False,
+    rule_mine_guard: bool = False,
+    prob_zero_guard: bool = False,
 ) -> Optional[Tuple[MoveType, int, int, int, str]]:
     """Choose the next move + return refinement steps actually used.
 
@@ -66,12 +69,25 @@ def pick_action(
     action_source = "model"
     candidate_mask = covered
     if rule_guard:
-        safe_cells, _mine_cells = ConstraintSolver(game).find_safe_and_mines()
+        safe_cells, mine_cells = ConstraintSolver(game).find_safe_and_mines()
         if safe_cells:
             candidate_mask = np.zeros_like(covered, dtype=bool)
             for r, c in safe_cells:
                 candidate_mask[r, c] = covered[r, c]
             action_source = "rule_guard"
+        elif prob_zero_guard:
+            solver_probs = ProbabilitySolver(game).compute_probabilities()
+            zero_prob = covered & (solver_probs <= 1e-6)
+            if zero_prob.any():
+                best_idx = np.argmin(np.where(zero_prob, solver_probs, 2.0))
+                best_r, best_c = divmod(int(best_idx), game.width)
+                return MoveType.REVEAL, best_r, best_c, n_refine_steps, "prob_zero_guard"
+        elif rule_mine_guard and mine_cells:
+            candidate_mask = covered.copy()
+            for r, c in mine_cells:
+                candidate_mask[r, c] = False
+            if candidate_mask.any():
+                action_source = "rule_mine_guard"
 
     masked_probs = np.where(candidate_mask, probs, 2.0)
     best_idx = np.argmin(masked_probs)
@@ -86,17 +102,27 @@ def play_one_game(
     max_steps: int = 200,
     refine_steps: int = None,
     rule_guard: bool = False,
+    rule_mine_guard: bool = False,
+    prob_zero_guard: bool = False,
 ) -> dict:
     """Play one game to completion. Returns detailed stats."""
     steps = 0
     safe_reveals = 0
     mine_hits = 0
     rule_guard_actions = 0
+    rule_mine_guard_actions = 0
+    prob_zero_guard_actions = 0
     refine_steps_used: list = []
 
     while game.status == GameStatus.PLAYING and steps < max_steps:
         action = pick_action(
-            model, game, device, refine_steps=refine_steps, rule_guard=rule_guard
+            model,
+            game,
+            device,
+            refine_steps=refine_steps,
+            rule_guard=rule_guard,
+            rule_mine_guard=rule_mine_guard,
+            prob_zero_guard=prob_zero_guard,
         )
         if action is None:
             break
@@ -105,6 +131,11 @@ def play_one_game(
         refine_steps_used.append(n_refine)
         if action_source == "rule_guard":
             rule_guard_actions += 1
+        elif action_source == "prob_zero_guard":
+            prob_zero_guard_actions += 1
+        elif action_source == "rule_mine_guard":
+            rule_mine_guard_actions += 1
+
         is_safe = not game.get_mine_mask()[mr, mc]
         game.make_move(mr, mc, move_type)
         steps += 1
@@ -120,6 +151,8 @@ def play_one_game(
         "safe_reveals": safe_reveals,
         "mine_hits": mine_hits,
         "rule_guard_actions": rule_guard_actions,
+        "rule_mine_guard_actions": rule_mine_guard_actions,
+        "prob_zero_guard_actions": prob_zero_guard_actions,
         "refine_steps": refine_steps_used
     }
 
@@ -137,6 +170,8 @@ def evaluate_model(
     board_pool_path: Optional[Path] = None,
     refine_steps: int = None,
     rule_guard: bool = False,
+    rule_mine_guard: bool = False,
+    prob_zero_guard: bool = False,
     quiet: bool = False,
 ) -> dict:
     """Evaluate a model by playing N games. Returns aggregate stats.
@@ -165,7 +200,13 @@ def evaluate_model(
             continue
 
         stats = play_one_game(
-            model, device_t, game, refine_steps=refine_steps, rule_guard=rule_guard
+            model,
+            device_t,
+            game,
+            refine_steps=refine_steps,
+            rule_guard=rule_guard,
+            rule_mine_guard=rule_mine_guard,
+            prob_zero_guard=prob_zero_guard,
         )
         if not isinstance(stats.get("refine_steps"), list):
             print(f"DEBUG stats: {stats}")
@@ -189,6 +230,8 @@ class _EvalMetrics:
         self.total_safe = 0
         self.total_mine = 0
         self.rule_guard_actions = 0
+        self.rule_mine_guard_actions = 0
+        self.prob_zero_guard_actions = 0
         self.steps_list: list = []
         self.refine_steps_list: list = []  # all refine_step counts across all games
         self.n_games = n_games
@@ -209,6 +252,8 @@ class _EvalMetrics:
         self.total_safe += stats["safe_reveals"]
         self.total_mine += stats["mine_hits"]
         self.rule_guard_actions += stats.get("rule_guard_actions", 0)
+        self.rule_mine_guard_actions += stats.get("rule_mine_guard_actions", 0)
+        self.prob_zero_guard_actions += stats.get("prob_zero_guard_actions", 0)
         if stats.get("refine_steps"):
             self.refine_steps_list.extend(stats["refine_steps"])
 
@@ -246,6 +291,8 @@ class _EvalMetrics:
             "win_rate": win_rate,
             "action_accuracy": action_acc,
             "rule_guard_actions": self.rule_guard_actions,
+            "rule_mine_guard_actions": self.rule_mine_guard_actions,
+            "prob_zero_guard_actions": self.prob_zero_guard_actions,
             "avg_steps": avg_steps,
             "avg_refine_steps": avg_refine,
             "elapsed": elapsed,
