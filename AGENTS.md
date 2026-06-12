@@ -54,6 +54,7 @@
 | 棋盘池 | `src/training/trajectory_pool.py` | TrajectoryPool (统一数据管道: online & offline) |
 | 评估核心 | `src/training/evaluate.py` | 模型评估循环逻辑 |
 | 评估 | `scripts/evaluate.py` | 独立评估 CLI |
+| **可视化** | `scripts/visualize.py` | 基于 Streamlit 的交互式 Web 可视化工具 |
 | **训练** | `scripts/train.py` | 训练入口 |
 | **分阶段** | `scripts/train_stage.py` | S1→S2→S3 编排 + recipe 模式 |
 | **Recipe** | `src/config/recipe_config.py` | 训练 recipe 定义 (MSE warmup → BCE finetune) |

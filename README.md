@@ -20,22 +20,25 @@ regression: S1 200/200 WR = 100.00%, S4 200/200 WR = 100.00%
 # 1. 安装依赖（editable install）
 uv sync
 
-# 2. 全阶段训练（S1 → S2 → S3 → S4 → S5）
+# 2. 启动可视化页面 (Streamlit)
+uv run streamlit run scripts/visualize.py
+
+# 3. 全阶段训练（S1 → S2 → S3 → S4 → S5）
 uv run python3 scripts/train_stage.py --recipe v5_curriculum_replay --arch V5
 
-# 3. 零样本评估
+# 4. 零样本评估
 uv run python3 scripts/evaluate.py checkpoints/v5_replay_S5/best_model.pt \
   --width 10 --height 10 --mines 40
 
-# 4. 单阶段冷启动 (Online 模式)
+# 5. 单阶段冷启动 (Online 模式)
 uv run python3 scripts/train.py \
   --mode online --board_width 8 --board_height 8 --board_mines 10 --n_games 5000
 
-# 5. 离线监督蒸馏 (Supervised 模式)
+# 6. 离线监督蒸馏 (Supervised 模式)
 uv run python3 -m src.data.generator --n_samples 1000
 uv run python3 scripts/train.py --mode supervised --epochs 5
 
-# 6. 从 checkpoint 继续
+# 7. 从 checkpoint 继续
 uv run python3 scripts/train.py \
   --pretrained checkpoints/S1/best_model.pt --n_games 500
 ```

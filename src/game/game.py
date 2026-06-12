@@ -87,12 +87,16 @@ class MinesweeperGame:
             # Convert boolean mask to CellState if needed (True=covered, False=revealed)
             if visible.dtype == bool:
                 game.visible = np.where(visible, CellState.COVERED, 0).astype(np.int8)
-                revealed = (~visible).sum()
+                # visible == False means revealed
+                revealed = int((~visible).sum())
             else:
                 game.visible = visible.copy()
-                revealed = (visible >= 0).sum()
+                # Anything >= 0 (0-8) is a revealed cell.
+                # FLAGGED (-2) and EXPLODED (-3) shouldn't be counted as safely revealed.
+                revealed = int((visible >= 0).sum())
             # Adjust _safe_covered: subtract already-revealed cells
             game._safe_covered = width * height - mine_count - revealed
+            game._check_win()
         elif first_done:
             game.visible = np.full((height, width), CellState.COVERED, dtype=np.int8)
         else:
@@ -219,6 +223,8 @@ class MinesweeperGame:
         """Check if all safe cells have been revealed."""
         if self._safe_covered <= 0:
             self.status = GameStatus.WON
+            # Auto-flag remaining mines
+            self.visible = np.where(self.board == _MINE, CellState.FLAGGED, self.visible)
 
     # ─── Query Methods ─────────────────────────────────────────────────────
 

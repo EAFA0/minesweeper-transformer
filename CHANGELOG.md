@@ -1,3 +1,16 @@
+## [未发布] - 2026-06-12
+
+### 新增 Streamlit 可视化页面
+- **新增可视化工具**: 增加 `scripts/visualize.py`，支持在浏览器中交互式查看模型决策过程。
+- **功能特性**:
+  - 支持侧边栏切换 `checkpoints/` 下保存的模型权重。
+  - 支持选择随机新局（无猜布雷）或加载 `data/` 下的历史 `.npz` 残局。
+  - 使用 Plotly 渲染 16x16/8x8 棋盘概率热力图，数字与图标大小自动适应。
+  - 支持 `Auto Play` 自动逐步推演，并提供青色边框和 `🎯`/`📍` 标记高亮模型当前操作。
+  - 支持在侧边栏开启/关闭各种 Guard 规则（`Rule Guard`、`Rule Mine Guard`、`Prob Zero Guard`），与 `evaluate.py` 逻辑完全对齐。
+  - 新增 `Retry Same Board` 按钮，允许在保留原始地雷分布的情况下从头挑战当前对局。
+- **底层 Bug 修复**: 修复了 `MinesweeperGame.from_mine_mask` 加载携带 `visible` 数据的残局时，`_safe_covered` 计算错误导致立刻误判 `Won!` 的问题。
+
 ## [未发布] - 2026-06-06
 
 ### V5 单架构清理
