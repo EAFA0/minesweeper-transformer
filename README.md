@@ -20,7 +20,7 @@ regression: S1 200/200 WR = 100.00%, S4 200/200 WR = 100.00%
 # 1. 安装依赖（editable install）
 uv sync
 
-# 2. 启动可视化页面 (Streamlit)
+# 2. 启动可视化页面 (Streamlit，仅本机访问)
 uv run streamlit run scripts/visualize.py
 
 # 3. 全阶段训练（S1 → S2 → S3 → S4 → S5）
