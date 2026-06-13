@@ -1,5 +1,20 @@
 ## [未发布] - 2026-06-12
 
+### 数据生产链路收敛
+- **唯一数据生产入口**: `scripts/generate_data.py` 新增 `--stage S1..S5` 与 `--all_stages`，阶段数据统一生成到 `data/{stage}/`。
+- **统一训练数据命名**: 新生成文件统一为 `train_{stage}_{W}x{H}_{M}_{index:04d}.npz`，并在 `stats.json` 写入 `schema_version`、`dataset_name`、`file_prefix` 和 layout 元信息。
+- **读取逻辑去文件名耦合**: `TrajectoryPool` 不再依赖旧的 `8x8_10_*.npz` glob；训练目录下的 `.npz` 会按轨迹 shape 过滤后加载，避免“生成成功但训练读不到”。
+- **空数据失败前置**: `train_supervised.py` 在没有加载到兼容轨迹时直接报错，避免空 buffer 无限等待。
+- **评估 preset**: `scripts/evaluate.py --preset s5_guarded_100` 固化 S5 100% 组合参数（8×8/32、refine=5、rule_guard、prob_zero_guard）。
+
+### 代码整理
+- **共享推理入口**: 新增 `training/inference.py`，评估、可视化和错题挖掘统一复用模型概率推理逻辑。
+- **监督 loss 抽离**: 新增 `training/losses.py`，将 BCE/MSE/deep-MSE/ranking/denoising loss 从训练循环中抽离。
+- **Checkpoint IO 收敛**: 新增 `training/checkpoints.py`，统一模型加载、预训练权重读取和 checkpoint 保存逻辑。
+- **数据构造管线抽离**: 新增 `data/pipeline.py`，`scripts/generate_data.py` 瘦身为 CLI 入口。
+- **训练入口边界明确**: `stage_config.py` 复用 canonical stage 数据合同，`train_stage.py` 明确 recipe 为主线、legacy stage 仅作兼容入口。
+- **实验路径标注**: `mixed_generator.py` 与 `self_validated.py` 标注为非主线实验模块。
+
 ### 新增 Streamlit 可视化页面
 - **新增可视化工具**: 增加 `scripts/visualize.py`，支持在浏览器中交互式查看模型决策过程。
 - **功能特性**:

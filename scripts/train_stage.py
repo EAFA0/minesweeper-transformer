@@ -8,14 +8,13 @@
   S4 (高密度): 8×8 / 25雷
   S5 (最高密度): 8×8 / 32雷
 
-Recipe 模式:
+Recipe 模式（主线）:
   uv run python3 scripts/train_stage.py --recipe v5_curriculum_replay --arch V5
 
 用法:
-  uv run python3 scripts/train_stage.py --all
-  uv run python3 scripts/train_stage.py --stage S1
-  uv run python3 scripts/train_stage.py --stage S5 --eval 10 10 40
   uv run python3 scripts/train_stage.py --recipe v5_curriculum_replay --arch V5
+  uv run python3 scripts/train_stage.py --stage S1   # legacy compatibility
+  uv run python3 scripts/train_stage.py --stage S5 --eval 10 10 40
 """
 
 import argparse
@@ -124,7 +123,7 @@ def run_recipe(recipe_name: str, args):
         # Check pretrained exists
         if pretrained and not Path(pretrained).exists():
             print(f"  ❌ Pretrained checkpoint not found: {pretrained}")
-            print(f"     Run the previous phase first.")
+            print("     Run the previous phase first.")
             return
 
         # Build phase config with resolved pretrained
@@ -170,6 +169,7 @@ def run_recipe(recipe_name: str, args):
 
 
 def run_stage(stage_name, args):
+    print("Legacy --stage mode: recipe mode is the canonical training path.")
     cfg = STAGES[stage_name]
 
     print(f"\n{'='*60}")
@@ -285,7 +285,11 @@ def main():
     else:
         print(f"\n核心路线: {' → '.join(STAGES.keys())}")
         print(f"Recipes: {', '.join(RECIPES.keys())}")
-        print("\n--all  运行全部  |  --stage S1  指定阶段  |  --recipe v5_curriculum_replay  Recipe模式  |  --eval_only 仅评估")
+        print(
+            "\n主线训练: --recipe v5_curriculum_replay"
+            "\n兼容入口: --stage S1 或 --all"
+            "\n评估入口: --eval_only"
+        )
         sys.exit(0)
 
     for stage in stages_to_run:

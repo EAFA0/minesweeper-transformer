@@ -1,4 +1,8 @@
-"""Self-validated board generator — fast alternative to ms-toollib.
+"""Experimental self-validated board generator — fast alternative to ms-toollib.
+
+This module is kept for diagnostics and older dense-board experiments. It is
+not the canonical training-data source; use data.no_guess through
+scripts/generate_data.py --stage/--all_stages for mainline S1-S5 data.
 
 Uses our own ProbabilitySolver to verify board solvability.
 Much faster than ms-toollib's SAT solver (~0.1-1s vs 10-50s per board).

@@ -1,4 +1,3 @@
-import time
 from pathlib import Path
 
 import numpy as np
@@ -12,7 +11,9 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from game.constants import GameStatus, MoveType, CellState
 from game.game import MinesweeperGame
-from training.evaluate import load_model, pick_action
+from training.checkpoints import load_model
+from training.evaluate import pick_action
+from training.inference import predict_mine_probs
 from data.no_guess import generate_no_guess_board
 
 # Streamlit config
@@ -199,8 +200,6 @@ def main():
     if "game" not in st.session_state:
         init_game(data_source, width=width, height=height, mines=mines)
 
-    game = st.session_state.game
-
     if ckpt_path:
         model, device = get_model(ckpt_path)
     else:
@@ -256,20 +255,7 @@ def main():
         # 2. Re-calculate probs for the new board state
         probs = np.zeros((game.height, game.width))
         if model and game.status == GameStatus.PLAYING:
-            channels = game.board_to_channels()
-            with torch.no_grad():
-                x = torch.from_numpy(channels).unsqueeze(0).to(device)
-                from config import POLICY
-                refine_steps = POLICY.refinement.eval_max_steps
-                if refine_steps <= 1:
-                    p = model.predict(x, max_refine_steps=1)
-                else:
-                    refine_results = model.refine(x, num_steps=refine_steps, convergence_epsilon=POLICY.refinement.convergence_eps)
-                    p = refine_results[-1]
-                p_2d = p.squeeze()
-                if p_2d.dim() == 3:
-                    p_2d = p_2d.squeeze(0)
-                probs = p_2d.cpu().numpy()
+            probs, _n_refine_steps = predict_mine_probs(model, game, device)
             st.session_state.probs = probs
         else:
             probs = st.session_state.probs

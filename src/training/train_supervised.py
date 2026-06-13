@@ -13,17 +13,10 @@ import torch.optim as optim
 from tqdm import tqdm
 
 from config import TrainingConfig, ModelConfig
+from training.checkpoints import save_checkpoint
+from training.losses import compute_supervised_batch_loss, setup_supervised_loss
 from training.trajectory_pool import TrajectoryPool
-from training.utils import (
-    build_denoising_initial_probs,
-    build_model,
-    compute_best_safe_ranking_loss,
-    compute_loss,
-    compute_solver_safe_set_ranking_loss,
-    model_forward,
-    model_forward_logits,
-    save_checkpoint,
-)
+from training.utils import build_model
 
 
 def train_supervised(
@@ -58,6 +51,15 @@ def train_supervised(
         mixed_mode=config.mixed_mode,
         compute_probs=True,
     )
+    if pool.total_games == 0:
+        raise ValueError(
+            "No compatible training trajectories were loaded from "
+            f"{config.data_dir!r} for board "
+            f"{config.board_width}x{config.board_height}/{config.board_mines}. "
+            "Generate canonical data with "
+            "`uv run python scripts/generate_data.py --stage S1 --workers 0` "
+            "or pass the matching stage/data source explicitly."
+        )
     
     model = build_model(arch, model_cfg, device)
         
@@ -72,39 +74,8 @@ def train_supervised(
     print(f"Run dir: {run_dir}")
 
     # ── Loss setup ──────────────────────────────────────────────────────────
-    target_type = "binary" if config.loss_type == "bce" else "probs"
-    if config.loss_type == "bce":
-        total_cells = config.board_width * config.board_height
-        mines = config.board_mines
-        pos_weight_val = (total_cells - mines) / max(mines, 1)
-        print(f"BCE Loss with binary (ground-truth) targets, pos_weight={pos_weight_val:.2f}")
-    elif config.loss_type in {
-        "deep_mse",
-        "deep_mse_rank",
-        "deep_mse_solver_safe_rank",
-        "deep_mse_denoise_rank",
-    }:
-        pos_weight_val = None
-        if config.loss_type == "deep_mse_rank":
-            print(
-                "Deep-MSE + ranking loss "
-                f"(weight={config.rank_loss_weight}, margin={config.rank_loss_margin})"
-            )
-        elif config.loss_type == "deep_mse_denoise_rank":
-            print(
-                "Deep-MSE denoising refinement + ranking loss "
-                f"(weight={config.rank_loss_weight}, margin={config.rank_loss_margin})"
-            )
-        elif config.loss_type == "deep_mse_solver_safe_rank":
-            print(
-                "Deep-MSE + best-safe ranking + solver-safe-set ranking "
-                f"(weight={config.rank_loss_weight}, margin={config.rank_loss_margin})"
-            )
-        else:
-            print("Deep-MSE Loss with solver probability targets at every refinement step")
-    else:
-        pos_weight_val = None
-        print("MSE Loss with solver probability targets (distillation)")
+    loss_setup = setup_supervised_loss(config)
+    print(loss_setup.description)
     
     # Calculate batches per epoch correctly based on states, not just games
     batch_size = getattr(config, 'batch_size', 64)
@@ -130,10 +101,10 @@ def train_supervised(
             # 1. Fetch batch from unified pool
             batch = pool.batch(
                 batch_size,
-                target_type=target_type,
-                include_solver_safe=config.loss_type == "deep_mse_solver_safe_rank",
+                target_type=loss_setup.target_type,
+                include_solver_safe=loss_setup.include_solver_safe,
             )
-            if config.loss_type == "deep_mse_solver_safe_rank":
+            if loss_setup.include_solver_safe:
                 channels, targets, masks, solver_safe_masks = batch
             else:
                 channels, targets, masks = batch
@@ -145,62 +116,16 @@ def train_supervised(
             if solver_safe_masks is not None:
                 solver_safe_masks = solver_safe_masks.to(device)
 
-            # 2. Forward pass. BCE uses raw logits; MSE variants use probabilities.
-            if config.loss_type in {
-                "deep_mse",
-                "deep_mse_rank",
-                "deep_mse_solver_safe_rank",
-                "deep_mse_denoise_rank",
-            }:
-                initial_probs = None
-                if config.loss_type == "deep_mse_denoise_rank":
-                    initial_probs = build_denoising_initial_probs(targets, masks)
-                refine_logits = model.refine(
-                    channels,
-                    num_steps=config.refinement_steps,
-                    return_logits=True,
-                    initial_probs=initial_probs,
-                )
-                step_losses = []
-                for logits in refine_logits:
-                    step_preds = torch.sigmoid(logits)[:, 0]
-                    mse_loss = compute_loss(
-                        "mse", step_preds, targets, masks, pos_weight_val, device
-                    )
-                    if config.loss_type in {
-                        "deep_mse_rank",
-                        "deep_mse_solver_safe_rank",
-                        "deep_mse_denoise_rank",
-                    }:
-                        rank_loss = compute_best_safe_ranking_loss(
-                            logits,
-                            targets,
-                            masks,
-                            margin=config.rank_loss_margin,
-                            safe_threshold=config.rank_safe_threshold,
-                        )
-                        mse_loss = mse_loss + config.rank_loss_weight * rank_loss
-                    if config.loss_type == "deep_mse_solver_safe_rank":
-                        safe_set_rank_loss = compute_solver_safe_set_ranking_loss(
-                            logits,
-                            masks,
-                            solver_safe_masks,
-                            margin=config.rank_loss_margin,
-                        )
-                        mse_loss = mse_loss + config.rank_loss_weight * safe_set_rank_loss
-                    step_losses.append(mse_loss)
-                loss = torch.stack(step_losses).mean()
-                preds = torch.sigmoid(refine_logits[-1])[:, 0]
-            elif config.loss_type == "bce":
-                preds = model_forward_logits(
-                    arch, model, channels, config.refinement_steps
-                )
-                preds = preds[:, 0]  # (B, H, W)
-                loss = compute_loss(config.loss_type, preds, targets, masks, pos_weight_val, device)
-            else:
-                preds = model_forward(arch, model, channels, config.refinement_steps)
-                preds = preds[:, 0]  # (B, H, W)
-                loss = compute_loss(config.loss_type, preds, targets, masks, pos_weight_val, device)
+            # 2. Forward pass + configured supervised loss.
+            loss, _preds = compute_supervised_batch_loss(
+                config,
+                model,
+                channels,
+                targets,
+                masks,
+                device,
+                solver_safe_masks=solver_safe_masks,
+            )
             
             # 4. Backward
             optimizer.zero_grad()

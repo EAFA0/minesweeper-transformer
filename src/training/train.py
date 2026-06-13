@@ -18,9 +18,10 @@ from config import TrainingConfig, TrainingMetrics, ModelConfig
 from game.constants import CellState, GameStatus, MoveType
 from game.game import MinesweeperGame
 from game.probability_solver import ProbabilitySolver
+from training.checkpoints import save_checkpoint
 from training.trajectory_pool import TrajectoryPool
 from training.evaluate import evaluate_model as evaluate_game_model
-from training.utils import build_model, save_checkpoint
+from training.utils import build_model
 
 
 # ═══════════════════════════════════════════════════════════════════════════

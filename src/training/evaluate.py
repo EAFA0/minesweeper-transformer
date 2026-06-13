@@ -14,13 +14,13 @@ from typing import Optional, Tuple
 import numpy as np
 import torch
 
-from config import POLICY
 from data.no_guess import generate_no_guess_board
 from game.constants import GameStatus, MoveType, DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_MINES
 from game.game import MinesweeperGame
 from game.probability_solver import ProbabilitySolver
 from game.solver import ConstraintSolver
-from model.architecture import MinesweeperTransformer, ModelConfig
+from model.architecture import MinesweeperTransformer
+from training.inference import predict_mine_probs
 from training.trajectory_pool import TrajectoryPool
 
 
@@ -39,28 +39,9 @@ def pick_action(
 
     Returns (MoveType, row, col, n_refine_steps, source) or None if no moves.
     """
-    if refine_steps is None:
-        refine_steps = POLICY.refinement.eval_max_steps
-
-    channels = game.board_to_channels()
-    with torch.no_grad():
-        x = torch.from_numpy(channels).unsqueeze(0).to(device)
-        if refine_steps <= 1:
-            probs = model.predict(x, max_refine_steps=1)
-            n_refine_steps = 1
-        else:
-            refine_results = model.refine(
-                x,
-                num_steps=refine_steps,
-                convergence_epsilon=POLICY.refinement.convergence_eps,
-            )
-            probs = refine_results[-1]
-            n_refine_steps = len(refine_results)
-        
-        probs_2d = probs.squeeze(0)  # (H, W) or (1, H, W)
-        if probs_2d.dim() == 3:
-            probs_2d = probs_2d.squeeze(0)
-        probs = probs_2d.cpu().numpy()
+    probs, n_refine_steps = predict_mine_probs(
+        model, game, device, refine_steps=refine_steps
+    )
 
     covered = game.covered_cells
     if not covered.any():
@@ -328,16 +309,3 @@ def _get_game(
     if game is not None and game.status != GameStatus.PLAYING:
         return None
     return game
-
-
-def load_model(checkpoint_path: str, device: torch.device):
-    """Load a trained model from checkpoint."""
-    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
-    model_config = ckpt.get("model_config", ModelConfig())
-
-    model = MinesweeperTransformer(model_config).to(device)
-
-    state_dict = ckpt["model_state_dict"] if "model_state_dict" in ckpt else ckpt
-    model.load_state_dict(state_dict, strict=True)
-    model.eval()
-    return model

@@ -313,6 +313,6 @@ class MinesweeperTransformer(nn.Module):
         Architecture shape changes intentionally fail fast. Historical
         checkpoints should be retrained instead of migrated.
         """
-        ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
-        state_dict = ckpt.get("model_state_dict", ckpt)
-        self.load_state_dict(state_dict)
+        from training.checkpoints import checkpoint_state_dict
+
+        self.load_state_dict(checkpoint_state_dict(checkpoint_path, device=device))

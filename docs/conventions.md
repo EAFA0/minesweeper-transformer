@@ -29,28 +29,42 @@
 
 ### 数据生成
 ```bash
-# 推荐：固定尺寸并行生成 (auto workers)
-python -m src.data.generator --n_samples 10000 --workers 0  # 0=auto
+# 唯一生产入口：按阶段生成 canonical training data
+uv run python scripts/generate_data.py --stage S1 --workers 0
+uv run python scripts/generate_data.py --stage S5 --workers 0
 
-# 混合数据（单进程，因为每个 trajectory 尺寸不同）
-python -m src.data.generator --mixed --min_size 4 --max_size 8 \
-    --min_density 0.1 --max_density 0.5 --n_samples 12000
+# 一次生成 S1-S5 全部阶段数据
+uv run python scripts/generate_data.py --all_stages --workers 0
+
+# canonical 输出:
+# data/S1/train_S1_8x8_10_0000.npz
+# data/S2/train_S2_8x8_15_0000.npz
+# ...
+# data/S5/train_S5_8x8_32_0000.npz
 
 # 强制重新生成
-python -m src.data.generator --n_samples 10000 --workers 0 --force
+uv run python scripts/generate_data.py --stage S1 --workers 0 --force
 ```
+
+数据生成只能从 `scripts/generate_data.py` 入口进入。`src/data/generator.py`
+和 `src/data/pipeline.py` 是库实现，不作为人工/Agent 直接入口。
+`src/data/mixed_generator.py`、`src/data/self_validated.py` 是实验模块，
+不属于 canonical S1-S5 数据生产链路。
+训练数据统一放在 `data/{stage}/`；评估缓存统一使用
+`data/eval_boards_{W}x{H}_{M}.npz`；错题 replay 统一放在
+`data/mistakes/`。
 
 ### 训练
 ```bash
+# Recipe 模式（当前主线）
+python scripts/train_stage.py --recipe v5_curriculum_replay --arch V5
+
 # 分阶段训练（legacy stage 入口）
 python scripts/train_stage.py --stage S1          # 从头训练 8x8/10
 python scripts/train_stage.py --stage S2          # 继承 S1 → 8x8/15
 python scripts/train_stage.py --stage S3          # 继承 S2 → 8x8/20
 python scripts/train_stage.py --stage S4          # 继承 S3 → 8x8/25
 python scripts/train_stage.py --stage S5          # 继承 S4 → 8x8/32
-
-# 带强制数据重新生成
-python scripts/train_stage.py --stage S1 --force_data
 
 # 仅评估
 python scripts/train_stage.py --stage S5 --eval_only
@@ -60,12 +74,11 @@ python scripts/evaluate.py checkpoints/v5_replay_S5/best_model.pt \
 python scripts/evaluate.py checkpoints/v5_replay_S5_denoise_rank_ft2/best_model.pt \
     --width 8 --height 8 --mines 32 --n_games 1000 --board_pool data \
     --refine_steps 5 --rule_guard --prob_zero_guard
+python scripts/evaluate.py checkpoints/v5_replay_S5_denoise_rank_ft2/best_model.pt \
+    --preset s5_guarded_100 --n_games 1000 --board_pool data
 python scripts/collect_mistakes.py checkpoints/v5_replay_S5/best_model.pt \
     --width 8 --height 8 --mines 32 --n_games 500 --board_pool data \
     --output data/mistakes/S5_rule_guard_failures.npz
-
-# Recipe 模式（当前主线）
-python scripts/train_stage.py --recipe v5_curriculum_replay --arch V5
 
 # 只跑 recipe 的 S5（从 checkpoints/v5_replay_S4/best_model.pt 继承）
 python scripts/train_stage.py --recipe v5_curriculum_replay \
@@ -99,9 +112,11 @@ python scripts/evaluate.py checkpoints/S1/best_model.pt \
 ## 命名规范
 
 - **Checkpoint 目录**: `checkpoints/{stage}/` (如 `S1`, `S3`, `rl`)
-- **数据目录**: `data/{stage}/` (如 `data/S1/`, `data/mixed/`)
+- **训练数据目录**: `data/{stage}/` (如 `data/S1/`, `data/S5/`)
+- **训练数据文件**: `train_{stage}_{W}x{H}_{M}_{index:04d}.npz`
+- **评估缓存**: `data/eval_boards_{W}x{H}_{M}.npz`
+- **错题 replay**: `data/mistakes/{name}.npz` + `{name}.json`
 - **RL Pool**: `rl_boards_{W}x{H}_{M}.npz` (如 `rl_boards_10x10_40.npz`)
-- **并行生成数据**: `data/` (默认输出，严格 no-guess)
 - **gitignore**: `data/` 和 `checkpoints/` 均不入库
 
 ## 安全规则

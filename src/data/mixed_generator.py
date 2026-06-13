@@ -1,8 +1,11 @@
-"""Mixed-size training data generation.
+"""Experimental mixed-size training data generation.
 
 Generates a single unified dataset with variable board sizes and mine densities.
 All samples are padded to a uniform max_size (default 8×8) so the model can
 batch them together. The mask excludes padded cells from loss.
+
+This is not part of the canonical S1-S5 training-data contract. Use
+scripts/generate_data.py --stage/--all_stages for mainline training data.
 
 Usage:
     python scripts/generate_data.py --mixed \
@@ -207,6 +210,5 @@ def _record_padded_trajectory(
         "board_size": (h, w),
         "mines": mines,
     }
-
 
 

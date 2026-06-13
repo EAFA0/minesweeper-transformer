@@ -82,7 +82,7 @@ def main():
             _print_recipe_dry_run(args.recipe)
             return
 
-        # Apply first phase (multi-phase execution is handled by train_stage.py / module D)
+        # Apply first phase. Multi-phase execution is handled by train_stage.py.
         recipe = RECIPES[args.recipe]
         if not recipe.phases:
             print(f"Recipe {args.recipe} has no phases")

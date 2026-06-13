@@ -12,23 +12,17 @@ from game.constants import GameStatus, MoveType
 from game.game import MinesweeperGame
 from game.probability_solver import ProbabilitySolver
 from game.solver import ConstraintSolver
-from training.evaluate import load_model
+from training.checkpoints import load_model
+from training.inference import predict_mine_probs
 from training.trajectory_pool import TrajectoryPool
 from utils.device import get_device
 
 
 def _model_probs(model, game: MinesweeperGame, device: torch.device, refine_steps: int):
-    channels = game.board_to_channels()
-    with torch.no_grad():
-        x = torch.from_numpy(channels).unsqueeze(0).to(device)
-        if refine_steps <= 1:
-            probs = model.predict(x, max_refine_steps=1)
-        else:
-            probs = model.refine(x, num_steps=refine_steps)[-1]
-        probs = probs.squeeze(0)
-        if probs.dim() == 3:
-            probs = probs.squeeze(0)
-    return probs.cpu().numpy()
+    probs, _n_refine_steps = predict_mine_probs(
+        model, game, device, refine_steps=refine_steps
+    )
+    return probs
 
 
 def _pick_model_action(probs: np.ndarray, covered: np.ndarray, width: int):

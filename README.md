@@ -77,6 +77,10 @@ V5 replay curriculum：strict no-guess 数据 + Deep-MSE probability distillatio
 # 全阶段训练
 uv run python3 scripts/train_stage.py --recipe v5_curriculum_replay --arch V5
 
+# 生成 canonical 阶段数据（唯一数据生产入口）
+uv run python3 scripts/generate_data.py --stage S1 --workers 0
+uv run python3 scripts/generate_data.py --all_stages --workers 0
+
 # 只跑最高密度 S5（继承 checkpoints/v5_replay_S4/best_model.pt）
 uv run python3 scripts/train_stage.py \
   --recipe v5_curriculum_replay --start_phase 5 --end_phase 5 --arch V5
@@ -102,8 +106,7 @@ uv run python3 scripts/evaluate.py checkpoints/v5_replay_S5/best_model.pt \
 
 # 100% 组合评估（辅助框架成绩，和裸模型成绩分开记录）
 uv run python3 scripts/evaluate.py checkpoints/v5_replay_S5_denoise_rank_ft2/best_model.pt \
-  --width 8 --height 8 --mines 32 --n_games 1000 --board_pool data \
-  --refine_steps 5 --rule_guard --prob_zero_guard
+  --preset s5_guarded_100 --n_games 1000 --board_pool data
 
 # 错题挖掘诊断（裸模型 rollout，输出训练兼容 NPZ + JSON summary）
 uv run python3 scripts/collect_mistakes.py checkpoints/v5_replay_S5/best_model.pt \

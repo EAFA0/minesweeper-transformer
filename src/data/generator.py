@@ -90,13 +90,15 @@ def generate_training_data(
     samples_per_file: int = 2000,
     start_file_idx: int = 0,
     existing_stats: Optional[dict] = None,
+    file_prefix: str | None = None,
 ) -> dict:
     """Generate and save trajectory dataset sequentially."""
     rng = np.random.default_rng(seed)
+    file_prefix = file_prefix or f"train_{width}x{height}_{total_mines}"
     
     writer = TrajectoryWriter(
         output_dir=output_dir,
-        prefix=f"{width}x{height}_{total_mines}",
+        prefix=file_prefix,
         samples_per_file=samples_per_file,
         start_file_idx=start_file_idx
     )

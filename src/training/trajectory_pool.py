@@ -56,26 +56,36 @@ class TrajectoryPool:
         except Exception as e:
             print(f"Error loading {p}: {e}")
 
-    def _load_train_file(self, f: Path):
+    def _load_train_file(self, f: Path) -> int:
         try:
             data = np.load(f, allow_pickle=True)
             n = len([key for key in data.files if key.startswith("mines_")])
             if n == 0:
                 # If there are no actions, it might just be empty, safely ignore
-                return
+                return 0
+            loaded = 0
             for i in range(n):
+                mines = data[f"mines_{i}"]
+                if mines.shape != (self.height, self.width):
+                    continue
+                masks = data[f"masks_{i}"]
+                if len(masks) == 0:
+                    continue
                 traj = {
-                    "mines": data[f"mines_{i}"],
+                    "mines": mines,
                     "actions": data[f"actions_{i}"],
-                    "masks": data[f"masks_{i}"],
+                    "masks": masks,
                 }
                 if f"probs_{i}" in data:
                     traj["probs"] = data[f"probs_{i}"]
                 if f"solver_safe_masks_{i}" in data:
                     traj["solver_safe_masks"] = data[f"solver_safe_masks_{i}"]
                 self._offline_buffer.append(traj)
+                loaded += 1
+            return loaded
         except Exception as e:
             print(f"Error loading {f}: {e}")
+            return 0
 
     def __init__(
         self,
@@ -126,22 +136,24 @@ class TrajectoryPool:
                         self._loaded_files.add(eval_file)
                     continue
 
-                if len(self._data_sources) == 1:
-                    pattern = f"{self.width}x{self.height}_{self.mines}_*.npz"
-                else:
-                    pattern = f"{self.width}x{self.height}_*.npz"
                 new_files = [
-                    f for f in p.glob(pattern)
+                    f for f in p.glob("*.npz")
                     if f not in self._loaded_files and "eval_boards" not in f.name
                 ]
                 if new_files:
                     print(f"TrajectoryPool: Found {len(new_files)} new data files in {p}. Loading...")
+                    loaded_total = 0
                     for f in sorted(new_files):
                         before = len(self._offline_buffer)
-                        self._load_train_file(f)
+                        loaded = self._load_train_file(f)
+                        loaded_total += loaded
                         self._source_buffers[source_idx].extend(self._offline_buffer[before:])
                         self._loaded_files.add(f)
-                    print(f"TrajectoryPool: Total trajectories loaded: {len(self._offline_buffer)}")
+                    print(
+                        "TrajectoryPool: "
+                        f"Loaded {loaded_total} matching trajectories; "
+                        f"total={len(self._offline_buffer)}"
+                    )
             elif p.is_file() and p not in self._loaded_files:
                 before = len(self._offline_buffer)
                 if self.eval_mode:

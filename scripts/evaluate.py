@@ -1,8 +1,9 @@
 import argparse
 from pathlib import Path
 
-from config import TrainingConfig
-from training.evaluate import evaluate_model, load_model
+from config import EVAL_PRESETS, TrainingConfig
+from training.checkpoints import load_model
+from training.evaluate import evaluate_model
 from utils.device import get_device
 
 
@@ -10,6 +11,12 @@ def main():
     p = argparse.ArgumentParser(description="Evaluate Minesweeper Transformer model")
     
     p.add_argument("checkpoint", help="Path to model checkpoint (.pt)")
+    p.add_argument(
+        "--preset",
+        choices=list(EVAL_PRESETS.keys()),
+        default=None,
+        help="Apply a named benchmark preset before explicit CLI overrides",
+    )
     p.add_argument("--stage", type=str, default=None, choices=["S1", "S2", "S3", "S4", "S5"],
                    help="Evaluate using specific stage's board settings")
     p.add_argument("--n_games", type=int, default=1000)
@@ -45,6 +52,21 @@ def main():
     if args.stage:
         from config.stage_config import apply_stage_config
         apply_stage_config(config, args.stage)
+
+    if args.preset:
+        preset = EVAL_PRESETS[args.preset]
+        if args.width is None:
+            args.width = preset.width
+        if args.height is None:
+            args.height = preset.height
+        if args.mines is None:
+            args.mines = preset.mines
+        if args.refine_steps is None:
+            args.refine_steps = preset.refine_steps
+        args.rule_guard = args.rule_guard or preset.rule_guard
+        args.rule_mine_guard = args.rule_mine_guard or preset.rule_mine_guard
+        args.prob_zero_guard = args.prob_zero_guard or preset.prob_zero_guard
+        print(f"Preset: {args.preset} — {preset.desc}")
         
     width = args.width if args.width is not None else config.board_width
     height = args.height if args.height is not None else config.board_height
