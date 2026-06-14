@@ -13,6 +13,86 @@
 
 ---
 
+## 2026-06-13: 本地 M3 Pro 从零完整复现到 100%
+
+### 目标
+
+验证另一台机器出现的异常表格是否可复现：
+
+| Stage | 雷数 | 对方复现胜率 |
+|------|------|--------------|
+| S1 | 10 | 75% |
+| S2 | 15 | 93% |
+| S3 | 20 | 21% |
+| S4 | 25 | 14% |
+| S5 | 32 | 97% |
+
+### 复现设置
+
+| 项目 | 值 |
+|------|-----|
+| 设备 | 本地 M3 Pro, PyTorch MPS |
+| 编排脚本 | `scripts/run_full_repro.py` |
+| Prefix | `repro_mps_20260613` |
+| 数据 | canonical `data/S1` 至 `data/S5`, 每阶段 10000 局 strict no-guess |
+| 基础训练 | S1→S5, `deep_mse_rank`, V5 19ch, batch=64, refine=4 |
+| 后续训练 | S5 hard-example replay ×2 → denoise replay ×2 |
+| 日志 | `logs/repro_mps_20260613_full_repro_20260613_120132.log` |
+
+### 基础 S1→S5 从零复现
+
+| 阶段 | 继承 | 内部 best | 独立 500 局裸评估 | Checkpoint |
+|------|------|-----------|-------------------|------------|
+| S1 8×8/10 | scratch | 97.0% | 489/500 = 97.80% | `checkpoints/repro_mps_20260613_v5_replay_S1/best_model.pt` |
+| S2 8×8/15 | S1 | 96.0% | 479/500 = 95.80% | `checkpoints/repro_mps_20260613_v5_replay_S2/best_model.pt` |
+| S3 8×8/20 | S2 | 94.0% | 457/500 = 91.40% | `checkpoints/repro_mps_20260613_v5_replay_S3/best_model.pt` |
+| S4 8×8/25 | S3 | 93.5% | 460/500 = 92.00% | `checkpoints/repro_mps_20260613_v5_replay_S4/best_model.pt` |
+| S5 8×8/32 | S4 | 94.5% | 475/500 = 95.00% | `checkpoints/repro_mps_20260613_v5_replay_S5/best_model.pt` |
+
+结论：本地从零训练没有复现 S3=21%、S4=14% 的崩盘。另一台机器的低胜率更可能来自 checkpoint 路径、阶段继承、评估参数或数据目录混用，而不是当前训练路线本身。
+
+### S5 hard-example replay 与 denoise replay
+
+| 步骤 | 数据/继承 | 结果 |
+|------|-----------|------|
+| base mistake mining | `repro_mps_20260613_v5_replay_S5` | 保存 476 条 replay states |
+| `mistake_ft` | base S5 + first mistakes, epochs=2 | internal best 98.5% |
+| second mistake mining | `mistake_ft` | 保存 404 条 replay states |
+| `mistake_ft2` | second mistakes, epochs=1 | internal best 99.0% |
+| `denoise_rank` | `deep_mse_denoise_rank`, epochs=2 | internal best 99.0% |
+| denoise mistake mining | `denoise_rank` | 保存 306 条 replay states |
+| `denoise_rank_ft2` | final denoise replay, epochs=1 | internal best 99.0% |
+
+### 最终评估
+
+Checkpoint: `checkpoints/repro_mps_20260613_v5_replay_S5_denoise_rank_ft2/best_model.pt`
+
+| 难度 | 评估 | 胜率 | Action Acc |
+|------|------|------|------------|
+| S1 8×8/10 | naked, 500 boards | 497/500 = 99.40% | 0.9997 |
+| S2 8×8/15 | naked, 500 boards | 491/500 = 98.20% | 0.9993 |
+| S3 8×8/20 | naked, 500 boards | 480/500 = 96.00% | 0.9985 |
+| S4 8×8/25 | naked, 500 boards | 485/500 = 97.00% | 0.9988 |
+| S5 8×8/32 | naked, 500 boards | 494/500 = 98.80% | 0.9993 |
+| S5 8×8/32 | `--preset s5_guarded_100`, 1000 boards | 1000/1000 = 100.00% | 1.0000 |
+
+最终 S5 guarded 指标：
+
+| 项目 | 值 |
+|------|-----|
+| Rule-guard actions | 16433 |
+| Prob-zero-guard actions | 1841 |
+| Avg game steps | 18.3 |
+| Avg refine steps | 4.8 |
+| Loss/Stuck | 0/0 |
+
+结论：完整路线可在本地 MPS 从零复现到 100%。对方异常结果最优先排查：
+
+1. 是否只跑了基础 recipe，或混用了 legacy `--stage/--all`。
+2. S3/S4 评估时 checkpoint 是否指向对应阶段输出，而不是旧目录或错误阶段。
+3. `data/S1-S5` 是否为 canonical 目录和命名，且没有旧 `.npz` 混入。
+4. S5 100% 是否使用 `--preset s5_guarded_100`，即 `refine_steps=5 + rule_guard + prob_zero_guard`。
+
 ## 2026-06-06: V5 19ch + ranking/replay curriculum
 
 ### S1 sanity baseline

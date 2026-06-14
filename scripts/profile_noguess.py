@@ -33,7 +33,7 @@ def _profile_single(
         (t_laymine, t_verify, laymine_success, verify_pass, board_obtained)
     """
     import ms_toollib as mt
-    from game.constants import GameStatus, MoveType
+    from game.constants import MoveType
     from game.game import MinesweeperGame
     from data.no_guess import is_solver_no_guess
 
