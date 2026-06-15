@@ -95,7 +95,6 @@ class TrajectoryPool:
         pool_size: int = 100,
         pool_workers: int = 0,
         data_dir: str = "",
-        mixed_mode: bool = False,
         compute_probs: bool = False,
         eval_mode: bool = False,
     ):

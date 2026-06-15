@@ -11,14 +11,11 @@ def main():
     p = argparse.ArgumentParser(description="Evaluate Minesweeper Transformer model")
     
     p.add_argument("checkpoint", help="Path to model checkpoint (.pt)")
-    p.add_argument(
-        "--preset",
+    p.add_argument("--preset",
         choices=list(EVAL_PRESETS.keys()),
         default=None,
         help="Apply a named benchmark preset before explicit CLI overrides",
     )
-    p.add_argument("--stage", type=str, default=None, choices=["S1", "S2", "S3", "S4", "S5"],
-                   help="Evaluate using specific stage's board settings")
     p.add_argument("--n_games", type=int, default=1000)
     p.add_argument("--device", default="auto")
     p.add_argument("--arch", type=str, default="V5", choices=["V5"], help="Model architecture version")
@@ -49,9 +46,6 @@ def main():
     args = p.parse_args()
     
     config = TrainingConfig()
-    if args.stage:
-        from config.stage_config import apply_stage_config
-        apply_stage_config(config, args.stage)
 
     if args.preset:
         preset = EVAL_PRESETS[args.preset]

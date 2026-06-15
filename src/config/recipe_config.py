@@ -13,8 +13,7 @@ class RecipePhase:
     """A single phase within a training recipe."""
 
     mode: str = "online"          # "online" | "supervised"
-    # "bce" | "mse" | "deep_mse" | "deep_mse_rank" |
-    # "deep_mse_denoise_rank" | "deep_mse_solver_safe_rank"
+    # "bce" | "mse" | "deep_mse" | "deep_mse_rank"
     loss_type: str = "bce"
     n_games: int = 5000
     lr: float = 3e-4

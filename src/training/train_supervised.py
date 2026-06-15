@@ -48,7 +48,6 @@ def train_supervised(
         pool_size=config.pool_size,
         pool_workers=config.pool_workers,
         data_dir=config.data_dir,
-        mixed_mode=config.mixed_mode,
         compute_probs=True,
     )
     if pool.total_games == 0:

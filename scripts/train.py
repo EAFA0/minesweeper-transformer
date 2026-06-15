@@ -28,10 +28,8 @@ def main():
     # High-level configuration
     p.add_argument("--mode", type=str, default="online", choices=["online", "supervised"],
                    help="Training mode: online (self-play) or supervised (offline npz)")
-    p.add_argument("--stage", type=str, default=None, choices=["S1", "S2", "S3", "S4", "S5"],
-                   help="Training stage (e.g. S1, S2, S3, S4, S5). Applies stage-specific board/optimizer configs.")
     p.add_argument("--recipe", type=str, default=None,
-                   help="Training recipe name (e.g. v5_curriculum_replay). Overrides --stage/--mode/--loss_type.")
+                   help="Training recipe name (e.g. v5_curriculum_replay). Overrides --mode/--loss_type.")
     p.add_argument("--arch", type=str, default="V5", choices=["V5"],
                    help="Architecture version to use")
     p.add_argument(
@@ -43,13 +41,8 @@ def main():
             "mse",
             "deep_mse",
             "deep_mse_rank",
-            "deep_mse_denoise_rank",
-            "deep_mse_solver_safe_rank",
         ],
-        help=(
-            "Loss function: bce, mse, deep_mse, deep_mse_rank, "
-            "deep_mse_denoise_rank, or deep_mse_solver_safe_rank"
-        ),
+        help="Loss function: bce, mse, deep_mse, or deep_mse_rank",
     )
     p.add_argument("--device", default="auto")
     p.add_argument("--dry_run", action="store_true",
@@ -110,13 +103,8 @@ def main():
         print(f"Recipe: {recipe.name} — Phase 1: {recipe.phases[0].desc}")
 
     else:
-        # ── Legacy mode (--stage / --mode / --loss_type) ────────────────────
+        # ── Direct mode ──────────────────────────────────────────────────────
         config = TrainingConfig()
-
-        if args.stage:
-            from config.stage_config import apply_stage_config
-            apply_stage_config(config, args.stage)
-
         config.mode = args.mode
 
         if args.n_games is not None:
@@ -146,7 +134,7 @@ def main():
         if args.board_mines is not None:
             config.board_mines = args.board_mines
 
-        if config.save_dir == "checkpoints" and not args.stage:
+        if config.save_dir == "checkpoints":
             from datetime import datetime
             config.save_dir = datetime.now().strftime("checkpoints/run_%Y%m%d_%H%M%S")
 

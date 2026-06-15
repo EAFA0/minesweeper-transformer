@@ -37,9 +37,7 @@ def generate_trajectory(
     if rng is None:
         rng = np.random.default_rng()
 
-    # Generate a strict no-guess board. Do not use self_validated here:
-    # self_validated allows safe hints when stuck, which contaminates the
-    # supervised/eval benchmark with guess-required states.
+    # Generate a strict no-guess board.
     from data.no_guess import NO_GUESS_EPS, generate_no_guess_board
     game = generate_no_guess_board(width, height, total_mines, rng=rng)
     if game is None:

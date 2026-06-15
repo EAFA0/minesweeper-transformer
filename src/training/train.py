@@ -282,7 +282,6 @@ def train(config: TrainingConfig, arch: str = "V5") -> TrainingMetrics:
         board_mines=config.board_mines,
         pool_size=config.pool_size,
         pool_workers=config.pool_workers,
-        mixed_mode=config.mixed_mode,
         compute_probs=False,
     )
     print("Board pool: TrajectoryPool initialized")

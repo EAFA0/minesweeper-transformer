@@ -13,7 +13,6 @@ import numpy as np
 
 from config import DATA_SCHEMA_VERSION, STAGE_DATASETS, get_stage_dataset
 from data.generator import generate_training_data, generate_trajectory
-from data.mixed_generator import generate_mixed_data
 from data.writer import TrajectoryWriter
 
 DEFAULT_N_SAMPLES = 10000
@@ -128,9 +127,6 @@ def generate_training_data_parallel(
 
 def generate_from_args(args) -> None:
     """Generate one or all canonical datasets from parsed CLI args."""
-    if args.mixed and (args.stage or args.all_stages):
-        raise ValueError("--mixed cannot be combined with --stage/--all_stages")
-
     if args.all_stages:
         for stage in STAGE_DATASETS:
             stage_args = argparse.Namespace(**vars(args))
@@ -142,7 +138,7 @@ def generate_from_args(args) -> None:
 
 
 def generate_one_dataset(args) -> None:
-    """Generate one fixed-size or experimental mixed dataset."""
+    """Generate one fixed-size dataset."""
     dataset_name = args.stage or ""
     if args.stage:
         dataset = get_stage_dataset(args.stage)
@@ -198,23 +194,6 @@ def generate_one_dataset(args) -> None:
             except Exception as e:
                 print(f"⚠ Could not read existing stats: {e}. Starting fresh...")
 
-    if args.mixed:
-        stats = generate_mixed_data(
-            output_dir=output_dir,
-            n_samples=args.n_samples,
-            min_size=args.min_size,
-            max_size=args.max_size,
-            min_density=args.min_density,
-            max_density=args.max_density,
-            seed=args.seed,
-            samples_per_file=args.samples_per_file,
-            show_progress=not args.no_progress,
-            start_file_idx=start_file_idx,
-            existing_stats=existing_stats,
-        )
-        print_generation_summary(stats, output_dir, mixed=True, args=args)
-        return
-
     workers = args.workers if args.workers > 0 else multiprocessing.cpu_count()
     if workers <= 1:
         stats = generate_training_data(
@@ -246,7 +225,7 @@ def generate_one_dataset(args) -> None:
         )
 
     update_stats_metadata(output_dir, stats, args, file_prefix, dataset_name)
-    print_generation_summary(stats, output_dir, mixed=False, args=args)
+    print_generation_summary(stats, output_dir, args)
 
 
 def next_file_index(output_dir: Path) -> int:
@@ -297,28 +276,19 @@ def write_stats(output_dir: Path, stats: dict) -> None:
         json.dump(stats, f, indent=2, default=str)
 
 
-def print_generation_summary(stats: dict, output_dir: Path, mixed: bool, args) -> None:
-    if mixed:
-        print("\n📊 Mixed generation complete!")
-        print(f"   Generated: {stats['generated']} games from {stats['attempts']} attempts")
-        print(
-            f"   Size range: {args.min_size}-{args.max_size}, "
-            f"density: {args.min_density}-{args.max_density}"
-        )
-    else:
-        print("\n📊 Generation complete!")
-        print(f"   Generated: {stats['generated']} games from {stats['attempts']} attempts")
+def print_generation_summary(stats: dict, output_dir: Path, args) -> None:
+    print("\n📊 Generation complete!")
+    print(f"   Generated: {stats['generated']} games from {stats['attempts']} attempts")
 
     print(f"   Avg steps per game: {stats['avg_steps_per_game']:.1f}")
     print(f"   Total training steps: {stats['total_steps']}")
     print(f"   Avg ambiguous cells/step: {stats.get('avg_ambig_per_game', 0):.1f}")
     print(f"   Output files: {stats['output_files']}")
     print(f"   Time: {stats['elapsed_seconds']:.1f}s")
-    if not mixed:
-        print(f"   Speed: {stats.get('games_per_second', 0):.1f} games/s")
-        print(f"   Output dir: {output_dir.resolve()}")
-        print("\n   Label type: probability distillation (MSE)")
-        print("   Data format: (channels, probs, masks) per sample")
+    print(f"   Speed: {stats.get('games_per_second', 0):.1f} games/s")
+    print(f"   Output dir: {output_dir.resolve()}")
+    print("\n   Label type: probability distillation (MSE)")
+    print("   Data format: (channels, probs, masks) per sample")
 
 
 def _build_stats(

@@ -16,7 +16,6 @@ class TrainingConfig:
     pool_size: int = 100
     pool_workers: int = 2         # 0 = serial, >=1 = multiprocessing background workers
     data_dir: str = "data"  # strict no-guess offline npz dir
-    mixed_mode: bool = False      # if True, randomizes board size and mine density
 
     # Training
     mode: str = "online"  # "online" or "supervised"
@@ -24,8 +23,7 @@ class TrainingConfig:
     eval_interval_games: int = 200
     eval_games: int = 100
     board_pool_path: str = ""
-    # "bce", "mse", "deep_mse", "deep_mse_rank", "deep_mse_denoise_rank",
-    # or "deep_mse_solver_safe_rank"
+    # "bce", "mse", "deep_mse", or "deep_mse_rank"
     loss_type: str = "bce"
     rank_loss_weight: float = 0.1
     rank_loss_margin: float = 0.5
