@@ -1,48 +1,58 @@
-# pyright: reportMissingImports=false
-# Minesweeper Transformer — Training Data Generation (Probability Distillation)
-# Usage: python scripts/generate_data.py --stage S1
+#!/usr/bin/env python3
+"""Generate training data for a specific board configuration."""
 
 import argparse
-from pathlib import Path
 
-from config import STAGE_DATASETS
-from data.pipeline import (
-    DEFAULT_N_SAMPLES,
-    DEFAULT_SAMPLES_PER_FILE,
-    generate_from_args,
-)
+from data.pipeline import generate_from_args
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate probability-distilled training data for Minesweeper Transformer"
+        description="Generate training data for minesweeper AI"
     )
-    parser.add_argument("--stage", choices=list(STAGE_DATASETS.keys()),
-                        help="Generate one canonical stage dataset into data/{stage}")
-    parser.add_argument("--all_stages", action="store_true",
-                        help="Generate all canonical stage datasets S1-S5")
-    parser.add_argument("--n_samples", type=int, default=DEFAULT_N_SAMPLES,
-                        help="Number of game trajectories to generate (default: 10000)")
-    parser.add_argument("--output", type=Path, default="data",
-                        help="Output root for stage mode, or direct output dir without --stage")
-    parser.add_argument("--width", type=int, default=8, help="Board width (default: 8)")
-    parser.add_argument("--height", type=int, default=8, help="Board height (default: 8)")
-    parser.add_argument("--mines", type=int, default=10, help="Number of mines (default: 10)")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed (default: 42)")
-    parser.add_argument("--no_progress", action="store_true", help="Disable progress bar")
-    parser.add_argument("--samples_per_file", type=int, default=DEFAULT_SAMPLES_PER_FILE,
-                        help="Number of games per .npz file (default: 2000)")
-    parser.add_argument("--force", action="store_true",
-                        help="Force regeneration even if data already exists")
-    parser.add_argument("--workers", type=int, default=0,
-                        help="Worker processes for fixed-size mode (0=auto, 1=single). Default: 0")
-
+    parser.add_argument(
+        "--width", type=int, default=8, help="Board width (default: 8)"
+    )
+    parser.add_argument(
+        "--height", type=int, default=8, help="Board height (default: 8)"
+    )
+    parser.add_argument(
+        "--mines", type=int, default=10, help="Number of mines (default: 10)"
+    )
+    parser.add_argument(
+        "--n_samples",
+        type=int,
+        default=10000,
+        help="Number of games to generate (default: 10000)",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=0,
+        help="Number of parallel workers (default: CPU count)",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=42, help="Random seed (default: 42)"
+    )
+    parser.add_argument(
+        "--samples_per_file",
+        type=int,
+        default=2000,
+        help="Games per .npz file (default: 2000)",
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default="data",
+        help="Output directory (default: data)",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force regeneration, ignore existing data",
+    )
     args = parser.parse_args()
-
-    try:
-        generate_from_args(args)
-    except ValueError as exc:
-        parser.error(str(exc))
+    generate_from_args(args)
 
 
 if __name__ == "__main__":

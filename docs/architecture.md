@@ -341,15 +341,9 @@ loss        = deep_mse + 0.1 * loss_rank
 
 该项直接优化评估动作 `argmin P(mine)` 的排序，不替代 probability distillation。
 
-`TrajectoryPool` 支持逗号分隔的 weighted replay 数据源：
+`TrajectoryPool` 从 `data/` 根目录加载所有 `.npz` 文件，通过 `(H, W, mines)` 三元组过滤匹配当前训练阶段的轨迹。不同密度的数据天然隔离，无需子目录。
 
-```text
-data/S5:0.6,data/S1:0.1,data/S2:0.1,data/S3:0.1,data/S4:0.1
-```
-
-训练时只会对第一个目录启动当前阶段的数据生成；后续目录作为 replay source 只读加载，并按指定权重采样。
-
-数据生成与评估默认使用 `generate_no_guess_board()`。`generate_self_validated_board()` 允许 safe hint，只能用于显式标注的 hint-solvable 探索，不得作为主训练/评估 benchmark。项目默认假设 `data/` 下的训练和评估数据均为 no-guess。
+数据生成与评估默认使用 `generate_no_guess_board()`。项目默认假设 `data/` 下的训练和评估数据均为 no-guess。
 
 项目 no-guess 合同以本仓库的 `ProbabilitySolver` 为准：生成出的棋盘必须能在每一步找到 `P(mine)=0` 的 covered cell，直到胜利。外部生成器声称 no-guess 但本 solver 无法无猜推进的棋盘会被拒绝。
 

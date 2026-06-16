@@ -12,7 +12,7 @@
 - **监督 loss 抽离**: 新增 `training/losses.py`，将 BCE/MSE/deep-MSE/ranking/denoising loss 从训练循环中抽离。
 - **Checkpoint IO 收敛**: 新增 `training/checkpoints.py`，统一模型加载、预训练权重读取和 checkpoint 保存逻辑。
 - **数据构造管线抽离**: 新增 `data/pipeline.py`，`scripts/generate_data.py` 瘦身为 CLI 入口。
-- **训练入口边界明确**: `stage_config.py` 复用 canonical stage 数据合同，`train_stage.py` 明确 recipe 为主线、legacy stage 仅作兼容入口。
+- **训练入口边界明确**: `train_stage.py` 以 recipe 为主线入口。
 - **实验路径标注**: `mixed_generator.py` 与 `self_validated.py` 标注为非主线实验模块。
 
 ### 新增 Streamlit 可视化页面

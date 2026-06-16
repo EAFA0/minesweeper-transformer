@@ -92,7 +92,7 @@ def generate_training_data(
 ) -> dict:
     """Generate and save trajectory dataset sequentially."""
     rng = np.random.default_rng(seed)
-    file_prefix = file_prefix or f"train_{width}x{height}_{total_mines}"
+    file_prefix = file_prefix or f"{width}x{height}_{total_mines}"
     
     writer = TrajectoryWriter(
         output_dir=output_dir,

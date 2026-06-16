@@ -33,9 +33,9 @@
 ## 坑 #5: 数据目录混乱
 
 - **症状**: `train_stage.py` 报 "Data already exists" 但数据不完整（曾被中途 kill）
-- **原因**: 多进程/单进程生成到不同目录 (`data/S1/` vs `data/`)，`--force_data` 检查逻辑可能误判；历史 `train_supervised.py` 还会在离线训练时自动启动 background generator，可能覆盖阶段数据文件。
-- **正确做法**: 数据只能由 `scripts/generate_data.py` 生产；阶段数据统一写入 `data/S1` 到 `data/S5`，文件名统一为 `train_{stage}_{W}x{H}_{M}_{index}.npz`；supervised 训练必须只读取显式 `--data_dir`，读不到兼容轨迹时应直接失败。
-- **记录日期**: 2026-05-30
+- **原因**: 多进程/单进程生成到不同目录，`--force` 检查逻辑可能误判。
+- **正确做法**: 数据只能由 `scripts/generate_data.py` 生产；训练数据统一平铺在 `data/` 根目录，命名格式 `{W}x{H}_{M}_{index:04d}.npz`；`TrajectoryPool` 通过 `(H, W, mines)` 三元组自动过滤匹配当前阶段的轨迹。
+- **记录日期**: 2026-06-16 (updated)
 
 ## 预防原则
 

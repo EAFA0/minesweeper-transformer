@@ -33,35 +33,28 @@
 uv run python scripts/generate_data.py --stage S1 --workers 0
 uv run python scripts/generate_data.py --stage S5 --workers 0
 
-# 一次生成 S1-S5 全部阶段数据
-uv run python scripts/generate_data.py --all_stages --workers 0
+# 生成 8x8/10 训练数据
+uv run python scripts/generate_data.py --width 8 --height 8 --mines 10 --workers 0
 
 # canonical 输出:
-# data/S1/train_S1_8x8_10_0000.npz
-# data/S2/train_S2_8x8_15_0000.npz
+# data/8x8_10_0000.npz
+# data/8x8_10_0001.npz
 # ...
-# data/S5/train_S5_8x8_32_0000.npz
 
 # 强制重新生成
-uv run python scripts/generate_data.py --stage S1 --workers 0 --force
+uv run python scripts/generate_data.py --width 8 --height 8 --mines 10 --workers 0 --force
 ```
 
 数据生成只能从 `scripts/generate_data.py` 入口进入。`src/data/generator.py`
 和 `src/data/pipeline.py` 是库实现，不作为人工/Agent 直接入口。
-`src/data/mixed_generator.py`、`src/data/self_validated.py` 是实验模块，
-不属于 canonical S1-S5 数据生产链路。
-训练数据统一放在 `data/{stage}/`；评估缓存统一使用
-`data/eval_boards_{W}x{H}_{M}.npz`；错题 replay 统一放在
+训练数据统一平铺在 `data/` 根目录，命名格式 `{W}x{H}_{M}_{index:04d}.npz`；
+评估缓存统一使用 `data/eval_boards_{W}x{H}_{M}.npz`；错题 replay 统一放在
 `data/mistakes/`。
 
 ### 训练
 ```bash
 # Recipe 模式（当前主线）
 python scripts/train_stage.py --recipe v5_curriculum_replay --arch V5
-
-# 分阶段训练（legacy stage 入口）
-python scripts/train_stage.py --stage S1          # 从头训练 8x8/10
-python scripts/train_stage.py --stage S2          # 继承 S1 → 8x8/15
 python scripts/train_stage.py --stage S3          # 继承 S2 → 8x8/20
 python scripts/train_stage.py --stage S4          # 继承 S3 → 8x8/25
 python scripts/train_stage.py --stage S5          # 继承 S4 → 8x8/32

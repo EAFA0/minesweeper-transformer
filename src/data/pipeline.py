@@ -11,7 +11,7 @@ from typing import Optional
 
 import numpy as np
 
-from config import DATA_SCHEMA_VERSION, STAGE_DATASETS, get_stage_dataset
+from config import DATA_SCHEMA_VERSION
 from data.generator import generate_training_data, generate_trajectory
 from data.writer import TrajectoryWriter
 
@@ -38,13 +38,11 @@ def generate_training_data_parallel(
     workers: int = 16,
     start_file_idx: int = 0,
     existing_stats: Optional[dict] = None,
-    file_prefix: str | None = None,
-    dataset_name: str = "",
 ) -> dict:
     """Multi-process training data generation for fixed-size boards."""
     output_dir.mkdir(parents=True, exist_ok=True)
     start = time.time()
-    file_prefix = file_prefix or f"train_{width}x{height}_{total_mines}"
+    file_prefix = f"{width}x{height}_{total_mines}"
 
     rng = np.random.default_rng(seed)
     n_seeds = int(n_samples * 1.5)
@@ -112,8 +110,6 @@ def generate_training_data_parallel(
         total_mines=total_mines,
         n_samples=n_samples,
         workers=workers,
-        dataset_name=dataset_name,
-        file_prefix=file_prefix,
         total_attempts=total_attempts,
         total_generated=total_generated,
         total_steps=total_steps,
@@ -126,38 +122,9 @@ def generate_training_data_parallel(
 
 
 def generate_from_args(args) -> None:
-    """Generate one or all canonical datasets from parsed CLI args."""
-    if args.all_stages:
-        for stage in STAGE_DATASETS:
-            stage_args = argparse.Namespace(**vars(args))
-            stage_args.stage = stage
-            generate_one_dataset(stage_args)
-        return
-
-    generate_one_dataset(args)
-
-
-def generate_one_dataset(args) -> None:
-    """Generate one fixed-size dataset."""
-    dataset_name = args.stage or ""
-    if args.stage:
-        dataset = get_stage_dataset(args.stage)
-        args.width = dataset.width
-        args.height = dataset.height
-        args.mines = dataset.mines
-        if args.n_samples == DEFAULT_N_SAMPLES:
-            args.n_samples = dataset.n_samples
-        if args.samples_per_file == DEFAULT_SAMPLES_PER_FILE:
-            args.samples_per_file = dataset.samples_per_file
-        output_dir = stage_output_dir(Path(args.output), args.stage)
-        file_prefix = dataset.file_prefix
-        print(
-            f"Stage {args.stage}: {args.width}x{args.height}/{args.mines} "
-            f"-> {output_dir}"
-        )
-    else:
-        output_dir = Path(args.output)
-        file_prefix = f"train_{args.width}x{args.height}_{args.mines}"
+    """Generate a dataset from parsed CLI args."""
+    output_dir = Path(args.output)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     start_file_idx = 0
     existing_stats = None
@@ -171,7 +138,7 @@ def generate_one_dataset(args) -> None:
                 start_file_idx = next_file_index(output_dir)
 
                 already_generated = existing_stats.get("generated", 0)
-                print(f"📦 Found existing data: {already_generated} games.")
+                print(f"Found existing data: {already_generated} games.")
 
                 if already_generated >= args.n_samples:
                     print(
@@ -192,7 +159,7 @@ def generate_one_dataset(args) -> None:
                 args.n_samples = needed_samples
 
             except Exception as e:
-                print(f"⚠ Could not read existing stats: {e}. Starting fresh...")
+                print(f"Could not read existing stats: {e}. Starting fresh...")
 
     workers = args.workers if args.workers > 0 else multiprocessing.cpu_count()
     if workers <= 1:
@@ -206,7 +173,6 @@ def generate_one_dataset(args) -> None:
             samples_per_file=args.samples_per_file,
             start_file_idx=start_file_idx,
             existing_stats=existing_stats,
-            file_prefix=file_prefix,
         )
     else:
         stats = generate_training_data_parallel(
@@ -220,16 +186,14 @@ def generate_one_dataset(args) -> None:
             workers=workers,
             start_file_idx=start_file_idx,
             existing_stats=existing_stats,
-            file_prefix=file_prefix,
-            dataset_name=dataset_name,
         )
 
-    update_stats_metadata(output_dir, stats, args, file_prefix, dataset_name)
+    update_stats_metadata(output_dir, stats, args)
     print_generation_summary(stats, output_dir, args)
 
 
 def next_file_index(output_dir: Path) -> int:
-    """Return the next chunk index for any canonical or legacy npz in a dir."""
+    """Return the next chunk index for npz files in a dir."""
     max_idx = -1
     for path in output_dir.glob("*.npz"):
         if path.name.startswith("eval_boards"):
@@ -240,17 +204,10 @@ def next_file_index(output_dir: Path) -> int:
     return max_idx + 1
 
 
-def stage_output_dir(output: Path, stage: str) -> Path:
-    """Treat --output as root unless it already points at the stage dir."""
-    return output if output.name == stage else output / stage
-
-
 def update_stats_metadata(
     output_dir: Path,
     stats: dict,
     args,
-    file_prefix: str,
-    dataset_name: str,
 ) -> None:
     """Add canonical schema metadata to stats.json."""
     stats.setdefault("params", {})
@@ -263,9 +220,7 @@ def update_stats_metadata(
             "workers": args.workers,
             "label_type": "probability_distillation",
             "schema_version": DATA_SCHEMA_VERSION,
-            "dataset_name": dataset_name,
-            "file_prefix": file_prefix,
-            "layout": "data/{stage}/train_{stage}_{width}x{height}_{mines}_{index}.npz",
+            "layout": "data/{width}x{height}_{mines}_{index}.npz",
         }
     )
     write_stats(output_dir, stats)
@@ -277,7 +232,7 @@ def write_stats(output_dir: Path, stats: dict) -> None:
 
 
 def print_generation_summary(stats: dict, output_dir: Path, args) -> None:
-    print("\n📊 Generation complete!")
+    print("\nGeneration complete!")
     print(f"   Generated: {stats['generated']} games from {stats['attempts']} attempts")
 
     print(f"   Avg steps per game: {stats['avg_steps_per_game']:.1f}")
@@ -297,8 +252,6 @@ def _build_stats(
     total_mines: int,
     n_samples: int,
     workers: int,
-    dataset_name: str,
-    file_prefix: str,
     total_attempts: int,
     total_generated: int,
     total_steps: int,
@@ -315,9 +268,7 @@ def _build_stats(
             "workers": workers,
             "label_type": "probability_distillation",
             "schema_version": DATA_SCHEMA_VERSION,
-            "dataset_name": dataset_name,
-            "file_prefix": file_prefix,
-            "layout": "data/{stage}/train_{stage}_{width}x{height}_{mines}_{index}.npz",
+            "layout": "data/{width}x{height}_{mines}_{index}.npz",
         },
         "attempts": total_attempts,
         "generated": total_generated,

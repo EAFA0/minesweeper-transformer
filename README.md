@@ -77,16 +77,12 @@ V5 replay curriculum：strict no-guess 数据 + Deep-MSE probability distillatio
 # 全阶段训练
 uv run python3 scripts/train_stage.py --recipe v5_curriculum_replay --arch V5
 
-# 生成 canonical 阶段数据（唯一数据生产入口）
-uv run python3 scripts/generate_data.py --stage S1 --workers 0
-uv run python3 scripts/generate_data.py --all_stages --workers 0
+# 生成训练数据
+uv run python3 scripts/generate_data.py --width 8 --height 8 --mines 10 --workers 0
 
 # 只跑最高密度 S5（继承 checkpoints/v5_replay_S4/best_model.pt）
 uv run python3 scripts/train_stage.py \
   --recipe v5_curriculum_replay --start_phase 5 --end_phase 5 --arch V5
-
-# 单阶段
-uv run python3 scripts/train_stage.py --stage S1
 
 # 独立训练（冷启动 Online）
 uv run python3 scripts/train.py \
@@ -94,7 +90,7 @@ uv run python3 scripts/train.py \
 
 # 离线监督训练（Supervised）
 uv run python3 scripts/train.py \
-  --mode supervised --data_dir data/S1 --epochs 5
+  --mode supervised --data_dir data --epochs 5
 
 # 微调已有模型
 uv run python3 scripts/train.py \
@@ -112,9 +108,6 @@ uv run python3 scripts/evaluate.py checkpoints/v5_replay_S5_denoise_rank_ft2/bes
 uv run python3 scripts/collect_mistakes.py checkpoints/v5_replay_S5/best_model.pt \
   --width 8 --height 8 --mines 32 --n_games 500 --board_pool data \
   --output data/mistakes/S5_rule_guard_failures.npz
-
-# 仅评估已有 checkpoint
-uv run python3 scripts/train_stage.py --stage S5 --eval_only --eval 10 10 40
 ```
 
 ## 项目结构

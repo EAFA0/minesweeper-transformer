@@ -3,7 +3,7 @@
 当前主线: V5 replay curriculum — S1(8×8/10) → S2(15) → S3(20) → S4(25) → S5(32)。
 
 > **2026-06-06 更新**: V5 constraint channels 从 4 个扩为 8 个，当前模型输入为 19ch；主 loss 为 `deep_mse_rank`；主 recipe 为 `v5_curriculum_replay`。
-> **数据合同**: 主训练/评估数据均为 strict no-guess；生成器额外要求本项目 `ProbabilitySolver` 可无猜解完整局。
+> **2026-06-16 更新**: 数据布局简化 — 训练数据统一平铺在 `data/` 根目录，命名格式 `{W}x{H}_{M}_{index:04d}.npz`；`TrajectoryPool` 通过 `(H, W, mines)` 三元组自动过滤。旧记录中的 `data/S1` 等路径为历史格式。
 > **推理策略**: 训练固定 4 步全 BPTT；默认评估根据 `max|P_t - P_{t-1}| < convergence_eps` 早停，当前 S5 100% 组合显式使用 `--refine_steps 5`。
 
 ## 日志格式

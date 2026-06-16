@@ -68,6 +68,8 @@ class TrajectoryPool:
                 mines = data[f"mines_{i}"]
                 if mines.shape != (self.height, self.width):
                     continue
+                if np.sum(mines) != self.mines:
+                    continue
                 masks = data[f"masks_{i}"]
                 if len(masks) == 0:
                     continue
