@@ -89,11 +89,11 @@
 
 > **状态**: 已解决。V4 latent loop 路线已废弃，V5 使用显式反馈 + constraint channels 替代。
 
-## 坑 #12: self_validated 不是 no-guess
+## 坑 #12: no-guess 数据是训练前提
 
 - **症状**: S1 胜率卡在 80% 左右，`ProbabilitySolver` oracle 也到不了 99%
-- **原因**: `generate_self_validated_board()` 的验证过程允许 safe hint，它生成的是 hint-solvable board，不是严格 no-guess board
-- **正确做法**: 主训练/评估默认使用 `generate_no_guess_board()`；该函数必须通过本项目 `ProbabilitySolver` 无猜验证；eval cache 使用 `eval_boards_{W}x{H}_{M}.npz`；`self_validated` 只能用于明确标注的 hint-solvable 实验
+- **原因**: 非 no-guess 棋盘无法被概率求解器稳定求解，训练信号含噪声
+- **正确做法**: 主训练/评估默认使用 `generate_no_guess_board()`；该函数必须通过本项目 `ProbabilitySolver` 无猜验证；eval cache 使用 `eval_boards_{W}x{H}_{M}.npz`
 - **记录日期**: 2026-06-06
 
 - **症状**: 6×6/18 (50%密度) Online BCE 胜率 6.5%，蒸馏 BCE 胜率 12%；格点准确率峰值 82.5%，远低于所需 99%+

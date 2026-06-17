@@ -34,7 +34,7 @@
 | 设备 | 本地 M3 Pro, PyTorch MPS |
 | 编排脚本 | `scripts/run_full_repro.py` |
 | Prefix | `repro_mps_20260613` |
-| 数据 | canonical `data/S1` 至 `data/S5`, 每阶段 10000 局 strict no-guess |
+| 数据 | canonical `data/`, 每阶段 10000 局 strict no-guess (历史格式: `data/S1` 至 `data/S5`) |
 | 基础训练 | S1→S5, `deep_mse_rank`, V5 19ch, batch=64, refine=4 |
 | 后续训练 | S5 hard-example replay ×2 → denoise replay ×2 |
 | 日志 | `logs/repro_mps_20260613_full_repro_20260613_120132.log` |

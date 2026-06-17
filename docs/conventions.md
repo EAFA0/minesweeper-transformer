@@ -104,9 +104,8 @@ python scripts/evaluate.py checkpoints/S1/best_model.pt \
 
 ## 命名规范
 
-- **Checkpoint 目录**: `checkpoints/{stage}/` (如 `S1`, `S3`, `rl`)
-- **训练数据目录**: `data/{stage}/` (如 `data/S1/`, `data/S5/`)
-- **训练数据文件**: `train_{stage}_{W}x{H}_{M}_{index:04d}.npz`
+- **Checkpoint 目录**: `checkpoints/{run_name}/` (如 `v5_replay_S1`, `v5_replay_S5`)
+- **训练数据文件**: `{W}x{H}_{M}_{index:04d}.npz` (如 `8x8_10_0000.npz`)
 - **评估缓存**: `data/eval_boards_{W}x{H}_{M}.npz`
 - **错题 replay**: `data/mistakes/{name}.npz` + `{name}.json`
 - **RL Pool**: `rl_boards_{W}x{H}_{M}.npz` (如 `rl_boards_10x10_40.npz`)
