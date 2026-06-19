@@ -13,7 +13,30 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import torch
 
-from game.game import MinesweeperGame
+from game.game import MinesweeperGame, board_state_to_channels
+
+
+def _adjacent_mine_counts(mines: np.ndarray) -> np.ndarray:
+    """Return (H, W) int array of 8-neighbor mine counts for each cell."""
+    m = mines.astype(np.int64)
+    counts = np.zeros_like(m)
+    for dr in (-1, 0, 1):
+        for dc in (-1, 0, 1):
+            if dr == 0 and dc == 0:
+                continue
+            shifted = np.roll(np.roll(m, dr, axis=0), dc, axis=1)
+            # zero out wrapped-around edges
+            if dr == 1:
+                shifted[0, :] = 0
+            elif dr == -1:
+                shifted[-1, :] = 0
+            if dc == 1:
+                shifted[:, 0] = 0
+            elif dc == -1:
+                shifted[:, -1] = 0
+            counts += shifted
+    return counts
+
 
 class TrajectoryPool:
     eval_cache_prefix = "eval_boards"
@@ -217,20 +240,11 @@ class TrajectoryPool:
             mask = traj["masks"][t]
             mines = traj["mines"]
 
-            # Simplified channel construction (similar to old dataset)
-            channels = np.zeros((10, self.height, self.width), dtype=np.float32)
-            channels[0] = mask  # covered
-            # channels[1] is flagged, assuming 0 for now in dataset
-
-            # Count adjacent mines for revealed cells
-            for r in range(self.height):
-                for c in range(self.width):
-                    if not mask[r, c]:
-                        rmin, rmax = max(0, r-1), min(self.height, r+2)
-                        cmin, cmax = max(0, c-1), min(self.width, c+2)
-                        adj = np.sum(mines[rmin:rmax, cmin:cmax])
-                        if adj > 0:
-                            channels[1 + int(adj), r, c] = 1.0
+            channels = board_state_to_channels(
+                covered=mask.astype(bool),
+                revealed=~mask.astype(bool),
+                numbers=_adjacent_mine_counts(mines),
+            )
 
             b_channels.append(channels)
             b_masks.append(mask)

@@ -19,9 +19,16 @@ viz = [
     "streamlit>=1.30",
     "plotly>=5.0",
 ]
+dev = [
+    "pytest>=8.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
 minesweeper_transformer = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

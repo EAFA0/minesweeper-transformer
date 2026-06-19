@@ -15,6 +15,10 @@ from .constants import (
     CellState,
     GameStatus,
     MoveType,
+    CH_COVERED,
+    CH_FLAGGED,
+    CH_NUMBER_BASE,
+    NUM_CHANNELS,
 )
 
 
@@ -22,6 +26,43 @@ from .constants import (
 _MINE = -1
 _COVERED = 0
 _REVEALED_BASE = 1  # revealed cells store number 1-8 as _REVEALED_BASE + count
+
+
+def board_state_to_channels(
+    covered: np.ndarray,
+    revealed: np.ndarray,
+    numbers: np.ndarray,
+    flagged: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    """Build the 10-channel model input from board state arrays.
+
+    Single source of truth shared by live games (`board_to_channels`) and
+    offline data reconstruction (`TrajectoryPool.batch`).
+
+    Args:
+        covered: (H, W) bool — True where a cell is still covered.
+        revealed: (H, W) bool — True where a cell shows a number (0-8).
+        numbers: (H, W) int — adjacent-mine count on revealed cells; only
+                 values 1-8 produce a one-hot channel (0 produces none).
+                 Values on non-revealed cells are ignored.
+        flagged: (H, W) bool — True where a cell is flagged. Defaults to all-False.
+
+    Returns (NUM_CHANNELS, H, W) float32: [covered, flagged, number one-hot 1-8].
+    """
+    H, W = covered.shape
+    channels = np.zeros((NUM_CHANNELS, H, W), dtype=np.float32)
+    channels[CH_COVERED] = covered.astype(np.float32)
+    if flagged is not None:
+        channels[CH_FLAGGED] = flagged.astype(np.float32)
+
+    revealed = revealed.astype(bool)
+    rows, cols = np.nonzero(revealed)
+    nums = numbers[rows, cols].astype(np.int64)
+    for n in range(1, 9):
+        sel = nums == n
+        if sel.any():
+            channels[CH_NUMBER_BASE + n - 1][rows[sel], cols[sel]] = 1.0
+    return channels
 
 
 class MinesweeperGame:
@@ -253,25 +294,12 @@ class MinesweeperGame:
           [1]: flagged mask (1=flagged)
           [2:10]: number one-hot (e.g., a cell showing '3' has 1 at channel 4)
         """
-        from .constants import CH_COVERED, CH_FLAGGED, CH_NUMBER_BASE, NUM_CHANNELS
-
-        channels = np.zeros((NUM_CHANNELS, self.height, self.width), dtype=np.float32)
-
-        # Covered mask
-        channels[CH_COVERED] = (self.visible == CellState.COVERED).astype(np.float32)
-
-        # Flagged mask
-        channels[CH_FLAGGED] = (self.visible == CellState.FLAGGED).astype(np.float32)
-
-        # Number one-hot
-        revealed_mask = self.visible >= 0
-        numbers = self.visible[revealed_mask].astype(np.int64)
-        for n in range(1, 9):
-            channels[CH_NUMBER_BASE + n - 1][revealed_mask] = (
-                numbers == n
-            ).astype(np.float32)
-
-        return channels
+        return board_state_to_channels(
+            covered=self.visible == CellState.COVERED,
+            revealed=self.visible >= 0,
+            numbers=np.where(self.visible >= 0, self.visible, 0),
+            flagged=self.visible == CellState.FLAGGED,
+        )
 
     def get_labels(self) -> np.ndarray:
         """Return binary labels for covered cells: 1=mine, 0=safe.
