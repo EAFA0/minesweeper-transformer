@@ -62,6 +62,12 @@ def main():
     p.add_argument("--board_height", type=int, default=None, help="Override board height")
     p.add_argument("--board_mines", type=int, default=None, help="Override mine count")
 
+    # Experiment toggles (online path)
+    p.add_argument("--online_bce_pos_weight", action="store_true",
+                   help="Online BCE: weight positives by (cells-mines)/mines")
+    p.add_argument("--norm_type", type=str, default=None, choices=["batch", "group"],
+                   help="CNN normalization: batch (default) or group (batch-independent)")
+
     args = p.parse_args()
 
     # ── Recipe mode ─────────────────────────────────────────────────────────
@@ -133,6 +139,11 @@ def main():
             config.board_height = args.board_height
         if args.board_mines is not None:
             config.board_mines = args.board_mines
+
+        if args.online_bce_pos_weight:
+            config.online_bce_pos_weight = True
+        if args.norm_type is not None:
+            config.norm_type = args.norm_type
 
         if config.save_dir == "checkpoints":
             from datetime import datetime

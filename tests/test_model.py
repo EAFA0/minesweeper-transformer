@@ -71,6 +71,18 @@ class MinesweeperTransformerTest(unittest.TestCase):
         self.assertEqual(probs.shape, (1, 1, 8, 8))
         self.assertTrue(torch.all(probs >= 0.0) and torch.all(probs <= 1.0))
 
+    def test_group_norm_variant_trains_at_batch_one(self):
+        # GroupNorm is batch-independent: a single-sample train step must work
+        # (BatchNorm-with-batch=1 is the motivation for this option).
+        cfg = ModelConfig()
+        cfg.norm_type = "group"
+        model = MinesweeperTransformer(cfg)
+        self.assertEqual(model.num_parameters, MinesweeperTransformer(ModelConfig()).num_parameters)
+        model.train()
+        out = model(_empty_board(b=1, h=8, w=8))
+        out.sum().backward()
+        self.assertEqual(out.shape, (1, 1, 8, 8))
+
 
 if __name__ == "__main__":
     unittest.main()

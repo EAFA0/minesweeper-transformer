@@ -19,7 +19,8 @@ from config import ModelConfig
 class CNNEncoder(nn.Module):
     """Convolutional frontend that preserves spatial resolution."""
 
-    def __init__(self, in_channels: int, out_channels: int, num_layers: int = 3):
+    def __init__(self, in_channels: int, out_channels: int, num_layers: int = 3,
+                 norm_type: str = "batch", group_norm_groups: int = 8):
         super().__init__()
         layers = []
         current = in_channels
@@ -27,7 +28,12 @@ class CNNEncoder(nn.Module):
             layers.append(
                 nn.Conv2d(current, out_channels, kernel_size=3, padding=1, bias=False)
             )
-            layers.append(nn.BatchNorm2d(out_channels))
+            if norm_type == "group":
+                layers.append(nn.GroupNorm(group_norm_groups, out_channels))
+            elif norm_type == "batch":
+                layers.append(nn.BatchNorm2d(out_channels))
+            else:
+                raise ValueError(f"Unknown norm_type: {norm_type}")
             layers.append(nn.ReLU(inplace=True))
             current = out_channels
         self.net = nn.Sequential(*layers)
@@ -221,6 +227,8 @@ class MinesweeperTransformer(nn.Module):
             in_channels=config.in_channels + 1 + self.constraint_channels,
             out_channels=config.d_model,
             num_layers=config.cnn_layers,
+            norm_type=getattr(config, "norm_type", "batch"),
+            group_norm_groups=getattr(config, "group_norm_groups", 8),
         )
 
         self.pos_encoding = InterpolatablePositionalEncoding(

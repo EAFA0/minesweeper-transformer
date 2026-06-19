@@ -25,6 +25,7 @@ class TrainingConfig:
     board_pool_path: str = ""
     # "bce", "mse", "deep_mse", or "deep_mse_rank"
     loss_type: str = "bce"
+    online_bce_pos_weight: bool = False  # weight positives by (cells-mines)/mines in online BCE
     rank_loss_weight: float = 0.1
     rank_loss_margin: float = 0.5
     rank_safe_threshold: float = 1e-6
@@ -37,6 +38,9 @@ class TrainingConfig:
 
     # Refinement — training steps override, default from POLICY
     refinement_steps: int = 4  # default matches POLICY.refinement.train_max_steps
+
+    # Model norm override (experiment): "batch" (default) or "group"
+    norm_type: str = "batch"
 
     # Logging
     save_dir: str = "checkpoints"

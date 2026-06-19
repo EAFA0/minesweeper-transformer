@@ -16,6 +16,8 @@ class ModelConfig:
     # Channels
     d_model: int = 64           # CNN output = Transformer dim
     cnn_layers: int = 3         # number of Conv layers
+    norm_type: str = "batch"    # "batch" or "group" (batch-independent, for online batch=1)
+    group_norm_groups: int = 8  # groups for GroupNorm when norm_type="group"
 
     # Transformer
     nhead: int = 4

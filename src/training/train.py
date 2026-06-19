@@ -67,6 +67,7 @@ class TrainingContext:
 def _setup_training_state(config: TrainingConfig, device: torch.device, arch: str) -> TrainingContext:
     """Initialize model, optimizer, scheduler, and load checkpoints if needed."""
     model_config = ModelConfig()
+    model_config.norm_type = config.norm_type
     model = build_model(arch, model_config, device)
 
     metrics = TrainingMetrics()
@@ -146,8 +147,12 @@ def _compute_loss_and_step(
             if pv_logits is None:
                 raise ValueError(f"Architecture {ctx.arch} does not provide logits for BCE")
 
+            pos_weight = None
+            if config.online_bce_pos_weight:
+                total_cells = config.board_width * config.board_height
+                pos_weight = (total_cells - config.board_mines) / max(config.board_mines, 1)
             loss = compute_loss(
-                "bce", pv_logits[0, 0], mine_mask, frontier_t, None, ctx.device
+                "bce", pv_logits[0, 0], mine_mask, frontier_t, pos_weight, ctx.device
             )
             loss.backward()
             torch.nn.utils.clip_grad_norm_(ctx.model.parameters(), config.grad_clip_norm)
