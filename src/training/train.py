@@ -12,13 +12,13 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from config import TrainingConfig, TrainingMetrics, ModelConfig
 from game.constants import CellState, GameStatus, MoveType
 from game.game import MinesweeperGame
 from game.probability_solver import ProbabilitySolver
 from training.checkpoints import save_checkpoint
+from training.losses import compute_loss
 from training.trajectory_pool import TrajectoryPool
 from training.evaluate import evaluate_model as evaluate_game_model
 from training.utils import build_model
@@ -145,10 +145,10 @@ def _compute_loss_and_step(
 
             if pv_logits is None:
                 raise ValueError(f"Architecture {ctx.arch} does not provide logits for BCE")
-            logits_frontier = pv_logits[0, 0][frontier_t]
-            labels_frontier = mine_mask[frontier_t]
 
-            loss = F.binary_cross_entropy_with_logits(logits_frontier, labels_frontier)
+            loss = compute_loss(
+                "bce", pv_logits[0, 0], mine_mask, frontier_t, None, ctx.device
+            )
             loss.backward()
             torch.nn.utils.clip_grad_norm_(ctx.model.parameters(), config.grad_clip_norm)
             ctx.optimizer.step()
@@ -165,10 +165,9 @@ def _compute_loss_and_step(
             solver_probs = solver.compute_probabilities()
             solver_t = torch.from_numpy(solver_probs).float().to(ctx.device)
 
-            probs_frontier = pv[0, 0][frontier_t]
-            targets_frontier = solver_t[frontier_t]
-
-            loss = F.mse_loss(probs_frontier, targets_frontier)
+            loss = compute_loss(
+                "mse", pv[0, 0], solver_t, frontier_t, None, ctx.device
+            )
             loss.backward()
             torch.nn.utils.clip_grad_norm_(ctx.model.parameters(), config.grad_clip_norm)
             ctx.optimizer.step()
