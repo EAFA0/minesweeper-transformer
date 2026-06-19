@@ -20,7 +20,8 @@ regression: S1 200/200 WR = 100.00%, S4 200/200 WR = 100.00%
 # 1. 安装依赖（editable install）
 uv sync
 
-# 2. 启动可视化页面 (Streamlit，仅本机访问)
+# 2. 启动可视化页面 (Streamlit，仅本机访问；需安装 viz 可选依赖)
+uv sync --extra viz
 uv run streamlit run scripts/visualize.py
 
 # 3. 全阶段训练（S1 → S2 → S3 → S4 → S5）
@@ -121,7 +122,7 @@ src/
   training/        训练循环（MSE + online BCE）+ 共享评估模块
 
 scripts/
-  train.py           统一训练入口 (支持 --loss_type bce|mse|deep_mse|deep_mse_rank|deep_mse_denoise_rank, --recipe)
+  train.py           统一训练入口 (支持 --loss_type bce|mse|deep_mse|deep_mse_rank, --recipe)
   train_stage.py     分阶段编排 (S1→S2→S3→S4→S5, --recipe, replay curriculum)
   evaluate.py        独立评估 CLI
   collect_mistakes.py 裸模型 failure mining 诊断，输出 hard-example NPZ

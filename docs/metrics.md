@@ -113,6 +113,8 @@ S5 mistake replay fine-tune v2 后：
 
 ## Solver-Safe Ranking
 
+> ⚠️ **历史记录**：`deep_mse_solver_safe_rank` loss 已从代码移除（提交 `aa9a46f`）。以下保留作为实验留档。
+
 `deep_mse_solver_safe_rank` 是 hard-example replay 专用 loss：
 
 ```text
@@ -138,6 +140,8 @@ deep_mse_solver_safe_rank =
 旧版 mistake NPZ 不包含 `solver_safe_masks_*`，使用该 loss 前需重新运行 failure mining 生成新版错题文件。
 
 ## Denoising Refinement
+
+> ⚠️ **历史记录**：`deep_mse_denoise_rank` loss 已从代码移除（提交 `aa9a46f`）。以下保留作为实验留档。
 
 `deep_mse_denoise_rank` 是 no-architecture-change 的 diffusion-inspired refinement 训练方式：
 

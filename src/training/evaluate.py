@@ -189,8 +189,6 @@ def evaluate_model(
             rule_mine_guard=rule_mine_guard,
             prob_zero_guard=prob_zero_guard,
         )
-        if not isinstance(stats.get("refine_steps"), list):
-            print(f"DEBUG stats: {stats}")
         metrics.add_result(stats)
         metrics.maybe_print(i + 1, n_games, t0)
 

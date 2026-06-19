@@ -122,6 +122,9 @@ residual = target_remaining - predicted
 
 ### No-Arch Denoising Refinement (2026-06-08)
 
+> ⚠️ **历史记录**：`deep_mse_denoise_rank` loss 已在精简提交 `aa9a46f` 中从代码移除。
+> 以下内容仅作为实验留档，当前 `src/training/losses.py` 不再支持该 loss 类型。
+
 当前 V5 refinement 默认从 `0.5` 概率图开始：
 
 ```text
@@ -169,6 +172,9 @@ prob_zero_guard  -> ProbabilitySolver only when it finds P(mine)=0 cells
 4. 这一路线与研究目标不冲突：裸模型继续用 denoising/refinement/replay 提升，guard 作为冲击 100% 的部署层安全网。
 
 ### Solver-Safe Ranking Loss (2026-06-06)
+
+> ⚠️ **历史记录**：`deep_mse_solver_safe_rank` loss 已在精简提交 `aa9a46f` 中从代码移除（实验为负优化，已暂停）。
+> `solver_safe_masks_*` 的数据管道（`collect_mistakes.py` / `TrajectoryPool.batch`）仍保留，但该 loss 类型本身不再可用。
 
 S5 hard-example replay 后，裸模型从 91.40% 提升到 97.20%，但剩余 mined states 仍主要是 `rule_guard_avoidable`。这说明单纯重复采样错题已进入平台期，下一步需要更直接地约束排序目标。
 

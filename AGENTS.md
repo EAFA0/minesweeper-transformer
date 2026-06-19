@@ -11,7 +11,7 @@
 
 ## 工作规则
 
-1. 所有项目代码统一放在 `/home/ubuntu/minesweeper-transformer/` 下
+1. 所有项目代码统一放在本项目根目录下（本机 `minesweeper-transformer/`）
 2. 重大架构决策前先分析利弊，给出明确建议
 3. 实验记录（超参、loss 曲线、胜率等）统一维护在 workspace 中
 4. 文件编辑、批量操作等重任务委派给 opencode (deepseek-v4-flash)
@@ -27,11 +27,12 @@
 
 ## 🚦 项目现状
 
-- **当前路线**: Online BCE 三阶段训练 — S1(规则) → S2(密度) → S3(高密度泛化)
-- **当前架构**: V5 (constraint residual channels, 15 input channels)
-- **训练设备**: RTX 4070 SUPER (CUDA)，ssh ubuntu@FAEX1.local
-- **开发环境**: 本机 Linux + uv 包管理
-- **全局策略**: `src/config/training_policy.py` 统一训练/RL/评估 refine 与 reward 默认值
+- **当前路线**: V5 replay curriculum 监督蒸馏 — S1→S2→S3→S4→S5（`deep_mse_rank`），`train.py` 另保留 online BCE 入口
+- **当前架构**: V5 (constraint residual channels, 19 input channels = 10 board + 1 prev_probs + 8 constraints)
+- **当前成绩**: S5 8×8/32 裸模型 ~98% WR；开启 `s5_guarded_100` 守卫组合达 100%
+- **训练设备**: 本机 macOS (MPS)，checkpoint 见 `checkpoints/`
+- **开发环境**: 本机 macOS + uv 包管理
+- **全局策略**: `src/config/training_policy.py` 统一训练/评估 refine 默认值
 
 ## 📖 核心文档索引
 
@@ -56,8 +57,8 @@
 | 评估 | `scripts/evaluate.py` | 独立评估 CLI |
 | **可视化** | `scripts/visualize.py` | 基于 Streamlit 的交互式 Web 可视化工具 |
 | **训练** | `scripts/train.py` | 训练入口 |
-| **分阶段** | `scripts/train_stage.py` | S1→S2→S3 编排 + recipe 模式 |
-| **Recipe** | `src/config/recipe_config.py` | 训练 recipe 定义 (MSE warmup → BCE finetune) |
+| **分阶段** | `scripts/train_stage.py` | S1→S5 编排 + recipe 模式 |
+| **Recipe** | `src/config/recipe_config.py` | 训练 recipe 定义 (replay curriculum, deep_mse_rank) |
 
 ## 🎯 Agent 开发约束
 
